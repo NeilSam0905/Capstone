@@ -5,12 +5,12 @@ Converts "Copy of USTORE INVENTORY REPORT (1).xlsx" - a 37-sheet workbook
 (one MAIN STORAGE snapshot + one APPAREL and one NON-APPAREL sheet per month,
 Nov 2024 - Apr 2026) - into a single tidy long-format CSV:
 
-    Sheet, Category, Report Month, Report Date, No, Item, Size, Location,
-    Classification, Price, Quantity, OPEX, Notes
+    Category, Date, No, Item, Size, Location, Classification, Price,
+    Quantity, OPEX, Notes
 
-Report Month comes from each sheet's own "<Month> <Year> INVENTORY" title (present
-on every sheet); Report Date is only populated where the sheet also states an exact
-"DATE: MM/DD/YYYY" (Main Storage, and the Nov/Dec 2024 Apparel sheets).
+Date is a single ISO (YYYY-MM-DD) column: the sheet's exact "DATE: MM/DD/YYYY"
+where present (Main Storage, and the Nov/Dec 2024 Apparel sheets), otherwise the
+first day of the sheet's "<Month> <Year> INVENTORY" title month.
 
 One row per item / size / location snapshot as of that sheet's report date.
 Each monthly Apparel/Non-Apparel sheet also has daily delivery columns
@@ -49,6 +49,27 @@ DEFAULT_OUTPUT = "USTore_inventory_excel_long.csv"
 DATE_RE = re.compile(r"DATE:\s*(\d{1,2}/\d{1,2}/\d{4})")
 MONTH_RE = re.compile(r"([A-Za-z]+)\.?\s+(\d{4})\s+INVENTORY", re.I)
 NUM_RE = re.compile(r"[\d,]+(?:\.\d+)?")
+
+
+def to_iso_date(report_date, report_month):
+    """Consolidate to a single ISO (YYYY-MM-DD) date. Use the sheet's exact
+    'DATE: MM/DD/YYYY' where present; otherwise fall back to the first day of the
+    sheet's report month, so every row carries a usable date."""
+    rd = (report_date or "").strip()
+    rm = (report_month or "").strip()
+    if rd:
+        for fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d"):
+            try:
+                return datetime.datetime.strptime(rd, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+    if rm:
+        for fmt in ("%B %Y", "%b %Y"):
+            try:
+                return datetime.datetime.strptime(rm, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+    return ""
 
 
 def clean(v):
@@ -217,7 +238,7 @@ def convert_sheet(ws_rows, sheet_name, out_rows):
         no_val = no_cell if no_cell else group_no
         price_val = parse_num(price_cell) if price_cell not in (None, "") else group_price
 
-        base = dict(Sheet=sheet_name, Category=category, ReportMonth=report_month, ReportDate=report_date,
+        base = dict(Category=category, Date=to_iso_date(report_date, report_month),
                     No=no_val, Item=group_item, Price=price_val if price_val is not None else "")
 
         opex = parse_num(get(row, schema.get("opex"))) if schema.get("opex") is not None else None
@@ -280,7 +301,7 @@ def convert(in_path, out_path):
         convert_sheet(ws_rows, sheet_name, out_rows)
     wb.close()
 
-    fields = ["Sheet", "Category", "ReportMonth", "ReportDate", "No", "Item", "Size", "Location",
+    fields = ["Category", "Date", "No", "Item", "Size", "Location",
               "Classification", "Price", "Quantity", "OPEX", "Notes"]
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
