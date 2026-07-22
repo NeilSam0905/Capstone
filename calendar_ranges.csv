@@ -122,3 +122,15 @@ start_date,end_date,flag,semester_id,event_name
 01/07/2026,06/07/2026,is_exam_week,AY2526-ST,Special Term Preliminary Examinations
 20/07/2026,24/07/2026,is_exam_week,AY2526-ST,Special Term Final Examinations
 25/07/2026,31/07/2026,is_sem_break,AY2526-ST,Post-Special-Term Break
+01/08/2026,06/08/2026,is_event_day,AY2627-T1,UST Cloud Campus Orientation / Freshman Orientation Activities / Virtual & In-Person ROARientation / Misa y Discurso de Apertura
+07/08/2026,07/08/2026,is_event_day,AY2627-T1,Institutional Mass in Honor of St. Dominic / Start of Regular Classes (1st Term)
+08/08/2026,08/08/2026,is_store_closed,AY2627-T1,Feast of St. Dominic (School Holiday)
+21/08/2026,21/08/2026,is_store_closed,AY2627-T1,Ninoy Aquino Day
+31/08/2026,31/08/2026,is_store_closed,AY2627-T1,National Heroes Day
+09/10/2026,14/10/2026,is_exam_week,AY2627-T1,Preliminary Examinations begin
+29/10/2026,03/11/2026,is_sem_break,AY2627-T1,Undas Break
+30/11/2026,30/11/2026,is_store_closed,AY2627-T1,Bonifacio Day
+08/12/2026,08/12/2026,is_store_closed,AY2627-T1,Feast of the Immaculate Conception
+14/12/2026,20/12/2026,is_exam_week,AY2627-T1,Final Examinations begin
+18/12/2026,18/12/2026,is_event_day,AY2627-T1,Paskuhan Festivities
+21/12/2026,31/12/2026,is_sem_break,AY2627-T1,Christmas / Semestral Break (truncated at 2026-12-31; continues into January 2027)
