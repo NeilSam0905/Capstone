@@ -115,7 +115,7 @@ def run(sales_path, inv_path, ag_path, out_path, audit_path):
         for c,(w,b),a in zip(members, wb, alloc):
             basis_tally[b]+=1
             audit.append([iso,item,Q,c,round(w,2),b,a,supplier])
-            if a>0:
+            if a>=0:
                 out.append([iso,c,a,supplier,1,"0.5"]); n_alloc+=1; units_out+=a
         # reconcile per row
         assert sum(alloc)==Q, f"alloc mismatch {item} {iso}: {sum(alloc)} != {Q}"

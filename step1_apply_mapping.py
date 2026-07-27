@@ -9,8 +9,8 @@ import sys
 
 import pandas as pd
 
-MAPPING_CSV = "vocab_mapping_FINAL_v2.csv"
-SALES_CSV = "USTore_sales_long_May_Aug2024-May2026.csv"
+MAPPING_CSV = "vocab_mapping_FINAL_v5.csv"
+SALES_CSV = "USTore_sales_long_with_zeros.csv"
 INVENTORY_CSV = "USTore_inventory_excel_long.csv"
 DB_PATH = "ustore.db"
 

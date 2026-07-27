@@ -52,7 +52,7 @@ Athletic V.1,Athletic V.1,no,56,inventory,
 Athletic V.2,Athletic V.2,no,14,inventory,
 Auto Umbrella,Auto Umbrella,no,5,sales,"Abbreviation of ""Automatic Umbrella"""
 Automatic Umbrella,Automatic Umbrella,no,79,sales,
-B. Lanyard @180,B. Lanyard @180,no,22,sales,
+B. Lanyard @180,Lanyard @180,yes,22,sales,Pass4: merged sequential naming-convention change into 'Lanyard @180'
 BASE BALL SHIRT,BASE BALL SHIRT,no,113,sales,
 Back Pack,Back pack,yes,5,sales,
 Back pack,Back pack,no,12,sales,
@@ -205,7 +205,7 @@ Hoodies Breaker,Hoodies Breaker,no,241,sales,
 I.D Case,I.D Case,no,8,inventory,
 ID Case,ID Case,no,83,sales,
 ID Case @20,ID Case @20,no,5,sales,
-ID Case v2,ID Case v2,no,1,sales,
+ID Case v2,ID Case v2 @40,yes,1,sales,Pass4: merged sequential naming-convention change into 'ID Case v2 @40'
 ID Case v2 @40,ID Case v2 @40,no,136,sales,
 IPEA Shirt,IPEA Shirt,no,25,sales,
 Yellow Shirt Big Tiger Print Infront,IPEA Yellow Shirt Big Tiger Print Infront,yes,5,inventory,Merged into IPEA-prefixed name - confirm same supplier/item.
@@ -214,7 +214,7 @@ Insignia Pen,Insignia Pen,no,67,sales+inventory,
 JUC Black Jacket w/ red inside,JUC Black Jacket w/ red inside,no,55,inventory,
 JUC Bomber Jacket,JUC Bomber Jacket,no,115,inventory,DEFERRED pass2: possible match to 'Bomber Jacket' - Differs by: juc
 JUC Corp Jacket,JUC Corp Jacket,no,240,inventory,PRICE-GROUPED: sales logs generic 'Corp Jacket' - handle in proportional allocation
-"JYL Hoodie ( white , yellow, green","JYL Hoodie ( white , yellow, green",no,1,inventory,
+"JYL Hoodie ( white , yellow, green",JYL Hoodie (white/green/yellow,yes,1,inventory,Pass3: merged formatting-only duplicate into 'JYL Hoodie (white/green/yellow'
 JYL Hoodie (black/yellow green inside),JYL Hoodie (black/yellow green inside),no,204,inventory,
 JYL Hoodie (white/green/yellow,JYL Hoodie (white/green/yellow,no,143,inventory,
 JYL Hoodie Scratch,JYL Hoodie Scratch,no,32,inventory,
@@ -314,7 +314,7 @@ Poloshirt @800,Poloshirt @800,no,242,sales,
 Power Bank (display included),Power Bank (display included),no,20,inventory,
 Powerbank,Powerbank,no,25,sales+inventory,
 Pure Black Laptop Bag,Pure Black Laptop Bag,no,1,inventory,PRICE-GROUPED: sales logs generic 'Laptop Bag' - handle in proportional allocation
-QUIANA SHIRT (B&Y SUBLI),QUIANA SHIRT (B&Y SUBLI),no,4,sales,
+QUIANA SHIRT (B&Y SUBLI),QUIANA SUBLI SHIRT (B&Y),yes,4,sales,Pass3: merged formatting-only duplicate into 'QUIANA SUBLI SHIRT (B&Y)'
 QUIANA SUBLI SHIRT (B&Y),QUIANA SUBLI SHIRT (B&Y),no,180,sales,
 "QUIANA SUBLI SHIRT (B&Y), 2 TONED","QUIANA SUBLI SHIRT (B&Y), 2 TONED",no,98,sales,
 Quiana Black Subli Shirt,Quiana Black Subli Shirt,no,272,inventory,PRICE-GROUPED: sales logs generic 'QUIANA SUBLI SHIRT (B&Y)' - handle in proportional allocation
@@ -347,7 +347,7 @@ Small Tiger (display Included),Small Tiger (display Included),no,18,inventory,
 Stainless Eco Tumbler,Stainless Eco Tumbler,no,29,sales,
 Stainless Steel Tumbler,Stainless Steel Tumbler,no,11,inventory,"DEFERRED pass2: possible match to 'Stainless Eco Tumbler' - Differs by: eco, steel"
 Sticker,Sticker,no,15,sales,
-Sticker @ 120,Sticker @ 120,no,20,sales,
+Sticker @ 120,Sticker @120,yes,20,sales,Pass3: merged formatting-only duplicate into 'Sticker @120'
 Sticker @120,Sticker @120,no,103,sales,
 Sticker @20,Sticker @20,no,35,sales,
 Sticker @25,Sticker @25,no,16,sales,
@@ -377,19 +377,19 @@ Tiger Custome,Tiger Custome,no,100,inventory,
 Tiger Headband (2 Designs),Tiger Headband (2 Designs),no,53,sales,
 Tiger Paw Keychain @375,Tiger Paw Keychain @375,no,92,sales,
 Tiger Plushie Big,Tiger Plushie Big,no,22,sales,
-Tiger Plushie Big V1,Tiger Plushie Big V1,no,16,sales,
+Tiger Plushie Big V1,Tiger Plushie Big,yes,16,sales,Pass4: merged sequential naming-convention change into 'Tiger Plushie Big'
 Tiger Plushie Small,Tiger Plushie Small,no,71,sales,
-Tiger Plushie Small V1,Tiger Plushie Small V1,no,17,sales,
+Tiger Plushie Small V1,Tiger Plushie Small,yes,17,sales,Pass4: merged sequential naming-convention change into 'Tiger Plushie Small'
 Tiger Shirt,Tiger Shirt,no,1,sales,
 Tiger Stuff Toy Small Grad,Tiger Stuff Toy Small Grad,no,23,sales,
-Tiger in a Box,Tiger in a Box,no,8,inventory,
+Tiger in a Box,Tiger w/ Box,yes,8,inventory,Pass4: merged sequential naming-convention change into 'Tiger w/ Box'
 Tiger w/ Box,Tiger w/ Box,no,70,sales,
 One For UST tote,Tote (One For UST),yes,1,inventory,Pass2: inventory->sales name unified
 Tote (One For UST),Tote (One For UST),no,148,sales,
 Tote (Viva),Tote (Viva),no,153,sales,
 Tote Bag Canvas White,Tote Bag Canvas White,no,151,sales,
-Tote Bag Canvas White @160,Tote Bag Canvas White @160,no,51,sales,
-Tote ONE FOR UST,Tote ONE FOR UST,no,4,sales,
+Tote Bag Canvas White @160,Tote Bag Canvas White,yes,51,sales,Pass4: merged sequential naming-convention change into 'Tote Bag Canvas White'
+Tote ONE FOR UST,Tote (One For UST),yes,4,sales,Pass3: merged formatting-only duplicate into 'Tote (One For UST)'
 Viva Sto.Tomas Tote Bag,Tote Viva Santo Tomas,yes,17,inventory,Pass2: inventory->sales name unified
 Tote Viva Santo Tomas,Tote Viva Santo Tomas,no,105,sales,
 Tourism Shirt (green/blue),Tourism Shirt (green/blue),no,165,inventory,
@@ -428,18 +428,18 @@ UST OAT MUG (B),UST OAT MUG (B),no,43,sales,
 UST OAT MUG (Pure Black),UST OAT MUG (Pure Black),no,12,sales,
 UST OAT MUG (WE) Inside,UST OAT MUG (W inside),yes,8,sales,
 UST OAT MUG (W inside),UST OAT MUG (W inside),no,66,sales,
-"UST OAT MUG (Y,B,W)","UST OAT MUG (Y,B,W)",no,15,sales,"Same 3 colours as (Y,W,B), different order"
+"UST OAT MUG (Y,B,W)","UST OAT MUG (Y,W,B)",yes,15,sales,"Same 3 colours as (Y,W,B), different order | Pass3: merged formatting-only duplicate into 'UST OAT MUG (Y,W,B)'"
 "UST OAT MUG (Y,W)","UST OAT MUG (Y,W)",no,51,sales,Reversed a bad auto-merge - kept separate. Confirm with store.
 "UST OAT MUG (Y,W,B)","UST OAT MUG (Y,W,B)",no,83,sales,
 UST OAT MUG (Y/B inside),UST OAT MUG (Y/B inside),no,62,sales,Reversed a bad auto-merge - kept separate. Confirm with store.
-UST OAT T-Shirt,UST OAT T-Shirt,no,5,sales,
+UST OAT T-Shirt,UST T-Shirt Sporty,yes,5,sales,Pass4: merged sequential naming-convention change into 'UST T-Shirt Sporty'
 UST OAT T-Shirt Colleges,UST OAT T-Shirt Colleges,no,3,sales,
 UST OAT T-Shirt Y/B/COLLEGE,UST OAT T-Shirt Y/B/COLLEGE,no,320,sales,
 UST OAT T-Shirt Y/B/COLLEGE (3XL),UST OAT T-Shirt Y/B/COLLEGE (3XL),no,2,sales,
 UST OAT T-Shirt Y/B/COLLEGE (XS-2XL),UST OAT T-Shirt Y/B/COLLEGE (XS-2XL),no,51,sales,
 UST Sweatshirt Sporty,UST Sweatshirt Sporty,no,252,sales,
 UST T-Shirt Happy Tiger,UST T-Shirt Happy Tiger,no,2,sales,
-UST T-Shirt STS,UST T-Shirt STS,no,1,sales,
+UST T-Shirt STS,UST T-Shirt Sporty,yes,1,sales,Pass4: merged sequential naming-convention change into 'UST T-Shirt Sporty'
 UST T-Shirt Santo Tomas Shirt/UST T-Shirt Tiger Pattern/HAPPY,UST T-Shirt Santo Tomas Shirt/UST T-Shirt Tiger Pattern/HAPPY,no,328,sales,
 UST T-Shirt Santo Tomas Shirt/UST T-Shirt Tiger Pattern/HAPPY/Script,UST T-Shirt Santo Tomas Shirt/UST T-Shirt Tiger Pattern/HAPPY/Script,no,52,sales,Reversed a bad auto-merge - kept separate. Confirm with store.
 UST T-Shirt Sporty,UST T-Shirt Sporty,no,328,sales,
@@ -459,7 +459,7 @@ USTVL  Yellow Shirt,USTVL  Yellow Shirt,no,56,inventory,
 USTVL Black Shirt,USTVL Black Shirt,no,56,inventory,
 USTWBT Championship Shirt 2025,USTWBT Championship Shirt 2025,no,19,sales,
 Umb (One For UST),Umb (One For UST),no,213,sales,
-Umb ONE FOR UST,Umb ONE FOR UST,no,28,sales,
+Umb ONE FOR UST,Umb (One For UST),yes,28,sales,Pass3: merged formatting-only duplicate into 'Umb (One For UST)'
 Umb Old @250,Umb Old @250,no,1,sales,
 Umb. Cane,Umb. Cane,no,3,sales,
 Umbrella,Umbrella,no,1,inventory,DEFERRED pass2: possible match to 'Automatic Umbrella' - Differs by: automatic
@@ -563,3 +563,36 @@ Yellow/Black Lanyard,Yellow/Black Lanyard,no,8,inventory,PRICE-GROUPED: sales lo
 Yelow Laptop Bag,Yelow Laptop Bag,no,18,inventory,PRICE-GROUPED: sales logs generic 'Laptop Bag' - handle in proportional allocation
 Yelow Tiger Pattern,Yelow Tiger Pattern,no,298,inventory,
 w/ black collar,w/ black collar,no,35,inventory,
+0.50L B1T1 Tumbler (MCY-A050) Screw Lid,0.50L B1T1 Tumbler (MCY-A050) screw lid,yes,0,sales,Pass5 (zero-fill rebuild): merged into '0.50L B1T1 Tumbler (MCY-A050) screw lid'
+0.8 B1T1 Tumbler 2 way lid,0.8L B1T1 Tumbler 2 way lid,yes,0,sales,Pass5 (zero-fill rebuild): merged into '0.8L B1T1 Tumbler 2 way lid'
+Sublimation Shirt,Subli. Shirt,yes,22,sales,Pass5 (zero-fill rebuild): merged into 'Subli. Shirt'
+Tote Bag White,White Tote Bag,yes,5,sales,Pass5 (zero-fill rebuild): merged into 'White Tote Bag'
+Poloshirt 3 Colors @800,Poloshirt 3 Colors,yes,6,sales,Pass5 (zero-fill rebuild): merged into 'Poloshirt 3 Colors'
+UST OAT MUG (Pure Black) PHASED OUT,UST OAT MUG (Pure Black),yes,0,sales,Pass5 (zero-fill rebuild): merged into 'UST OAT MUG (Pure Black)'
+Pen @50,Pen @ 50,yes,0,sales,Pass5 (zero-fill rebuild): merged into 'Pen @ 50'
+Umb Old,Umb Old @250,yes,1,sales,Pass5 (zero-fill rebuild): merged into 'Umb Old @250'
+Tote Bag CGEEE!,Eco Bag CGEEE!,yes,0,sales,Pass5 (zero-fill rebuild): merged into 'Eco Bag CGEEE!'
+Jacket @1900,Jacket,yes,17,sales,Pass5 (zero-fill rebuild): merged into 'Jacket'
+Main @430,Main Building,yes,0,sales,Pass5 (zero-fill rebuild): merged into 'Main Building'
+Tubler @150,Tumbler,yes,7,sales,Pass5 (zero-fill rebuild): merged into 'Tumbler'
+Crew Neck Shirt @475,Crew Neck Shirt @475,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+Embro Cap,Embro Cap,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+GROWLING HOODIE,GROWLING HOODIE,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+NB @100,NB @100,no,4,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+NB @75,NB @75,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+Notebook @220,Notebook @220,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+OAT Tote Bag (Phased Out),OAT Tote Bag (Phased Out),no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+Pen @25,Pen @25,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+Retractable @25,Retractable @25,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+SM Tiger Plushie Big V2,SM Tiger Plushie Big V2,no,2,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+SM Tiger Plushie Small V2,SM Tiger Plushie Small V2,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+Socks @375,Socks @375,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+Sticker @ 115,Sticker @ 115,no,10,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+Stylus pen @45,Stylus pen @45,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+Tote Bag Black,Tote Bag Black,no,2,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+UST Santo Tomas Script T-Shirt,UST Santo Tomas Script T-Shirt,no,1,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+UST T-Shirt (College Shirt),UST T-Shirt (College Shirt),no,8,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+UST Toddler Hoodie,UST Toddler Hoodie,no,1,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+VB Jersey with Sig. @1800,VB Jersey with Sig. @1800,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+VB Jersey with Sig. @2800,VB Jersey with Sig. @2800,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
+VB Jersey without Sig @1000,VB Jersey without Sig @1000,no,0,sales,"Pass5 (zero-fill rebuild): new item, no confident existing match found"
