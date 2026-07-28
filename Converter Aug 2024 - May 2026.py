@@ -14,7 +14,7 @@ subtotal rows. Per-date cells hold the units sold of that item on that date.
 
 The script "melts" the date columns into rows: one output row per
 (date, item, supplier) with the quantity sold. Blank / zero cells (no sale) are
-dropped. Dates are written as DD/MM/YYYY.
+dropped. Dates are written as ISO 8601 (YYYY-MM-DD).
 
 NO DATE handling
 ----------------
@@ -146,7 +146,7 @@ def impute_nodate_dates(date_cols, warnings, sheet_title):
         day = min(max(day, 1), last_day)
         d = datetime.date(year, month, day)
         imputed[c] = d
-        warnings.append(f"[{sheet_title}] NO DATE -> {d.strftime('%d/%m/%Y')} ({how})")
+        warnings.append(f"[{sheet_title}] NO DATE -> {d.strftime('%Y-%m-%d')} ({how})")
     return imputed
 
 
@@ -195,7 +195,7 @@ def convert_sheet(ws, warnings):
             else:                   # unresolved NO DATE (no anchor dates)
                 yield (1, 0), "NO DATE", label, qty, supplier
                 continue
-            yield (0, obs.toordinal()), obs.strftime("%d/%m/%Y"), label, qty, supplier
+            yield (0, obs.toordinal()), obs.strftime("%Y-%m-%d"), label, qty, supplier
 
 
 def convert(files, out_path):

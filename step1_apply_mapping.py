@@ -45,7 +45,7 @@ def build_dim_product(sales_mapped, inventory_mapped):
     # entry_date = earliest sales date per canonical item
     sales_dates = sales_mapped.copy()
     sales_dates["parsed_date"] = pd.to_datetime(
-        sales_dates["Date"], format="%d/%m/%Y", errors="raise"
+        sales_dates["Date"], format="%Y-%m-%d", errors="raise"
     )
     entry_dates = (
         sales_dates.groupby("canonical_item_name")["parsed_date"]

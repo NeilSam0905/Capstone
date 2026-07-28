@@ -8,7 +8,7 @@ grouped quantity in proportion to each SKU's beginning-of-month stock.
   allocated(s" ) = round( Q * stock(s" , M) / Sum stock(s#, M) )   [largest-remainder]
 
 Inputs
-  - sales CSV            : Date, Item, Total Quantity, Supplier   (DD/MM/YYYY)
+  - sales CSV            : Date, Item, Total Quantity, Supplier   (ISO 8601 YYYY-MM-DD)
   - inventory CSV        : Category, Date, Item, ..., Quantity    (monthly stock)
   - allocation_groups CSV: generic_sales_name  <- inventory_variant (group members)
 
@@ -30,7 +30,7 @@ from collections import defaultdict
 
 def parse_date(s):
     s=(s or "").strip()
-    for f in ("%d/%m/%Y","%Y-%m-%d","%m/%d/%Y"):
+    for f in ("%Y-%m-%d","%d/%m/%Y","%m/%d/%Y"):
         try: return datetime.datetime.strptime(s,f).date()
         except ValueError: pass
     return None
