@@ -32,6 +32,7 @@ Usage:
 
 import re
 import csv
+import datetime
 import argparse
 
 DEFAULT_INPUT = "Copy of USTORE INVENTORY REPORT - MAIN STORAGE.csv"
@@ -45,12 +46,22 @@ def clean(s):
     return (s or "").strip()
 
 
+def to_iso(raw):
+    """Source sheets write 'DATE: MM/DD/YYYY'; emit ISO 8601 (YYYY-MM-DD)."""
+    for fmt in ("%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return raw
+
+
 def find_report_date(rows):
     for row in rows:
         for cell in row:
             m = DATE_RE.search(cell or "")
             if m:
-                return m.group(1)
+                return to_iso(m.group(1))
     return ""
 
 
