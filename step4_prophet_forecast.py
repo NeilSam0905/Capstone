@@ -1,21 +1,26 @@
 """
 Phase 3 of ETL: Prophet forecasting (Option A scope).
 
-Tiers (confirmed against Fact_Sales before this script was written):
-  - 23 Fast SKUs, 60+ observations  -> standard Prophet, 80/20 chronological
+Tiers are keyed on SALE-DAYS - distinct calendar dates with
+quantity_sold > 0 - not on raw Fact_Sales row count. See "Fix 4" below
+for why that distinction matters.
+  - Fast SKUs, 60+ sale-days  -> standard Prophet, 80/20 chronological
     train/test split, default changepoints, MCMC(1000) for the final
     production fit.
-  - 11 Fast SKUs, 30-59 observations -> simplified Prophet (n_changepoints=0
+  - Fast SKUs, 30-59 sale-days -> simplified Prophet (n_changepoints=0
     => a single fixed linear trend, no piecewise changepoints), validated
     with walk-forward one-step-ahead CV over a PROPORTIONAL tail window
     (20% of that SKU's observations, minimum 5 - see "Fix 3" below),
     MCMC(1000) for the final production fit.
-  - 26 Fast+HVL SKUs, <30 observations (plus any simplified-tier SKU that
-    can't support a proper holdout even proportionally - none, as it turns
-    out; see "Fix 3") -> NOT modelled. A flat 30-day rolling average of
-    all available history, flagged as a heuristic ("Insufficient Data for
-    Forecasting"), no MAPE/MAE validation (there is nothing to fit).
+  - Fast+HVL SKUs, <30 sale-days (plus any simplified-tier SKU that can't
+    support a proper holdout even proportionally - see "Fix 3") -> NOT
+    modelled. A flat 30-day rolling average of all available history,
+    flagged as a heuristic ("Insufficient Data for Forecasting"), no
+    MAPE/MAE validation (there is nothing to fit).
   - Everything else (Slow, Non-moving) is out of scope for this phase.
+  - The model itself still fits on the FULL dense series (real
+    quantity_sold, including the zero-fill days) regardless of tier -
+    only the tier ASSIGNMENT is sale-days based.
 
 Regressors (from Dim_Date): is_enrollment_period, is_exam_week,
 is_event_day, is_sem_break, semester_week. is_event_day is kept as its
@@ -45,10 +50,19 @@ max(round(0.2 * n_obs), 5) - and (b) each held-out point is now
 predicted using ONLY strictly-prior data (walk-forward: train on
 series.iloc[:i]), not series.drop(index=i) as before, which had let
 FUTURE rows leak into predicting an earlier held-out point - a separate,
-more serious problem than window size alone. Checked all 11
-simplified-tier SKUs against this: every one keeps 28-46 training rows
-after taking out its proportional tail, comfortably above a 20-row
-minimum, so none needed to move into the rolling-average bucket.
+more serious problem than window size alone.
+
+Fix 4 - tier assignment now counts SALE-DAYS (distinct dates with
+quantity_sold > 0), not raw Fact_Sales row count. After the zero-fill
+rebuild grew Fact_Sales to include real zero-quantity rows for every
+calendar day in a dense-tallied month, counting rows meant almost every
+SKU cleared 60 "observations" regardless of how many days it actually
+sold anything - the zero-padding was doing the counting, not real sales
+history. This silently pushed thin SKUs into the standard tier with a
+full Prophet fit instead of the rolling-average fallback they actually
+warranted. The demand series fed to Prophet is unchanged either way -
+it's still the full dense series including the zero days, which is
+correct - only which BUCKET a SKU is assigned to changed.
 
 Fitting cost note: MCMC(1000) is used only for each SKU's single final
 production fit (used for the 30-day forecast + uncertainty interval).
@@ -368,7 +382,16 @@ def main():
     con.commit()
 
     products, fact, dim_date = load_common(con)
-    obs_counts = fact.groupby("product_id").size().rename("n_obs")
+    # Tier sufficiency = distinct SALE-DAYS (quantity_sold > 0), not raw row
+    # count - see "Fix 4" in the module docstring. Fact_Sales now carries a
+    # real zero-quantity row for every calendar day in a densely-tallied
+    # month, so counting all rows would count zero-padding as observations.
+    obs_counts = (
+        fact[fact["quantity_sold"] > 0]
+        .groupby("product_id")["calendar_date"]
+        .nunique()
+        .rename("n_obs")
+    )
     products = products.merge(obs_counts, on="product_id", how="left").fillna({"n_obs": 0})
     products["n_obs"] = products["n_obs"].astype(int)
 
@@ -386,21 +409,21 @@ def main():
     demoted = fast.loc[is_simplified].loc[train_sizes < MIN_SIMPLIFIED_TRAIN]
     if len(demoted):
         print(f"Demoting {len(demoted)} simplified-tier SKU(s) to rolling_average "
-              f"(proportional holdout would leave < {MIN_SIMPLIFIED_TRAIN} training rows):")
+              f"(proportional holdout would leave < {MIN_SIMPLIFIED_TRAIN} sale-days):")
         print(demoted[["item_name", "n_obs"]].to_string(index=False))
         fast.loc[demoted.index, "tier"] = "rolling_average"
     else:
         print(f"All {is_simplified.sum()} simplified-tier SKUs keep >= {MIN_SIMPLIFIED_TRAIN} "
-              f"training rows under the proportional holdout - none demoted.")
+              f"sale-days under the proportional holdout - none demoted.")
 
     snapshot_date = fact["calendar_date"].max()
 
     forecast_rows, metric_rows = [], []
 
     for _, row in fast.iterrows():
-        pid, name, tier = int(row["product_id"]), row["item_name"], row["tier"]
+        pid, name, tier, sale_days = int(row["product_id"]), row["item_name"], row["tier"], int(row["n_obs"])
         series = build_series(fact, dim_date, pid)
-        print(f"[{tier:12}] product_id={pid:4} n_obs={len(series):4}  {name}")
+        print(f"[{tier:12}] product_id={pid:4} sale_days={sale_days:4} series_len={len(series):4}  {name}")
         if tier == "standard":
             run_standard_tier(pid, name, series, dim_date, snapshot_date, forecast_rows, metric_rows)
         elif tier == "simplified":
