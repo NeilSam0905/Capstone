@@ -32,6 +32,12 @@ original drop-blank-cells behaviour, since a gap there really does mean
 Output: USTore_sales_long_with_zeros.csv (same 4 columns as the
 original: Date, Item, Total Quantity, Supplier), reading directly from
 the original source workbooks in drive-download-20260724T120738Z-1-001/.
+
+Date is written as ISO 8601 (YYYY-MM-DD). The source workbooks use a
+mix of DD/MM/YYYY, MM/DD/YYYY and real Excel date cells in their column
+headers; parse_date_header() below resolves those, and everything this
+script writes is ISO from that point on. Do not open the output in
+Excel - it will silently rewrite the column back to a locale format.
 """
 import calendar
 import csv
@@ -228,7 +234,7 @@ def convert_sheet(ws, sheet_label, warnings, density_log):
                 else:
                     continue  # sparse month: a gap really is "not observed"
 
-            yield (0, obs.toordinal()), obs.strftime("%d/%m/%Y"), label, qty, supplier
+            yield (0, obs.toordinal()), obs.strftime("%Y-%m-%d"), label, qty, supplier
 
 
 def convert(files, out_path):

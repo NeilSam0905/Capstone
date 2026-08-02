@@ -3,11 +3,16 @@ Step 2 of ETL: load the allocated sales history into Fact_Sales, routing
 anything unresolvable to Exception_Log instead of dropping it.
 
 Reads:
-  - USTore_sales_long_allocated.csv (Date, Item, Total Quantity, Supplier,
-    imputation_flag, weight) - proportional allocation already applied
-  - vocab_mapping_FINAL_v2.csv (raw_name -> canonical_item_name), used to
-    translate each row's Item into the canonical name Dim_Product uses
+  - USTore_sales_long_allocated.csv (Date, canonical_item_name, Total
+    Quantity, Supplier, imputation_flag, weight) - names already
+    canonical and allocation already applied
   - ustore.db (Dim_Product, Dim_Date already populated; Fact_Sales empty)
+
+No vocabulary mapping here any more (Block 2.2): mapping now happens once,
+in step1_apply_mapping.py, and everything after it joins on canonical
+names. A row whose name isn't in Dim_Product is an Exception_Log row, not
+something to re-map on the fly - two places applying the same mapping is
+how the map-vs-allocate ambiguity started.
 
 Safe to re-run: Fact_Sales and Exception_Log are cleared before loading.
 
@@ -22,12 +27,13 @@ assumptions, documented here rather than silently picked):
     not literal daily sales.
 """
 import sqlite3
+import sys
 from collections import defaultdict
 
 import pandas as pd
 
 SALES_CSV = "USTore_sales_long_allocated.csv"
-MAPPING_CSV = "vocab_mapping_FINAL_v5.csv"
+ITEM_COL = "canonical_item_name"
 DB_PATH = "ustore.db"
 
 REASON_INVALID_QTY = "invalid_or_missing_quantity"
@@ -51,19 +57,14 @@ def create_exception_table(con):
     """)
 
 
-def load_mapping():
-    vm = pd.read_csv(MAPPING_CSV)
-    vm["raw_name"] = vm["raw_name"].astype(str).str.strip()
-    vm["canonical_item_name"] = vm["canonical_item_name"].astype(str).str.strip()
-    return dict(zip(vm["raw_name"], vm["canonical_item_name"]))
-
-
 def main():
     df = pd.read_csv(SALES_CSV, dtype=str)
-    df = df.rename(columns={"Total Quantity": "Quantity"})
+    if ITEM_COL not in df.columns:
+        sys.exit(f"{SALES_CSV}: no {ITEM_COL!r} column - this is a pre-Block-2.2 "
+                 f"allocated file built on raw names. Re-run step1_apply_mapping.py "
+                 f"then proportional_allocation.py.")
+    df = df.rename(columns={"Total Quantity": "Quantity", ITEM_COL: "Item"})
     df["row_order"] = range(len(df))
-
-    mapping = load_mapping()
 
     con = sqlite3.connect(DB_PATH)
     con.execute("PRAGMA foreign_keys = ON;")
@@ -131,19 +132,18 @@ def main():
             send_to_exception(REASON_ITEM_IS_SUPPLIER)
             continue
 
-        # 3. item must resolve to a canonical name that exists in Dim_Product
-        canonical = mapping.get(item)
-        product_id = product_id_by_name.get(canonical) if canonical else None
+        # 3. item is already canonical - it must exist in Dim_Product as-is
+        product_id = product_id_by_name.get(item)
         if product_id is None:
             send_to_exception(REASON_ITEM_NO_MATCH)
             continue
 
         # 4. date must parse and exist in Dim_Date
-        # proportional_allocation.py writes ISO (YYYY-MM-DD) dates; older
-        # allocated-CSV snapshots used DD/MM/YYYY - accept either.
+        # ISO (YYYY-MM-DD) only. The old DD/MM/YYYY fallback is gone: with
+        # both formats accepted, "05/11/2025" parses under either reading
+        # and lands on a different day depending on which branch caught it.
+        # A non-ISO date is now a row-level exception, not a silent guess.
         parsed = pd.to_datetime(raw_date, format="%Y-%m-%d", errors="coerce")
-        if pd.isna(parsed):
-            parsed = pd.to_datetime(raw_date, format="%d/%m/%Y", errors="coerce")
         iso_date = parsed.strftime("%Y-%m-%d") if pd.notna(parsed) else None
         date_id = date_id_by_iso.get(iso_date) if iso_date else None
         if date_id is None:
