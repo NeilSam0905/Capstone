@@ -45,6 +45,11 @@ CREATE TABLE IF NOT EXISTS Dim_Product (
     supplier_name   TEXT,
     lead_time_days  INTEGER,
     fsn_class       TEXT    CHECK (fsn_class IN ('F', 'S', 'N') OR fsn_class IS NULL),
+    -- HVL (High-Velocity-Limited) is a modifier on F, not a fourth class:
+    -- step3 writes it here, and the CHECK above would reject 'HVL' as an
+    -- fsn_class value anyway. Without this column a from-scratch rebuild
+    -- runs fine until step3_fsn_classification.py, then dies on UPDATE.
+    is_hvl          INTEGER DEFAULT 0,
     entry_date      TEXT,                 -- 'YYYY-MM-DD', first month the item appears
     is_active       INTEGER DEFAULT 1     -- 1 = active, 0 = discontinued
 );

@@ -14,7 +14,10 @@ SALES_CSV = "USTore_sales_long_with_zeros.csv"
 INVENTORY_CSV = "USTore_inventory_excel_long.csv"
 DB_PATH = "ustore.db"
 
-SALES_MAPPED_CSV = "USTore_sales_long_May_Aug2024-May2026_mapped.csv"
+# Named after its actual input (SALES_CSV), not the older pre-zero-fill
+# file - proportional_allocation.py reads this, so the name has to say
+# which sales file it came from.
+SALES_MAPPED_CSV = "USTore_sales_long_with_zeros_mapped.csv"
 INVENTORY_MAPPED_CSV = "USTore_inventory_excel_long_mapped.csv"
 
 
@@ -44,8 +47,11 @@ def apply_mapping(df, mapping, label):
 def build_dim_product(sales_mapped, inventory_mapped):
     # entry_date = earliest sales date per canonical item
     sales_dates = sales_mapped.copy()
+    # Every CSV in this repo stores dates as ISO 8601 (YYYY-MM-DD). errors="raise"
+    # is deliberate: a coerced date becomes NaT and silently vanishes from the
+    # entry_date min(), which nothing downstream would notice.
     sales_dates["parsed_date"] = pd.to_datetime(
-        sales_dates["Date"], format="%d/%m/%Y", errors="raise"
+        sales_dates["Date"], format="%Y-%m-%d", errors="raise"
     )
     entry_dates = (
         sales_dates.groupby("canonical_item_name")["parsed_date"]

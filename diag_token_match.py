@@ -39,7 +39,9 @@ def main():
 
     # category + latest qty per no-sales item, from inventory log
     no_sales_inv = inv[inv["canonical_item_name"].isin(no_sales)].copy()
-    no_sales_inv["parsed_date"] = pd.to_datetime(no_sales_inv["Date"], format="%d/%m/%Y")
+    no_sales_inv["parsed_date"] = pd.to_datetime(
+        no_sales_inv["Date"], format="%Y-%m-%d", errors="raise"
+    )
     no_sales_inv["Quantity"] = pd.to_numeric(no_sales_inv["Quantity"], errors="coerce")
 
     def mode_or_none(series):

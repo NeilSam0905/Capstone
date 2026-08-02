@@ -19,10 +19,10 @@ that touches a CSV (see Block 1 below for what it checks).
 | — | `create_schema.py` | Builds the empty `ustore.db` (all 5 tables). Run once, or whenever rebuilding from scratch. |
 | — | `populate_dim_date.py` | Fills `Dim_Date` (1,461 rows, 2023-01-01–2026-12-31) from `calendar_ranges.csv`: calendar flags, `semester_id`/`semester_week` derived from 12 term windows, and `is_tally_date` from the sales data. |
 | 0 | `step0_convert_sales_with_zeros.py` | Converts the raw TBS tally-sheet workbooks (`drive-download-.../*.xlsx`) into `USTore_sales_long_with_zeros.csv`. Per month, decides whether the sheet is a genuine daily tally (has a date column for ~most calendar days) or a sparse periodic stock-count, and only zero-fills blank/missing sale cells for the dense months. Currently: Aug–Sep 2024 stay sparse; every month Oct 2024–Jul 2026 is zero-filled. |
-| 1 | `step1_apply_mapping.py` | Applies `vocab_mapping_FINAL_v5.csv` (the controlled vocabulary — 597 raw names → 540 canonical products) to both the sales and inventory CSVs, reports any unmapped raw name (should be 0), and (re)builds `Dim_Product` (519 rows — some canonical names in the mapping file have no live data behind them, which is expected). |
-| — | `proportional_allocation.py` | Splits price-grouped tally rows (a single row covering several SKUs sharing a price point) into per-SKU rows, weighted by each SKU's beginning-of-month stock. Outputs `USTore_sales_long_allocated.csv` (+ `allocation_audit.csv` documenting every split). Run with `--sales USTore_sales_long_with_zeros.csv` so zero-quantity rows are preserved through the split (a grouped row with 0 units on a given day now correctly emits 0 for every constituent, instead of being dropped). |
-| 2 | `step2_load_fact_sales.py` | Loads the allocated CSV into `Fact_Sales` (84,175 rows: 68,321 zero-quantity + 15,854 positive; sums to **89,232** units — see Block 0 below for why that's not the older 88,481), routing unresolvable rows to `Exception_Log` instead of dropping them. Derives `cumulative_monthly_units` and `daily_depletion_rate`. |
-| 3 | `step3_fsn_classification.py` | Computes ADUS (Average Daily Units Sold) per SKU, weighting imputed/allocated rows at 0.5, and classifies Fast/Slow/Non-moving at the 80th-percentile ADUS cutoff (currently F=58, S=230, N=231). Flags High-Velocity-Limited (HVL) items with thin history. Writes `fsn_class`/`is_hvl` back to `Dim_Product`. |
+| 1 | `step1_apply_mapping.py` | Applies `vocab_mapping_FINAL_v5.csv` (the controlled vocabulary — 597 raw names → 540 canonical products) to both the sales and inventory CSVs, reports any unmapped raw name (should be 0), and (re)builds `Dim_Product` (519 rows — some canonical names in the mapping file have no live data behind them, which is expected). Writes `USTore_sales_long_with_zeros_mapped.csv` + `USTore_inventory_excel_long_mapped.csv`, which are what the allocation step reads. **This is the only place the vocabulary mapping is applied.** |
+| — | `proportional_allocation.py` | Splits price-grouped tally rows (a single row covering several SKUs sharing a price point) into per-SKU rows, weighted by each SKU's beginning-of-month stock. Reads step 1's *mapped* CSVs and joins on `canonical_item_name` (see Block 2.2 below); defaults now point at those files, so plain `python proportional_allocation.py` is correct. Outputs `USTore_sales_long_allocated.csv` (+ `allocation_audit.csv` documenting every split). Zero-quantity rows survive the split — a grouped row with 0 units on a given day emits 0 for every constituent instead of being dropped. |
+| 2 | `step2_load_fact_sales.py` | Loads the allocated CSV into `Fact_Sales` (84,399 rows: 68,541 zero-quantity + 15,858 positive; sums to **89,232** units — see Block 0 below for why that's not the older 88,481), routing unresolvable rows to `Exception_Log` instead of dropping them. Item names arrive canonical, so it joins straight to `Dim_Product` and applies no mapping of its own. Derives `cumulative_monthly_units` and `daily_depletion_rate`. |
+| 3 | `step3_fsn_classification.py` | Computes ADUS (Average Daily Units Sold) per SKU, weighting imputed/allocated rows at 0.5, and classifies Fast/Slow/Non-moving at the 80th-percentile ADUS cutoff (currently F=58, S=228, N=233; it was S=230/N=231 before Block 2.2 below). Flags High-Velocity-Limited (HVL) items with thin history. Writes `fsn_class`/`is_hvl` back to `Dim_Product`. |
 | 4 | `step4_prophet_forecast.py` | Fits Prophet per Fast SKU with a data-sufficiency tier, keyed on **distinct sale-days (quantity_sold > 0), not raw row count** — currently 38 standard (60+ sale-days), 10 simplified (30-59), 10 rolling-average (<30, no real model). Validates against a naive baseline, writes 30-day forecasts + metrics to `Result_Forecast` / `Result_Forecast_Metrics`. Requires `cmdstan` (see below). |
 
 Supporting/one-off scripts still in the repo: `build_vocab_mapping.py` /
@@ -32,6 +32,24 @@ you're revisiting the vocabulary itself).
 
 ## Key design decisions worth knowing before you touch this
 
+- **Every date in every CSV is ISO 8601 (`YYYY-MM-DD`), and every script
+  parses it with an explicit `format="%Y-%m-%d"` and `errors="raise"`.**
+  No script tries DD/MM and then falls back to something else: with two
+  formats accepted, `05/11/2025` is valid under both readings and lands
+  six months apart depending on which branch caught it. `verify_data.py`
+  now checks every date column in every CSV, including for ISO-shaped
+  impossibilities like `2025-13-05`. **Never open these CSVs in Excel** —
+  that is exactly how `USTore_inventory_excel_long.csv` ended up
+  committed as DD/MM/YYYY when its own converter writes ISO.
+- **Map first, then allocate — and the mapping is applied exactly once.**
+  `step1_apply_mapping.py` is the only script that reads
+  `vocab_mapping_FINAL_v5.csv` for data; allocation and `Fact_Sales`
+  loading both join on `canonical_item_name`. Allocation matches a
+  bundled sales row to its price group and weights each constituent by
+  inventory stock — both name lookups — so they have to happen on the
+  canonical name, not on whatever the tally sheet happened to spell that
+  month. Feeding either script a raw CSV now exits 1 with a message
+  naming the step to run, rather than quietly half-matching.
 - **Zero-fill is per-month, not global.** The original converter dropped
   every blank/zero cell, which made genuinely daily data (Oct 2024
   onward) look like sparse episodic tallies. `step0` fixes this, but
@@ -80,9 +98,12 @@ you're revisiting the vocabulary itself).
 
 Regenerable intermediate outputs (`*_mapped.csv` from Step 1) and
 superseded vocabulary-mapping versions are left out to keep the repo
-readable — re-running the pipeline reproduces them. `ustore.db` itself
-is gitignored (binary, machine-specific); run `create_schema.py` →
-`populate_dim_date.py` → the pipeline above to rebuild it from scratch.
+readable — re-running the pipeline reproduces them. Note that the two
+`*_mapped.csv` files are no longer just diagnostics: allocation reads
+them, so Step 1 has to run before it (that's the point of Block 2.2).
+`ustore.db` itself is gitignored (binary, machine-specific); run
+`create_schema.py` → `populate_dim_date.py` → the pipeline above to
+rebuild it from scratch.
 
 ## Status against `CODE_WORK_PLAN_v2.md`
 
@@ -101,11 +122,23 @@ verify and act.
 - **Block 1, all four items** (1.1 dates → ISO, 1.2 `verify_data.py`
   guard, 1.3 `populate_dim_date.py` runs again, 1.4 `TERM_STARTS`/
   `is_tally_date`/`semester_id` fixed) — see the Pipeline table and
-  design-decisions above for specifics
+  design-decisions above for specifics. **1.1 is now complete in its
+  full scope**, not just `calendar_ranges.csv`: every date column in
+  every CSV is ISO, both converters emit ISO, and every reader parses
+  ISO strictly. Details in the section below.
 - **Block 2.1** 🔴 (zero-fill inflating Prophet's tier counts) — fixed,
   see the Step 4 row above
+- **Block 2.2** (map-vs-allocate order) — resolved as map → allocate,
+  details below
 - **Block 2.3** (`is_hvl` as a boolean modifier, not a 4th `fsn_class`
-  value) — already correct
+  value) — the *shape* was already correct, but `create_schema.py` was
+  missing the `is_hvl` column entirely; only databases that had it added
+  by hand worked. A from-scratch rebuild ran fine until
+  `step3_fsn_classification.py` and then died on
+  `sqlite3.OperationalError: no such column: is_hvl`. The column is now
+  in the committed DDL (`is_hvl INTEGER DEFAULT 0`), so the rebuild path
+  the section below describes actually works. Found while re-running the
+  whole pipeline to verify the ISO change.
 - **Block 2.5** (partial - `is_store_closed` dropped as an unusable
   Prophet regressor, constant zero for most SKUs)
 - **Block 6.1** (this README)
@@ -119,17 +152,100 @@ verify and act.
 | `is_tally_date = 1` | 411 | 608 (see design decisions above) |
 | `SUM(quantity_sold)` | 88,481 | 89,232 (explained — 2 legitimately different months, checked for double-counting, not corruption) |
 
+**Block 1.1 in full — what changed and how it was verified**
+
+Previously only `calendar_ranges.csv` was ISO; the rest of the repo was
+`DD/MM/YYYY` with each reader carrying its own format string. That was
+working, but it left the repo one Excel save away from a silent
+six-month data shift, with no check that would catch it.
+
+- **Converted in place** (round-trip verified: the ISO file converted
+  back to DD/MM/YYYY is byte-identical to the committed original, so
+  nothing but the date format changed) —
+  `USTore_sales_long_May_Aug2024-May2026.csv` (15,151 rows, still
+  88,481 units) and `USTore_inventory_excel_long.csv` (19,049 rows).
+  These two can't be regenerated: the first is the pre-zero-fill
+  converter output kept for provenance, and the second's source
+  workbook isn't in the repo.
+- **Regenerated** by re-running the fixed converter —
+  `USTore_sales_long_with_zeros.csv` (75,120 rows, 89,232 units;
+  differs from the committed version in the date column only).
+  `USTore_sales_long_allocated.csv` and `allocation_audit.csv` were
+  already ISO and came back byte-identical.
+- **Writers now emit ISO:** `step0_convert_sales_with_zeros.py`,
+  `Converter Aug 2024 - May 2026.py`. (`Inventory Excel Converter.py`
+  always did — its output had been reformatted after the fact.)
+- **Readers now parse ISO strictly:** `step1_apply_mapping.py`,
+  `populate_dim_date.py`, `diag_token_match.py`,
+  `proportional_allocation.py` (its silent multi-format ladder that
+  returned `None` on failure now raises), `step2_load_fact_sales.py`
+  (the DD/MM fallback is gone; a non-ISO date is now an
+  `Exception_Log` row, not a guess). `step4_prophet_forecast.py` reads
+  only the database and was untouched.
+- **`verify_data.py` extended** from 2 files to every date column in
+  all 6 CSVs, plus unit totals for all three sales files. Confirmed it
+  fails (exit 1) on a deliberately broken copy in three ways: the
+  inventory dates reformatted back to DD/MM/YYYY, one `2025-13-05`, and
+  one quantity edited by +7.
+- **Whole pipeline re-run from an empty database** (`create_schema` →
+  `populate_dim_date` → `step1` → `proportional_allocation` → `step2` →
+  `step3`). Every documented number reproduced exactly: Dim_Date 1,461
+  rows / 1,453 `semester_week` / `MAX` 23 / 608 tally dates; Fact_Sales
+  84,175 rows / 89,232 units / 68,321 zero-quantity / 0 exceptions;
+  Dim_Product 519 rows, F=58 S=230 N=231, 7 HVL (Block 2.2 below has
+  since moved 3 of those items). Step 4 was not re-run
+  (needs `cmdstan`, and it was already pending a re-run — see above).
+
+**Block 2.2 in full — map before allocate**
+
+The plan's recommendation was adopted: allocation now runs on canonical
+names. `step1_apply_mapping.py` writes mapped copies of the sales and
+inventory CSVs, `proportional_allocation.py` reads those and joins on
+`canonical_item_name`, and `step2_load_fact_sales.py` no longer carries
+its own copy of the vocabulary mapping.
+
+- **`allocation_groups.csv` was already canonical, by luck.** All 18
+  group labels and all 45 constituents map to themselves, so the file
+  needed no edit — but the script canonicalises both columns through
+  `vocab_mapping_FINAL_v5.csv` at load time anyway, so a future edit can
+  use either spelling. It also refuses a group that would contain its
+  own label, and reports any constituents that canonicalisation merges
+  (currently none: 45 raw variants → 45 canonical).
+- **What actually changed.** Three raw spellings were dodging the group
+  match: `Back Pack` → `Back pack` and `QUIANA SHIRT (B&Y SUBLI)` →
+  `QUIANA SUBLI SHIRT (B&Y)` on the sales side, and
+  `Varsity UST  Keychain` (double space) → `Varsity UST Keychain` on the
+  inventory side. Price-grouped rows went from 5,614 → **5,838** (3,906
+  → 3,950 units allocated), stock weights picked up 4 more inventory
+  rows, and `Fact_Sales` went from 84,175 → **84,399 rows**. Audit rows
+  14,669 → 15,117.
+- **Units are unchanged: 89,232 in, 89,232 out**, which is the check
+  that matters — allocation redistributes units between SKUs, it never
+  creates or destroys them. The row-count shift is the legitimate kind
+  the plan anticipated.
+- **Three SKUs changed FSN class**, and two of them are the point of
+  the exercise: `Back pack` (S → **N**) and `QUIANA SUBLI SHIRT (B&Y)`
+  (F + HVL → **N**) are price-group *labels*, not sellable SKUs. Under
+  the old order their variant spellings were loaded as real sales for
+  the label itself, so a bundle looked like a moving product — one of
+  them Fast. Both now have zero `Fact_Sales` rows, all their units
+  having gone to real constituents. `Corp Jacket V2` (S → **F**) is a
+  constituent that gained the redistributed units. → Divergence
+  Register: the F/S/N counts in any earlier draft were computed with
+  two bundle labels counted as products.
+- **Both orderings now fail loudly instead of silently.** Feeding
+  `proportional_allocation.py` a raw sales CSV, or `step2` a
+  pre-2.2 allocated file, exits 1 with a message naming the step to run
+  — verified. The allocated CSV's item column was renamed `Item` →
+  `canonical_item_name` precisely so a stale file can't half-load.
+- **Not re-run:** step 4. It reads only the database, but its inputs
+  have changed (`Fact_Sales` rows and the Fast list), so its stored
+  forecasts are now stale for a second reason.
+
 **Not done — everything else in the plan:**
-- Block 1.1's broader scope (reformatting the sales/inventory CSVs
-  themselves to ISO) was deliberately NOT done — those files aren't
-  actually blocking anything (the whole pipeline already parses
-  DD/MM/YYYY explicitly and correctly), and reformatting them would mean
-  touching validated pipeline code for no functional benefit. Only
-  `calendar_ranges.csv` (the genuine blocker for `populate_dim_date.py`)
-  was converted.
-- Block 2.2 (map-before-allocate reordering), 2.4 (stockout/censoring
-  flags), 2.6 (`days_of_supply` + gap-handling rules), 2.7 (supplier
-  name consolidation, 40 strings → ~15 real suppliers)
+- Block 2.4 (stockout/censoring flags), 2.6 (`days_of_supply` +
+  gap-handling rules), 2.7 (supplier name consolidation, 40 strings →
+  ~15 real suppliers)
 - Block 3 (inventory coverage — only 42 canonical items appear in both
   sales and inventory; needs a group decision + USTore staff input)
 - Block 4 (the forecasting strategy overhaul: adviser conversation on

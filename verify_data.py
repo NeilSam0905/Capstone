@@ -7,6 +7,14 @@ Excel silently reformats/truncates dates and reorders columns, and
 nothing downstream would notice until a script crashed or (worse)
 produced quietly wrong output.
 
+Every date column in every CSV here is ISO 8601 (YYYY-MM-DD). That is
+the single thing this file guards hardest, because the failure mode is
+silent: 05/11/2025 is a valid date under both DD/MM and MM/DD, so a
+locale reformat moves data six months without erroring anywhere. The
+inventory CSV was found in exactly that state - written as ISO by
+`Inventory Excel Converter.py`, committed as DD/MM/YYYY - which is what
+this check is for.
+
 Exit code 0 = all checks passed. Non-zero = something is wrong; the
 printed messages say what and where.
 
@@ -22,7 +30,23 @@ import pandas as pd
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 CALENDAR_RANGES_CSV = "calendar_ranges.csv"
+SALES_RAW_CSV = "USTore_sales_long_May_Aug2024-May2026.csv"
 SALES_WITH_ZEROS_CSV = "USTore_sales_long_with_zeros.csv"
+SALES_ALLOCATED_CSV = "USTore_sales_long_allocated.csv"
+INVENTORY_CSV = "USTore_inventory_excel_long.csv"
+ALLOCATION_AUDIT_CSV = "allocation_audit.csv"
+
+# Every (file, date column) pair in the repo. Add to this list, don't
+# write a new one-off check.
+DATE_COLUMNS = [
+    (CALENDAR_RANGES_CSV, "start_date"),
+    (CALENDAR_RANGES_CSV, "end_date"),
+    (SALES_RAW_CSV, "Date"),
+    (SALES_WITH_ZEROS_CSV, "Date"),
+    (SALES_ALLOCATED_CSV, "Date"),
+    (INVENTORY_CSV, "Date"),
+    (ALLOCATION_AUDIT_CSV, "Date"),
+]
 
 # Established and explained in this session: the zero-fill rebuild
 # picked up a July 2026 sheet the old combined file never had, plus a
@@ -30,6 +54,10 @@ SALES_WITH_ZEROS_CSV = "USTore_sales_long_with_zeros.csv"
 # checked for double-counting. 89,232 is now the correct invariant,
 # not the older 88,481.
 EXPECTED_SALES_TOTAL = 89232
+# The pre-zero-fill converter output, kept for provenance. Its own
+# total is the older figure and must stay there - it is a different
+# set of months, not a different count of the same months.
+EXPECTED_SALES_RAW_TOTAL = 88481
 
 failures = []
 
@@ -39,18 +67,30 @@ def check(condition, message):
         failures.append(message)
 
 
+def verify_iso_dates(path, col):
+    """Non-ISO text, and dates that are ISO-shaped but impossible
+    (2025-13-05 - the signature of a DD/MM value pasted into an ISO
+    column). errors="raise" is deliberate; "coerce" would turn exactly
+    the rows we're hunting for into blanks."""
+    series = pd.read_csv(path, dtype=str)[col].fillna("")
+
+    bad_shape = series[~series.str.match(ISO_DATE_RE)]
+    check(len(bad_shape) == 0,
+          f"{path}: {len(bad_shape)} row(s) where {col} is not YYYY-MM-DD, "
+          f"e.g. {bad_shape.tolist()[:3]} (opened in Excel?)")
+    if len(bad_shape):
+        return
+
+    try:
+        pd.to_datetime(series, format="%Y-%m-%d", errors="raise")
+    except ValueError as exc:
+        check(False, f"{path}: {col} has an ISO-shaped but invalid date - {exc}")
+
+
 def verify_calendar_ranges(path=CALENDAR_RANGES_CSV):
     df = pd.read_csv(path, dtype=str)
 
-    bad_start = df[~df["start_date"].str.match(ISO_DATE_RE)]
-    check(len(bad_start) == 0,
-          f"{path}: {len(bad_start)} row(s) with non-ISO start_date, e.g. {bad_start['start_date'].tolist()[:3]}")
-
-    bad_end = df[~df["end_date"].str.match(ISO_DATE_RE)]
-    check(len(bad_end) == 0,
-          f"{path}: {len(bad_end)} row(s) with non-ISO end_date, e.g. {bad_end['end_date'].tolist()[:3]}")
-
-    if not bad_start.any().any() and not bad_end.any().any():
+    if df["start_date"].str.match(ISO_DATE_RE).all() and df["end_date"].str.match(ISO_DATE_RE).all():
         starts = pd.to_datetime(df["start_date"], format="%Y-%m-%d")
         ends = pd.to_datetime(df["end_date"], format="%Y-%m-%d")
         inverted = df[ends < starts]
@@ -61,23 +101,27 @@ def verify_calendar_ranges(path=CALENDAR_RANGES_CSV):
     check(len(df) == 135, f"{path}: expected 135 rows, found {len(df)}")
 
 
-def verify_sales_totals(path=SALES_WITH_ZEROS_CSV):
+def verify_sales_totals(path, expected_total, qty_col="Total Quantity"):
     df = pd.read_csv(path)
-    total = int(df["Total Quantity"].sum())
-    check(total == EXPECTED_SALES_TOTAL,
-          f"{path}: Total Quantity sums to {total}, expected {EXPECTED_SALES_TOTAL} "
+    total = int(df[qty_col].sum())
+    check(total == expected_total,
+          f"{path}: {qty_col} sums to {total}, expected {expected_total} "
           f"(unit conservation broken - a row was lost, duplicated, or a value was corrupted)")
 
-    bad_dates = pd.to_datetime(df["Date"], format="%d/%m/%Y", errors="coerce").isna().sum()
-    check(bad_dates == 0, f"{path}: {bad_dates} row(s) with unparseable Date values")
-
-    negative = (df["Total Quantity"] < 0).sum()
-    check(negative == 0, f"{path}: {negative} row(s) with a negative Total Quantity")
+    negative = (df[qty_col] < 0).sum()
+    check(negative == 0, f"{path}: {negative} row(s) with a negative {qty_col}")
 
 
 def main():
+    for path, col in DATE_COLUMNS:
+        verify_iso_dates(path, col)
+
     verify_calendar_ranges()
-    verify_sales_totals()
+
+    verify_sales_totals(SALES_RAW_CSV, EXPECTED_SALES_RAW_TOTAL)
+    verify_sales_totals(SALES_WITH_ZEROS_CSV, EXPECTED_SALES_TOTAL)
+    # allocation splits grouped rows but must never create or destroy units
+    verify_sales_totals(SALES_ALLOCATED_CSV, EXPECTED_SALES_TOTAL)
 
     if failures:
         print(f"FAILED: {len(failures)} check(s) did not pass:")

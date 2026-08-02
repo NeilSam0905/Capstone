@@ -19,6 +19,10 @@ Fixes applied here (Code Work Plan v2, Block 1):
   converted to ISO 8601 in place (start_date/end_date now YYYY-MM-DD);
   0 of 135 ranges were inverted (end < start) after parsing with
   dayfirst=True, confirming the day/month reading was correct.
+  Block 1.1 was later completed across the whole repo: the sales and
+  inventory CSVs are ISO too, so load_tally_dates() below parses
+  "%Y-%m-%d" with errors="raise" rather than DD/MM/YYYY. verify_data.py
+  guards this for every CSV.
 
 1.4 - TERM_STARTS used to hardcode 3 terms. calendar_ranges.csv actually
   spans 12 (AY2223-T2 .. AY2627-T1). Every term's start is now derived
@@ -106,7 +110,7 @@ def daterange(start, end):
 
 def load_tally_dates(sales_csv):
     df = pd.read_csv(sales_csv)
-    parsed = pd.to_datetime(df["Date"], format="%d/%m/%Y")
+    parsed = pd.to_datetime(df["Date"], format="%Y-%m-%d", errors="raise")
     return set(parsed.dt.date)
 
 
