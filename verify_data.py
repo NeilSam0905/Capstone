@@ -35,6 +35,9 @@ SALES_WITH_ZEROS_CSV = "USTore_sales_long_with_zeros.csv"
 SALES_ALLOCATED_CSV = "USTore_sales_long_allocated.csv"
 INVENTORY_CSV = "USTore_inventory_excel_long.csv"
 ALLOCATION_AUDIT_CSV = "allocation_audit.csv"
+SUPPLIER_MAPPING_CSV = "supplier_mapping.csv"
+
+VALID_PAYMENT_STATUS = {"CONSIGNMENT", "PAID", "UNKNOWN"}
 
 # Every (file, date column) pair in the repo. Add to this list, don't
 # write a new one-off check.
@@ -112,11 +115,39 @@ def verify_sales_totals(path, expected_total, qty_col="Total Quantity"):
     check(negative == 0, f"{path}: {negative} row(s) with a negative {qty_col}")
 
 
+def verify_supplier_mapping(mapping_path=SUPPLIER_MAPPING_CSV, sales_path=SALES_WITH_ZEROS_CSV):
+    """Every raw Supplier string has to be accounted for. Without this,
+    a new supplier (or a new typo of an existing one) silently becomes a
+    20th supplier in Dim_Product - step1 aborts on it, but only after
+    someone has already committed the CSV."""
+    sm = pd.read_csv(mapping_path, dtype=str).fillna("")
+    sales = pd.read_csv(sales_path, dtype=str)
+
+    raw = set(sales["Supplier"].str.strip())
+    mapped = set(sm["raw_supplier"].str.strip())
+    missing = sorted(raw - mapped)
+    check(not missing,
+          f"{mapping_path}: {len(missing)} Supplier string(s) in {sales_path} are unmapped: {missing[:3]}")
+    stale = sorted(mapped - raw)
+    check(not stale,
+          f"{mapping_path}: {len(stale)} mapped supplier(s) no longer appear in {sales_path}: {stale[:3]}")
+
+    bad_status = sorted(set(sm["payment_status"].str.strip()) - VALID_PAYMENT_STATUS)
+    check(not bad_status,
+          f"{mapping_path}: payment_status values outside {sorted(VALID_PAYMENT_STATUS)}: {bad_status}")
+
+    named = sm[sm["supplier_name"].str.strip() != ""]
+    check(named["supplier_name"].str.contains(r"\(", regex=True).sum() == 0,
+          f"{mapping_path}: a supplier_name still carries a parenthetical suffix - "
+          f"that belongs in payment_status")
+
+
 def main():
     for path, col in DATE_COLUMNS:
         verify_iso_dates(path, col)
 
     verify_calendar_ranges()
+    verify_supplier_mapping()
 
     verify_sales_totals(SALES_RAW_CSV, EXPECTED_SALES_RAW_TOTAL)
     verify_sales_totals(SALES_WITH_ZEROS_CSV, EXPECTED_SALES_TOTAL)

@@ -10,6 +10,15 @@ ADUS definition (per spec):
          sold on (NOT calendar days - these are episodic tally records).
   weighted units = SUM(quantity_sold * w), w = 0.5 if imputation_flag=1
                    else 1.0, so imputed/allocated rows count for less.
+
+  Days flagged is_censored = 1 by step2 (a zero sale on a day the stock
+  model says the item was already out) are dropped from the denominator:
+  a day the store had nothing to sell is not evidence that the item
+  moves slowly. This is Block 2.4's flag being used rather than merely
+  recorded - it is the one place the flag changes a published number, so
+  set EXCLUDE_CENSORED_DAYS = False to see the classification without it.
+  Only 16.8% of rows have any stock record at all, so this can only help
+  the items inventory actually covers; the rest are unaffected.
   A SKU's observation window is anchored at its own entry_date (which,
   by construction, is already the earliest date it has a Fact_Sales
   row) rather than at the dataset's overall start, so a newer SKU is
@@ -39,6 +48,7 @@ DB_PATH = "ustore.db"
 THRESHOLDS = [75, 80, 85]
 PRIMARY_THRESHOLD = 80
 HVL_MIN_DATES = 30
+EXCLUDE_CENSORED_DAYS = True
 
 
 def main():
@@ -47,8 +57,14 @@ def main():
     products = pd.read_sql("SELECT product_id, item_name, entry_date FROM Dim_Product", con)
 
     fact = pd.read_sql(
-        "SELECT product_id, date_id, quantity_sold, imputation_flag FROM Fact_Sales", con
+        "SELECT product_id, date_id, quantity_sold, imputation_flag, is_censored FROM Fact_Sales",
+        con,
     )
+    if EXCLUDE_CENSORED_DAYS:
+        censored = fact["is_censored"] == 1
+        print(f"Dropping {int(censored.sum())} censored zero-sale rows "
+              f"({fact.loc[censored, 'product_id'].nunique()} SKUs) from the ADUS denominator")
+        fact = fact[~censored]
     fact["weight"] = np.where(fact["imputation_flag"] == 1, 0.5, 1.0)
     fact["weighted_units"] = fact["quantity_sold"] * fact["weight"]
 

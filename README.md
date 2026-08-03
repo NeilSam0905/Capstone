@@ -19,10 +19,10 @@ that touches a CSV (see Block 1 below for what it checks).
 | — | `create_schema.py` | Builds the empty `ustore.db` (all 5 tables). Run once, or whenever rebuilding from scratch. |
 | — | `populate_dim_date.py` | Fills `Dim_Date` (1,461 rows, 2023-01-01–2026-12-31) from `calendar_ranges.csv`: calendar flags, `semester_id`/`semester_week` derived from 12 term windows, and `is_tally_date` from the sales data. |
 | 0 | `step0_convert_sales_with_zeros.py` | Converts the raw TBS tally-sheet workbooks (`drive-download-.../*.xlsx`) into `USTore_sales_long_with_zeros.csv`. Per month, decides whether the sheet is a genuine daily tally (has a date column for ~most calendar days) or a sparse periodic stock-count, and only zero-fills blank/missing sale cells for the dense months. Currently: Aug–Sep 2024 stay sparse; every month Oct 2024–Jul 2026 is zero-filled. |
-| 1 | `step1_apply_mapping.py` | Applies `vocab_mapping_FINAL_v5.csv` (the controlled vocabulary — 597 raw names → 540 canonical products) to both the sales and inventory CSVs, reports any unmapped raw name (should be 0), and (re)builds `Dim_Product` (519 rows — some canonical names in the mapping file have no live data behind them, which is expected). Writes `USTore_sales_long_with_zeros_mapped.csv` + `USTore_inventory_excel_long_mapped.csv`, which are what the allocation step reads. **This is the only place the vocabulary mapping is applied.** |
+| 1 | `step1_apply_mapping.py` | Applies `vocab_mapping_FINAL_v5.csv` (the controlled vocabulary — 597 raw names → 540 canonical products) to both the sales and inventory CSVs, reports any unmapped raw name (should be 0), and (re)builds `Dim_Product` (519 rows — some canonical names in the mapping file have no live data behind them, which is expected). Writes `USTore_sales_long_with_zeros_mapped.csv` + `USTore_inventory_excel_long_mapped.csv`, which are what the allocation step reads. **This is the only place the vocabulary mapping is applied.** Also applies `supplier_mapping.csv` (42 raw supplier strings → 19 suppliers + a `payment_status`) — see Block 2.7 below. |
 | — | `proportional_allocation.py` | Splits price-grouped tally rows (a single row covering several SKUs sharing a price point) into per-SKU rows, weighted by each SKU's beginning-of-month stock. Reads step 1's *mapped* CSVs and joins on `canonical_item_name` (see Block 2.2 below); defaults now point at those files, so plain `python proportional_allocation.py` is correct. Outputs `USTore_sales_long_allocated.csv` (+ `allocation_audit.csv` documenting every split). Zero-quantity rows survive the split — a grouped row with 0 units on a given day emits 0 for every constituent instead of being dropped. |
-| 2 | `step2_load_fact_sales.py` | Loads the allocated CSV into `Fact_Sales` (84,399 rows: 68,541 zero-quantity + 15,858 positive; sums to **89,232** units — see Block 0 below for why that's not the older 88,481), routing unresolvable rows to `Exception_Log` instead of dropping them. Item names arrive canonical, so it joins straight to `Dim_Product` and applies no mapping of its own. Derives `cumulative_monthly_units` and `daily_depletion_rate`. |
-| 3 | `step3_fsn_classification.py` | Computes ADUS (Average Daily Units Sold) per SKU, weighting imputed/allocated rows at 0.5, and classifies Fast/Slow/Non-moving at the 80th-percentile ADUS cutoff (currently F=58, S=228, N=233; it was S=230/N=231 before Block 2.2 below). Flags High-Velocity-Limited (HVL) items with thin history. Writes `fsn_class`/`is_hvl` back to `Dim_Product`. |
+| 2 | `step2_load_fact_sales.py` | Loads the allocated CSV into `Fact_Sales` (84,399 rows: 68,541 zero-quantity + 15,858 positive; sums to **89,232** units — see Block 0 below for why that's not the older 88,481), routing unresolvable rows to `Exception_Log` instead of dropping them. Item names arrive canonical, so it joins straight to `Dim_Product` and applies no mapping of its own. Derives `cumulative_monthly_units`, `daily_depletion_rate`, `days_of_supply` and `is_censored` — the four rules behind those are settled in the script's docstring and summarised under Blocks 2.4/2.6 below. |
+| 3 | `step3_fsn_classification.py` | Computes ADUS (Average Daily Units Sold) per SKU, weighting imputed/allocated rows at 0.5, and classifies Fast/Slow/Non-moving at the 80th-percentile ADUS cutoff (currently F=58, S=228, N=233; it was S=230/N=231 before Block 2.2 below). Days flagged `is_censored` are dropped from the ADUS denominator — `EXCLUDE_CENSORED_DAYS = False` reverts that, see Block 2.4 below. Flags High-Velocity-Limited (HVL) items with thin history. Writes `fsn_class`/`is_hvl` back to `Dim_Product`. |
 | 4 | `step4_prophet_forecast.py` | Fits Prophet per Fast SKU with a data-sufficiency tier, keyed on **distinct sale-days (quantity_sold > 0), not raw row count** — currently 38 standard (60+ sale-days), 10 simplified (30-59), 10 rolling-average (<30, no real model). Validates against a naive baseline, writes 30-day forecasts + metrics to `Result_Forecast` / `Result_Forecast_Metrics`. Requires `cmdstan` (see below). |
 
 Supporting/one-off scripts still in the repo: `build_vocab_mapping.py` /
@@ -50,6 +50,14 @@ you're revisiting the vocabulary itself).
   canonical name, not on whatever the tally sheet happened to spell that
   month. Feeding either script a raw CSV now exits 1 with a message
   naming the step to run, rather than quietly half-matching.
+- **A zero in `Fact_Sales` has three possible meanings, and the column
+  that tells them apart is `is_censored`.** 1 = the store had nothing to
+  sell that day, 0 = stock was on hand and nobody bought, NULL = there
+  is no inventory record, so it can't be told. NULL is the majority
+  (83%) and that is a data limitation, not a defect to paper over: only
+  75 of the 286 selling products appear in the inventory workbook at
+  all. Any model averaging over zero-sale days should either exclude
+  `is_censored = 1` or say why it doesn't.
 - **Zero-fill is per-month, not global.** The original converter dropped
   every blank/zero cell, which made genuinely daily data (Oct 2024
   onward) look like sparse episodic tallies. `step0` fixes this, but
@@ -96,14 +104,21 @@ you're revisiting the vocabulary itself).
 
 ## Files intentionally not committed
 
-Regenerable intermediate outputs (`*_mapped.csv` from Step 1) and
-superseded vocabulary-mapping versions are left out to keep the repo
-readable — re-running the pipeline reproduces them. Note that the two
-`*_mapped.csv` files are no longer just diagnostics: allocation reads
-them, so Step 1 has to run before it (that's the point of Block 2.2).
-`ustore.db` itself is gitignored (binary, machine-specific); run
+Superseded vocabulary-mapping versions are left out to keep the repo
+readable. `ustore.db` is gitignored (binary, machine-specific); run
 `create_schema.py` → `populate_dim_date.py` → the pipeline above to
 rebuild it from scratch.
+
+This section used to say the `*_mapped.csv` files from Step 1 were left
+out. That changed with Block 2.2: allocation reads them, so they are
+pipeline inputs rather than diagnostics, and both
+`USTore_sales_long_with_zeros_mapped.csv` and
+`USTore_inventory_excel_long_mapped.csv` are now tracked. Step 1 has to
+run before allocation either way. (Step 1's sales output was also
+renamed — it was `USTore_sales_long_May_Aug2024-May2026_mapped.csv`,
+named after a file it isn't built from.) `vocab_mapping_FINAL_v5.csv`
+and `supplier_mapping.csv` are hand-maintained inputs rather than
+intermediates, and are committed.
 
 ## Status against `CODE_WORK_PLAN_v2.md`
 
@@ -129,6 +144,9 @@ verify and act.
 - **Block 2.1** 🔴 (zero-fill inflating Prophet's tier counts) — fixed,
   see the Step 4 row above
 - **Block 2.2** (map-vs-allocate order) — resolved as map → allocate,
+  details below
+- **Block 2.4** (stockout/censoring flags), **2.6** (`days_of_supply` +
+  the four gap-handling rules), **2.7** (supplier consolidation) —
   details below
 - **Block 2.3** (`is_hvl` as a boolean modifier, not a 4th `fsn_class`
   value) — the *shape* was already correct, but `create_schema.py` was
@@ -242,12 +260,106 @@ its own copy of the vocabulary mapping.
   have changed (`Fact_Sales` rows and the Fast list), so its stored
   forecasts are now stale for a second reason.
 
+**Blocks 2.4 / 2.6 in full — the derived fields and the censoring flag**
+
+`Fact_Sales` gained `days_of_supply` and `is_censored`; `create_schema.py`
+carries both. The four rules the plan wanted signed off are settled in
+`step2_load_fact_sales.py`'s docstring, and the evidence changed since
+the plan was written — the plan's "55% of consecutive per-SKU
+observations are >1 day apart, max gap 67 days" was measured before the
+zero-fill. It is now **3.5%, max gap 156 days**.
+
+1. **First observation per product → `daily_depletion_rate` NULL**
+   (290 rows). Dividing by 1 invented a rate for a day with no
+   preceding interval.
+2. **Same-date rows → one rate per product-day.** 640 date pairs have a
+   product receiving both a direct and an allocated row; the old code
+   gave the second row a gap of 0 clamped to 1, so one day carried two
+   incompatible rates. The numerator is now the product's daily total.
+3. **Long gaps capped at 30 days** (217 product-days). Dividing a real
+   sale by a 156-day gap reports it as a depletion rate near zero.
+   Capping overstates the rate on those rows, which is the safe
+   direction for a field that feeds reorder timing.
+4. **Month boundaries do not reset the interval** (2,011 observations
+   sit across one). Depletion is a physical rate; only
+   `cumulative_monthly_units` resets.
+   **Sundays are deliberately not excluded** — 76 of the 608 tally
+   dates are Sundays and 15 fall on dates flagged `is_store_closed`, so
+   the store demonstrably trades on both. Whether those closure flags
+   are wrong is a Block 5 question, not something to assume here.
+
+`days_of_supply` = estimated units on hand ÷ the product's mean daily
+units over the trailing 28 observed days. Populated on 8,216 rows;
+median 229 days, p90 3,300, max 83,167 — the long tail is real (a large
+stock against a near-zero recent sales rate), not a bug, and it is left
+uncapped rather than clipped to a tidier number. Only 24% of populated
+rows are under 60 days.
+
+`is_censored` (Block 2.4) uses the only stock signal in the project:
+the month's inventory count minus the product's sales earlier in that
+month. **1,787 rows (37 SKUs) are censored** — zero sales on a day the
+item was already out. 12,373 rows are confirmed not censored, and
+**70,239 are NULL**, because the item has no inventory record for that
+month; stock coverage is 16.8% of rows. 51 rows are NULL for a
+different reason: a positive sale on a day the model said stock was
+zero proves an unrecorded restock, so that row and the rest of that
+month are marked unknown rather than forced to fit. The
+"ALL STOCKS ARE TAKEN" notes in the inventory workbook would be a
+second signal but appear on only 3 rows — not usable, worth raising at
+the store visit.
+
+**The flag is used, not just recorded.** `step3_fsn_classification.py`
+drops censored days from the ADUS denominator, since a day with nothing
+to sell is not evidence that an item moves slowly. The counts are
+unchanged (58/228/233 — the cutoff is a percentile, so this reshuffles
+the boundary rather than shifting it) but **four items swap**:
+`White Tote Bag` (289 of its 339 days censored) and `Tiger w/ Box` rise
+S → F; `Corp Jacket V2` and `Y,B VL UST`, with no censored days, drop
+F → S. That is the plan's stated concern — a stocked-out item being
+misread as slow — actually biting on real SKUs. Set
+`EXCLUDE_CENSORED_DAYS = False` to see it the other way. → Divergence
+Register.
+
+**Block 2.7 in full — supplier normalisation**
+
+`supplier_mapping.csv` (new, reviewable, same pattern as the vocabulary
+file) maps all **42 raw supplier strings → 19 suppliers**, splitting the
+`(CONSIGNMENT)`/`(PAID)` suffix into a new `Dim_Product.payment_status`
+column. `step1_apply_mapping.py` applies it and aborts on any unmapped
+string; `verify_data.py` fails if a string in the sales CSV is missing
+from the map, if a `supplier_name` still carries a parenthetical, or if
+a `payment_status` is outside CONSIGNMENT/PAID/UNKNOWN — verified by
+deleting a row from a copy.
+
+- The plan estimated ~15 real suppliers; the true figure is **19**.
+  Three judgment calls account for most of the difference and are
+  flagged in the file's `note` column for the store visit:
+  `STITCH CORP. (BLEEVES)` ×4 collapsed into `STITCH CORP.` (BLEEVES
+  read as a product line, per the plan), `ARTS AND LETTERS (SHIRT
+  HAPPENS)` → `SHIRT HAPPENS`, and `COLLEGE OF SCIENCE AT 100` / `IPEA`
+  / `CENTRAL SEMINARY` kept as separate names although they are UST
+  units commissioning merchandise rather than trade suppliers.
+- **The `(Paid)` orphan is resolved**: it maps to no supplier and
+  `payment_status = PAID`. Same for `Subli. Shirt 2 colors`, an item
+  name typed into the Supplier column. Together 622 rows have no
+  attributable supplier — but **no product lost its supplier**, since
+  every item appearing under those strings also appears under a real
+  one. The 256 `Dim_Product` rows with a NULL supplier are the
+  inventory-only items that have no sales rows at all.
+- **`payment_status` is not really a product attribute**: 103 items are
+  sold under more than one status. `Dim_Product` keeps the modal value
+  and step 1 prints that count, so the simplification is visible. If
+  §3.2's supplier grouping needs per-transaction accuracy, the field
+  belongs on `Fact_Sales` instead — a call for the team.
+
 **Not done — everything else in the plan:**
-- Block 2.4 (stockout/censoring flags), 2.6 (`days_of_supply` +
-  gap-handling rules), 2.7 (supplier name consolidation, 40 strings →
-  ~15 real suppliers)
-- Block 3 (inventory coverage — only 42 canonical items appear in both
-  sales and inventory; needs a group decision + USTore staff input)
+- Block 3 (inventory coverage — needs a group decision + USTore staff
+  input). Measured again while building the censoring flag: **76**
+  canonical items now appear in both sales and inventory, not the plan's
+  42 — canonicalisation and the Block 2.2 reorder both improved it. It
+  is still only 16.8% of `Fact_Sales` rows, and the inventory workbook
+  only spans 2024-11 → 2026-04 against sales running 2024-05 → 2026-07,
+  so everything outside that window has no stock signal at all.
 - Block 4 (the forecasting strategy overhaul: adviser conversation on
   the MAPE≤20% criterion, retargeting to 30-day aggregate demand,
   `prophet_flatlog`, genuine multi-fold walk-forward validation,
