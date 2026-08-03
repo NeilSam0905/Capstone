@@ -42,7 +42,13 @@ CREATE TABLE IF NOT EXISTS Dim_Product (
     item_name       TEXT    NOT NULL,
     category        TEXT,
     unit_price_php  REAL,
+    -- supplier_name is the NORMALISED name from supplier_mapping.csv (42 raw
+    -- strings -> 19 suppliers). The "(CONSIGNMENT)"/"(PAID)" suffix the raw
+    -- strings carried is split out into payment_status, which §3.2's supplier
+    -- grouping needs as its own field rather than buried in the name.
     supplier_name   TEXT,
+    payment_status  TEXT    CHECK (payment_status IN ('CONSIGNMENT', 'PAID', 'UNKNOWN')
+                                   OR payment_status IS NULL),
     lead_time_days  INTEGER,
     fsn_class       TEXT    CHECK (fsn_class IN ('F', 'S', 'N') OR fsn_class IS NULL),
     -- HVL (High-Velocity-Limited) is a modifier on F, not a fourth class:
@@ -84,7 +90,14 @@ CREATE TABLE IF NOT EXISTS Fact_Sales (
     date_id                  INTEGER NOT NULL,
     quantity_sold            INTEGER,
     cumulative_monthly_units INTEGER,          -- derived during ETL
-    daily_depletion_rate     REAL,             -- derived during ETL
+    daily_depletion_rate     REAL,             -- derived during ETL; NULL where
+                                               -- no interval exists to divide by
+    days_of_supply           REAL,             -- derived during ETL; NULL unless
+                                               -- the item has an inventory count
+    -- 1 = zero sale with the stock model saying the item was out; 0 = stock
+    -- believed on hand; NULL = no inventory record, so it cannot be told
+    -- apart from a genuine zero-demand day. See step2_load_fact_sales.py.
+    is_censored              INTEGER,
     imputation_flag          INTEGER DEFAULT 0, -- 1 = split from a price-grouped record
     tally_date_flag          INTEGER DEFAULT 0, -- 1 = historical tally, 0 = live daily record
     transaction_type         TEXT    DEFAULT 'sale',
