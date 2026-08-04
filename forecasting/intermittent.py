@@ -127,9 +127,11 @@ def _smooth(values, alpha, initial):
     return level
 
 
-def _croston_core(y, alpha, method):
+def _croston_core(y, alpha, method, init="mean"):
     if not 0.0 < alpha <= 1.0:
         raise ValueError(f"alpha must be in (0, 1], got {alpha}")
+    if init not in ("mean", "first"):
+        raise ValueError(f"init must be 'mean' or 'first', got {init!r}")
 
     v = np.asarray(y, dtype=float).ravel()
     if v.size == 0:
@@ -143,9 +145,20 @@ def _croston_core(y, alpha, method):
         return CrostonResult(0.0, 0.0, float("nan"), alpha, method,
                              v.size, 0, sizes, intervals)
 
-    # initialise on the first observed demand, then smooth over the rest
-    z_hat = _smooth(sizes[1:], alpha, sizes[0])
-    p_hat = _smooth(intervals[1:], alpha, intervals[0])
+    if init == "first":
+        # Croston's classical initialisation: start at the first observed
+        # demand and smooth over the rest.
+        z_hat = _smooth(sizes[1:], alpha, sizes[0])
+        p_hat = _smooth(intervals[1:], alpha, intervals[0])
+    else:
+        # Default. With a small alpha and few demands, classical
+        # initialisation is dominated by its starting value: an SKU with
+        # four recorded sales leaves z-hat sitting at ~the first size no
+        # matter what followed. Starting from the mean and smoothing over
+        # every observation degrades gracefully to the empirical rate when
+        # data is thin, which is the common case in this dataset.
+        z_hat = _smooth(sizes, alpha, sizes.mean())
+        p_hat = _smooth(intervals, alpha, intervals.mean())
 
     bias = 1.0 if method == "croston" else 1.0 - alpha / 2.0
     point = (z_hat / p_hat) * bias if p_hat > 0 else float("nan")
@@ -154,33 +167,38 @@ def _croston_core(y, alpha, method):
                          v.size, int(sizes.size), sizes, intervals)
 
 
-def croston(y, alpha: float = DEFAULT_ALPHA) -> CrostonResult:
+def croston(y, alpha: float = DEFAULT_ALPHA, init: str = "mean") -> CrostonResult:
     """Croston's method. Returns a CrostonResult; `.point_forecast` is
-    the expected demand per period."""
-    return _croston_core(y, alpha, "croston")
+    the expected demand per period.
+
+    `init="mean"` (default) starts both estimates at the empirical mean;
+    `init="first"` is Croston's classical initialisation. See
+    _croston_core for why the default is not the classical one.
+    """
+    return _croston_core(y, alpha, "croston", init)
 
 
-def sba(y, alpha: float = DEFAULT_ALPHA) -> CrostonResult:
+def sba(y, alpha: float = DEFAULT_ALPHA, init: str = "mean") -> CrostonResult:
     """Syntetos-Boylan Approximation: Croston scaled by (1 - alpha/2) to
     correct Croston's upward bias on intermittent series."""
-    return _croston_core(y, alpha, "sba")
+    return _croston_core(y, alpha, "sba", init)
 
 
 # ---- harness-compatible wrappers -------------------------------------
 # forecasting/evaluate.py calls fit_predict(train_values, horizon) -> array.
 # Croston produces a flat rate, so the horizon is filled with it.
 
-def croston_fit_predict(alpha: float = DEFAULT_ALPHA):
+def croston_fit_predict(alpha: float = DEFAULT_ALPHA, init: str = "mean"):
     def _f(train, horizon):
-        rate = croston(train, alpha).point_forecast
+        rate = croston(train, alpha, init).point_forecast
         return np.full(horizon, 0.0 if not np.isfinite(rate) else rate)
     _f.__name__ = f"croston(alpha={alpha})"
     return _f
 
 
-def sba_fit_predict(alpha: float = DEFAULT_ALPHA):
+def sba_fit_predict(alpha: float = DEFAULT_ALPHA, init: str = "mean"):
     def _f(train, horizon):
-        rate = sba(train, alpha).point_forecast
+        rate = sba(train, alpha, init).point_forecast
         return np.full(horizon, 0.0 if not np.isfinite(rate) else rate)
     _f.__name__ = f"sba(alpha={alpha})"
     return _f
