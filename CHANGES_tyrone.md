@@ -150,6 +150,35 @@ Verified after the fix: `git hash-object` on both CSVs is byte-identical before 
 unless you know what it ran against. Here the test passed, the gates passed, and the data underneath
 had been swapped.
 
+### 2.7 ETS is not bit-reproducible across BLAS backends (found during pre-push verification)
+
+Two questions were put to the regenerated artifact: does it reproduce the documented figures, and is
+the benchmark deterministic across runs. The first passed outright — all eight MASE values match the
+docs to 2 dp, `rolling_median_30` is rank 1 with 0 SKUs priced, TSB is 266 priced at 52.6%.
+
+The second is more interesting. **Within one environment the benchmark is byte-identical**: two
+consecutive full 266-SKU runs produce CSVs with the same `git hash-object`. So there is no unseeded
+shuffle, no dict-ordering dependency and no tie broken by iteration order.
+
+**Across BLAS backends, seven of eight methods are bit-identical and ETS is not:**
+
+| | MKL (Anaconda) | OpenBLAS (pip venv) |
+|---|---:|---:|
+| ETS MASE | 9.290576 | **9.275184** |
+| ETS SKUs priced | 251 | **254** |
+| every other method | identical to 15 dp | identical to 15 dp |
+
+ETS is the only method that fits parameters numerically. MKL and OpenBLAS sum floats in a different
+order, which moves `scipy.optimize`'s L-BFGS-B onto a marginally different path. The other seven are
+closed-form, which is exactly why they are unaffected.
+
+**A seed would not fix this** — it is not randomness. The committed artifact is the OpenBLAS/venv
+run, matching `requirements.txt`. No documented conclusion depends on it: ETS ranks 6th of 8 under
+both, and every figure in `DEGENERATE_FORECAST.md` concerns bit-identical methods. Recorded so that
+someone regenerating and seeing the third decimal move knows it is expected rather than a
+regression. Pinned by `tests/test_determinism.py`, which also fails if any *other* method ever
+acquires an optimiser and widens the caveat. Tightening it is a Batch 3 item.
+
 ---
 
 ## 3. Deviations from the run guide
@@ -308,7 +337,7 @@ regression. To re-check the true baseline, rebuild the database from scratch.
 | `model_benchmark.py` | Seven methods on identical folds, no Prophet |
 | `step5_prescriptive.py` | ROP / Safety Stock / EOQ across a 5×5 grid |
 | `tools/demand_basis_by_anchor.py` | The 30-day demand basis at all 27 month anchors (B14) |
-| `tests/` (7 files, 347 tests) | Property tests. The leakage tests in `test_evaluate.py` and the emptied-fixture tests in `test_gates_can_fail.py` are the ones that matter |
+| `tests/` (8 files, 378 tests) | Property tests. The leakage tests in `test_evaluate.py` and the emptied-fixture tests in `test_gates_can_fail.py` are the ones that matter |
 | `requirements*.txt` | Pinned runtime, dev and Prophet dependency sets |
 | `USTORE_AUTO_RUN_GUIDE_tyrone.md` | The canonical run and verification checklist |
 | `docs/DEGENERATE_FORECAST.md` | Why the most accurate method is unusable (Divergence #21) |
@@ -403,7 +432,7 @@ python tools/provenance_may2024.py              # 11 checks; TBS 4,022; DSR 4,31
 python tools/tier_counts.py                     # 92/51/123 all-moving; 38/10/10 Fast-only
 python tools/audit_price_suffix_skus.py         # 71 suffixed, 12 twins, 8 families
 python tools/demand_basis_by_anchor.py          # 27 anchors; 2026-07 = 79 @30d, 208 @365d
-pytest tests/                                   # 347 passed
+pytest tests/                                   # 378 passed
 python model_benchmark.py                       # 8 methods, both ranking tables (~6 min)
 python step5_prescriptive.py                    # 1,975 rows, all gates pass
 
@@ -493,7 +522,7 @@ together, from scratch, on a clean database.
 Repeated at the end of Batch 2, with the same result: **21/21** and a clean `git status`, then
 **22/22** after re-running `step5_prescriptive.py`. Batch 2 additionally verified the whole checklist
 from a venv built off `requirements.txt` alone with **no Anaconda on PATH** — pipeline, all six
-tools, the eight-method benchmark, the prescriptive step and 347 tests.
+tools, the eight-method benchmark, the prescriptive step and 378 tests.
 
 ---
 
