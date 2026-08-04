@@ -149,6 +149,35 @@ def main():
           f"- reported, not scored\n")
 
     # ---- identical-folds check, as a hard gate --------------------
+    # Population asserts FIRST. "all layouts agree" and "(per_sku != 1).any()"
+    # are both trivially satisfied by an empty frame, and `nunique() == 1`
+    # stays true even if a method contributed no rows at all - so the count
+    # of methods per SKU has to be checked explicitly, not inferred.
+    total_folds = len(results) // len(methods) if methods else 0
+
+    if n_scored == 0:
+        print("FAIL: no SKUs were scored - every gate below would be vacuous")
+        return 1
+
+    methods_per_sku = results.groupby("sku")["method"].nunique()
+    if (methods_per_sku != len(methods)).any():
+        short = methods_per_sku[methods_per_sku != len(methods)]
+        print(f"FAIL: {len(short)} SKU(s) missing methods, e.g. "
+              f"{short.head(3).to_dict()} (expected {len(methods)})")
+        return 1
+
+    folds_per_sku = results.groupby("sku")["fold"].nunique()
+    if (folds_per_sku < MIN_FOLDS).any():
+        short = folds_per_sku[folds_per_sku < MIN_FOLDS]
+        print(f"FAIL: {len(short)} SKU(s) scored on fewer than {MIN_FOLDS} folds")
+        return 1
+
+    # aggregate form of the same property, stated explicitly
+    if total_folds < MIN_FOLDS * n_scored:
+        print(f"FAIL: {total_folds} folds across {n_scored} SKUs is below the "
+              f"{MIN_FOLDS}-per-SKU floor")
+        return 1
+
     layouts = results.groupby(["sku", "method"])["origin"].apply(
         lambda s: tuple(sorted(s)))
     per_sku = layouts.groupby("sku").nunique()
@@ -156,8 +185,12 @@ def main():
         offenders = per_sku[per_sku != 1].index.tolist()[:5]
         print(f"FAIL: methods were scored on different folds for {offenders}")
         return 1
+
+    print(f"[PASS] {n_scored} SKUs scored, each on >= {MIN_FOLDS} folds")
+    print(f"[PASS] all {len(methods)} methods present for every SKU")
     print(f"[PASS] all {len(methods)} methods scored on identical folds "
           f"for all {n_scored} SKUs")
+    print(f"[PASS] {total_folds:,} folds per method, {len(results):,} scored predictions")
 
     # ---- ranking ---------------------------------------------------
     summary = summarise(results)
