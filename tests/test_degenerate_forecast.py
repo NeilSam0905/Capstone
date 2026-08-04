@@ -173,6 +173,26 @@ def test_the_mase_leader_is_not_the_fill_rate_leader(summary):
     assert by_mase != by_fill
 
 
+def test_the_cost_of_usefulness_is_about_ten_percent(summary):
+    """The trade-off, as a number rather than as prose.
+
+    TSB prices all 266 SKUs; the rolling median prices none. The error
+    metric prefers the rolling median, and the size of that preference is
+    the price of a usable system. Asserted so the figure quoted in
+    DEGENERATE_FORECAST.md cannot drift away from the artifact.
+    """
+    s = summary.set_index("method")
+    rm, tsb = float(s.loc["rolling_median_30", "mase"]), float(s.loc["tsb", "mase"])
+
+    assert int(s.loc["rolling_median_30", "n_skus_priced"]) == 0
+    assert int(s.loc["tsb", "n_skus_priced"]) == 266
+
+    extra = (tsb / rm) - 1.0
+    assert 0.09 < extra < 0.11, (
+        f"the usefulness premium is {extra:.2%}, no longer ~10% - "
+        f"DEGENERATE_FORECAST.md quotes 10.2% and needs updating")
+
+
 def test_the_mase_leader_has_the_worst_fill_rate(summary):
     """Not merely 'not best' - on this data the error-metric winner is the
     service-level loser."""

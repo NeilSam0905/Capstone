@@ -8,30 +8,41 @@ a clean clone. That guarantee is worth only as much as the determinism
 underneath it, so this pins what is actually true - which is not "all of
 it".
 
-Established empirically on 2026-08-05 with two consecutive full 266-SKU
-runs and a cross-environment comparison:
+The accurate claim, established empirically on 2026-08-05 with two
+consecutive full 266-SKU runs plus a cross-environment comparison:
+
+    All eight methods are bit-reproducible under the documented
+    environment. ETS moves only if you substitute a different BLAS.
 
   * **Within one environment**: byte-identical. Both
     `model_benchmark_results.csv` and `model_benchmark_summary.csv` hash
     the same across consecutive runs. No unseeded shuffle, no
     dict-ordering dependency, no tie broken by iteration order.
 
-  * **Across BLAS backends**: seven of the eight methods are bit-identical;
-    **ETS is not**. Anaconda's scipy links MKL, a pip venv's links
-    OpenBLAS, and the different float summation order inside
-    `scipy.optimize`'s L-BFGS-B sends the optimiser down a marginally
-    different path. Measured: MASE 9.290576 (MKL) vs 9.275184 (OpenBLAS),
-    and 251 vs 254 SKUs priced.
+  * **Under `requirements.txt`**: reproduces the committed artifact
+    exactly, ETS included. PyPI's numpy/scipy wheels bundle OpenBLAS, and
+    the committed artifact is an OpenBLAS run.
+
+  * **If the BLAS is swapped** - most commonly by installing scipy from
+    conda, which links MKL - seven of the eight methods stay identical to
+    15 decimal places and **ETS does not**: MASE 9.290576 (MKL) vs
+    9.275184 (OpenBLAS), and 251 vs 254 SKUs priced.
 
 ETS is the only method that fits parameters numerically; the other seven
 are closed-form, which is exactly why they are unaffected. A random seed
 would not fix this - it is not randomness.
 
-The consequence is bounded and does not touch any documented conclusion:
-ETS ranks 6th of 8 either way, and every result in DEGENERATE_FORECAST.md
-concerns methods that are bit-identical. Recorded so that someone
-regenerating the artifact and seeing the third decimal move knows it is
-expected. Tightening this is a Batch 3 item.
+Note which of those two numbers matters. The MASE delta is 0.17%, real
+noise. The SKUs-priced difference is a DISCRETE OUTCOME FLIP: three SKUs
+sit close enough to the pricing threshold that whether ETS forecasts them
+positive depends on the BLAS. Bounded - ETS ranks 6th of 8 under both,
+neighbours at 8.73 and 12.08, so no ranking can move - but ETS's pricing
+decision is numerically marginal for a handful of SKUs, which is a
+stronger statement than "the third decimal moves".
+
+No documented conclusion depends on it: every result in
+DEGENERATE_FORECAST.md concerns bit-identical methods. Tightening this is
+a Batch 3 item.
 ------------------------------------------------------------------
 """
 import numpy as np
