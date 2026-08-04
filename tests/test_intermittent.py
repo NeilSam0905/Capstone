@@ -104,8 +104,8 @@ def test_negative_demand_is_rejected():
 
 # ---- hand-computed reference -----------------------------------------
 
-def test_reference_series_matches_a_hand_computation():
-    """y = [0, 0, 4, 0, 6], alpha = 0.5, worked by hand:
+def test_classical_init_reference_series_matches_a_hand_computation():
+    """init='first', y = [0, 0, 4, 0, 6], alpha = 0.5, worked by hand:
 
         sizes     = [4, 6]      intervals = [3, 2]
         z: init 4 -> 4 + 0.5*(6-4) = 5.0
@@ -114,28 +114,75 @@ def test_reference_series_matches_a_hand_computation():
         sba     = 2.0 * (1 - 0.25) = 1.5
     """
     y = [0, 0, 4, 0, 6]
-    c = croston(y, alpha=0.5)
+    c = croston(y, alpha=0.5, init="first")
     assert c.size_estimate == pytest.approx(5.0)
     assert c.interval_estimate == pytest.approx(2.5)
     assert c.point_forecast == pytest.approx(2.0)
-    assert sba(y, alpha=0.5).point_forecast == pytest.approx(1.5)
+    assert sba(y, alpha=0.5, init="first").point_forecast == pytest.approx(1.5)
+
+
+def test_mean_init_reference_series_matches_a_hand_computation():
+    """init='mean' (the default), same series, alpha = 0.5:
+
+        z: init mean(4,6)=5 -> 5+0.5*(4-5)=4.5 -> 4.5+0.5*(6-4.5)=5.25
+        p: init mean(3,2)=2.5 -> 2.5+0.5*(3-2.5)=2.75 -> 2.75+0.5*(2-2.75)=2.375
+        croston = 5.25 / 2.375
+    """
+    y = [0, 0, 4, 0, 6]
+    c = croston(y, alpha=0.5)
+    assert c.size_estimate == pytest.approx(5.25)
+    assert c.interval_estimate == pytest.approx(2.375)
+    assert c.point_forecast == pytest.approx(5.25 / 2.375)
 
 
 def test_alpha_one_uses_only_the_most_recent_demand():
-    """alpha = 1 discards all history: the estimates collapse to the last
-    size and the last interval."""
+    """alpha = 1 discards all history and the initialisation with it, so
+    both init modes collapse to the last size and the last interval."""
     y = [9, 0, 0, 0, 0, 2]          # last size 2, last interval 5
-    c = croston(y, alpha=1.0)
-    assert c.size_estimate == pytest.approx(2.0)
-    assert c.interval_estimate == pytest.approx(5.0)
-    assert c.point_forecast == pytest.approx(0.4)
+    for init in ("first", "mean"):
+        c = croston(y, alpha=1.0, init=init)
+        assert c.size_estimate == pytest.approx(2.0)
+        assert c.interval_estimate == pytest.approx(5.0)
+        assert c.point_forecast == pytest.approx(0.4)
 
 
 def test_single_demand_series_uses_the_initialisation_directly():
-    c = croston([0, 0, 0, 7], alpha=0.3)
-    assert c.size_estimate == pytest.approx(7.0)
-    assert c.interval_estimate == pytest.approx(4.0)
-    assert c.point_forecast == pytest.approx(1.75)
+    for init in ("first", "mean"):
+        c = croston([0, 0, 0, 7], alpha=0.3, init=init)
+        assert c.size_estimate == pytest.approx(7.0)
+        assert c.interval_estimate == pytest.approx(4.0)
+        assert c.point_forecast == pytest.approx(1.75)
+
+
+def test_mean_init_is_far_less_sensitive_to_a_thin_series():
+    """The failure that made this the default. Four sales clustered at the
+    start of a long series: classical init leaves the size estimate stuck
+    near the first demand, mean init lands on the empirical mean."""
+    y = np.zeros(600)
+    y[[0, 1, 3, 4]] = [200.0, 20.0, 20.0, 25.0]
+
+    classical = croston(y, alpha=0.1, init="first")
+    mean_init = croston(y, alpha=0.1, init="mean")
+
+    assert classical.size_estimate > 150          # still anchored to the 200
+    assert mean_init.size_estimate < 100          # near mean(200,20,20,25)=66.25
+    assert mean_init.point_forecast < classical.point_forecast
+
+
+def test_init_must_be_a_known_mode():
+    with pytest.raises(ValueError, match="init must be"):
+        croston(INTERMITTENT, 0.2, init="whatever")
+
+
+def test_croston_cannot_see_trailing_zeros():
+    """A structural property worth pinning, because it explains the
+    benchmark result: Croston updates only on periods when demand
+    arrives, so an SKU that stops selling keeps its last rate forever.
+    Appending 500 zero days changes nothing."""
+    y = np.array([0, 5, 0, 0, 3, 0, 4], dtype=float)
+    extended = np.concatenate([y, np.zeros(500)])
+    assert (croston(extended, 0.2).point_forecast
+            == pytest.approx(croston(y, 0.2).point_forecast))
 
 
 # ---- intermittency behaviour -----------------------------------------
