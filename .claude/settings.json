@@ -1,0 +1,6 @@
+{
+  "attribution": { "commit": "", "pr": "" },
+  "permissions": {
+    "ask": ["Bash(git push:*)", "Bash(git rebase:*)", "Bash(git filter-repo:*)"]
+  }
+}
