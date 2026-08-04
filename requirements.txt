@@ -1,0 +1,33 @@
+# USTore capstone - runtime dependencies
+#
+# Everything the ETL pipeline, the benchmark and the prescriptive math
+# actually import. Pinned to the versions the 2026-08-04 rebuild was
+# verified against, on Python 3.13.9.
+#
+# Verified by creating an empty venv, installing ONLY this file, and
+# running the full Part C checklist with no Anaconda on PATH. If you add
+# an import, add it here and re-run that check - the point of this file is
+# that a clean clone reproduces Chapter 4, and an undeclared dependency
+# silently breaks that. `rapidfuzz` is in here precisely because it was
+# such a case: build_vocab_mapping.py imports it and it was not installed
+# in the environment Batch 1 ran in, so that script could not run at all.
+#
+#   python -m venv .venv
+#   .venv/Scripts/activate      # Windows;  source .venv/bin/activate elsewhere
+#   pip install -r requirements.txt
+#
+# Prophet is deliberately NOT here - see requirements-prophet.txt.
+#
+# Scope of the verification, stated honestly: the venv used for the check
+# was created from the only real interpreter on the verifying machine,
+# which is an Anaconda build of CPython 3.13.9, so it inherits that
+# stdlib. What is proven is that this file covers every THIRD-PARTY import
+# the checklist needs and that nothing Anaconda-specific is required - the
+# run completed with no Anaconda directory on PATH. It is not a claim that
+# the code was exercised against a differently-built CPython.
+
+pandas==2.3.3
+numpy==2.3.5
+scipy==1.16.3
+openpyxl==3.1.5
+rapidfuzz==3.14.5
