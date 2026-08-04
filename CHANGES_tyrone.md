@@ -437,7 +437,7 @@ python tools/assert_invariants.py               # 21/21, exit 0
 | A16 | `bae34d2` | analysis: 30-day demand basis across all month anchors (measurement only) |
 | A17 | `1866a9d` | analysis: add decision-metric ranking beside error-metric ranking (no selection) |
 | A18 | `87db696` | docs: pin the degenerate-forecast result (Divergence #21) |
-| A19 | — | docs: fold Part C corrections and binary-asset check into the canonical checklist |
+| A19 | `e2cf423` | docs: fold Part C corrections and binary-asset check into the canonical checklist |
 
 No commit carries an AI-attribution trailer.
 
@@ -454,6 +454,11 @@ create_schema → populate_dim_date → step1_apply_mapping
 Result: **21/21 baseline contract checks passed**, and `git status --porcelain` was **empty** — no
 modified CSVs after a full regeneration. That is the A1 fix and the whole data contract confirmed
 together, from scratch, on a clean database.
+
+Repeated at the end of Batch 2, with the same result: **21/21** and a clean `git status`, then
+**22/22** after re-running `step5_prescriptive.py`. Batch 2 additionally verified the whole checklist
+from a venv built off `requirements.txt` alone with **no Anaconda on PATH** — pipeline, all six
+tools, the eight-method benchmark, the prescriptive step and 345 tests.
 
 ---
 
