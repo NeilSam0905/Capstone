@@ -66,6 +66,17 @@ MAX_FOLDS = 12          # most recent 12 origins = ~360 days of scoring
 ALPHA = 0.1
 BETA = 0.1              # TSB's probability-smoothing constant
 
+# ---- the decision-metric side -------------------------------------
+# A single cell of A10's sensitivity grid, used to turn each forecast into
+# a stocking decision so the methods can be compared on what the system is
+# FOR, not only on forecast error. These two numbers are PROVISIONAL in
+# exactly the sense A10 means it - nobody at USTore has confirmed a lead
+# time or a cost ratio (deferred decision B9). They are held fixed here so
+# the comparison between methods is like-for-like; they are not a claim
+# about the store's actual parameters.
+SERVICE_LEAD_TIME = 7          # days   [PROVISIONAL - pending Block 5]
+SERVICE_COST_RATIO = 1.0       # S/H    [PROVISIONAL - pending Block 5]
+
 
 def build_methods(quick=False):
     """Insertion order is NOT the ranking order - summarise() sorts on
@@ -150,6 +161,9 @@ def main():
         print("No SKU had enough history to score. Nothing written.")
         return 1
 
+    fsn_class = dict(sqlite3.connect(DB_NAME).execute(
+        "SELECT product_id, fsn_class FROM Dim_Product").fetchall())
+    results = service_metrics(results, series, fsn_class)
     results["item_name"] = results["sku"].map(names)
     results.to_csv(OUT_CSV, index=False, lineterminator="\n")
 
@@ -208,13 +222,57 @@ def main():
     beats = beats_naive(results)
     summary["pct_skus_beating_naive"] = (
         summary["method"].map(beats).astype(float).round(1))
+
+    # decision-metric columns, alongside the error-metric ones
+    priced = skus_priced(series, methods)
+    svc = (results.groupby("method")
+                  .agg(units_served=("units_served", "sum"),
+                       units_short=("units_short", "sum"),
+                       units_held=("units_held", "sum"),
+                       demand=("actual_30d", "sum"))
+                  .reset_index())
+    svc["fill_rate_at_target"] = (svc["units_served"] / svc["demand"]).round(4)
+    summary = summary.merge(
+        svc[["method", "fill_rate_at_target", "units_short", "units_held"]],
+        on="method", how="left")
+    summary["n_skus_priced"] = summary["method"].map(priced).astype(int)
     summary.to_csv(SUMMARY_CSV, index=False, lineterminator="\n")
 
+    err_cols = ["method", "mae", "rmse", "mase", "pct_skus_beating_naive"]
+    dec_cols = ["method", "n_skus_priced", "fill_rate_at_target",
+                "units_short", "units_held"]
+
     print("\n" + "=" * 78)
-    print("RANKING - ordered by MASE, with MAE as the tie-break")
+    print("TABLE 1 - ERROR METRIC: ordered by MASE, MAE as tie-break")
     print("=" * 78)
-    print(summary.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+    print(summary[err_cols].to_string(index=False,
+                                      float_format=lambda x: f"{x:.4f}"))
+
+    by_fill = summary.sort_values(
+        ["fill_rate_at_target", "n_skus_priced"], ascending=False,
+        kind="stable").reset_index(drop=True)
+
+    print("\n" + "=" * 78)
+    print(f"TABLE 2 - DECISION METRIC: ordered by fill rate at lead time "
+          f"{SERVICE_LEAD_TIME}d,")
+    print(f"           cost ratio {SERVICE_COST_RATIO} "
+          f"[PROVISIONAL - pending Block 5 / B9]")
     print("=" * 78)
+    print(by_fill[dec_cols].to_string(index=False,
+                                      float_format=lambda x: f"{x:.4f}"))
+    print("=" * 78)
+    print("""
+The two tables rank the same eight methods and do not agree. That
+disagreement is the point of printing both: Table 1 asks which method is
+least wrong, Table 2 asks which one would have met demand. `n_skus_priced`
+is the column to read first - a method that prices zero SKUs cannot stock
+anything, whatever its error metric says.
+
+Safety stock in Table 2 uses A10's formula at one fixed grid cell, with
+sigma computed from each fold's TRAINING slice only. The lead time and
+cost ratio are provisional placeholders held constant so the comparison
+is like-for-like; they are not USTore's actual parameters (B9).
+""")
     print("""
 READING NOTES - three things that will otherwise be misread.
 
@@ -248,7 +306,108 @@ deferred decision B3, and it sits downstream of B2 (whether the MAPE <= 20%
 gate in section 3.3.4 survives at all). No winner is declared here.
 """)
     print(f"Wrote {SUMMARY_CSV}")
-    return 0
+
+    # ---- A17 gates -------------------------------------------------
+    print("=== ranking gates ===")
+    ok = True
+
+    same = set(summary["method"]) == set(by_fill["method"]) == set(methods)
+    print(f"[{'PASS' if same else 'FAIL'}] both tables rank the same "
+          f"{len(methods)} methods")
+    ok &= same
+
+    reported = summary["n_skus_priced"].notna().all() and len(summary) == len(methods)
+    print(f"[{'PASS' if reported else 'FAIL'}] n_skus_priced reported for every method")
+    ok &= bool(reported)
+
+    filled = summary["fill_rate_at_target"].between(0.0, 1.0).all()
+    print(f"[{'PASS' if filled else 'FAIL'}] every fill rate within [0, 1]")
+    ok &= bool(filled)
+
+    # The "no selection language" property is checked end-to-end against
+    # this script's real stdout by tests/test_benchmark_ranking.py -
+    # scanning a variable from inside the script would only ever inspect
+    # the strings someone remembered to route through it.
+
+    return 0 if ok else 1
+
+
+def service_metrics(results, series, fsn_class):
+    """Turn each forecast into a stocking decision and score the outcome.
+
+    Per fold: stock = forecast + safety stock, where safety stock is
+    A10's formula (Z x sigma x sqrt(lead time)) at the fixed grid cell
+    above. Then
+
+        served = min(actual, stock)      short = max(0, actual - stock)
+                                         held  = max(0, stock - actual)
+
+    sigma is computed from the fold's TRAINING slice only. Using the whole
+    series would leak the test window into the safety stock and quietly
+    flatter every method - the same leakage the harness is built to
+    prevent, reintroduced through the back door.
+
+    This is a service-level view, not a cost optimisation: it says how
+    much demand each method would actually have met.
+    """
+    from step5_prescriptive import Z_BY_CLASS
+
+    served = np.zeros(len(results))
+    short = np.zeros(len(results))
+    held = np.zeros(len(results))
+    ss_col = np.zeros(len(results))
+
+    # sigma depends only on (sku, origin), not on the method - cache it so
+    # this is one pass over the folds rather than one per method
+    sigma_cache = {}
+
+    for i, (sku, origin, pred, actual) in enumerate(zip(
+            results["sku"].to_numpy(), results["origin"].to_numpy(),
+            results["pred_30d"].to_numpy(), results["actual_30d"].to_numpy())):
+        key = (sku, origin)
+        if key not in sigma_cache:
+            train = series[sku][:origin]
+            sigma_cache[key] = float(np.std(train, ddof=1)) if train.size > 1 else 0.0
+        sigma = sigma_cache[key]
+
+        z = Z_BY_CLASS.get(fsn_class.get(sku), 0.0)
+        ss = z * sigma * np.sqrt(SERVICE_LEAD_TIME)
+        stock = max(pred + ss, 0.0)
+
+        ss_col[i] = ss
+        served[i] = min(actual, stock)
+        short[i] = max(0.0, actual - stock)
+        held[i] = max(0.0, stock - actual)
+
+    out = results.copy()
+    out["safety_stock"] = ss_col
+    out["stock_level"] = np.maximum(out["pred_30d"] + ss_col, 0.0)
+    out["units_served"] = served
+    out["units_short"] = short
+    out["units_held"] = held
+    return out
+
+
+def skus_priced(series, methods):
+    """How many SKUs each method would actually price.
+
+    Runs each method on the FULL history, exactly as step5_prescriptive.py
+    would, and counts the SKUs whose 30-day forecast is positive. A method
+    that forecasts zero gives no annual demand, so there is no EOQ to
+    compute and the SKU cannot be stocked from it at all.
+
+    This is the column that exposes the degenerate forecast: it is not a
+    subtlety of the error metric, it is the number of SKUs the system
+    could actually act on.
+    """
+    out = {}
+    for name, fn in methods.items():
+        n = 0
+        for values in series.values():
+            if float(np.sum(fn(np.asarray(values, dtype=float), HORIZON))) > 0:
+                n += 1
+        out[name] = n
+    return out
 
 
 def beats_naive(results):
