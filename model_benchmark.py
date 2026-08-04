@@ -137,7 +137,22 @@ def main():
                     help="benchmark only the first N SKUs (for a smoke run)")
     ap.add_argument("--quick", action="store_true",
                     help="skip ETS parameter optimisation")
+    # Output paths are options so that a test running this as a subprocess
+    # can write somewhere harmless. They used to be module constants, which
+    # meant `pytest` silently overwrote the committed 266-SKU results with a
+    # 5-SKU smoke run - and the smoke run got committed.
+    ap.add_argument("--out", default=OUT_CSV,
+                    help="per-fold results CSV (default: %(default)s)")
+    ap.add_argument("--summary-out", default=SUMMARY_CSV,
+                    help="ranked summary CSV (default: %(default)s)")
     args = ap.parse_args()
+
+    if args.limit and (args.out == OUT_CSV or args.summary_out == SUMMARY_CSV):
+        print(f"REFUSING to overwrite the committed artifacts with a "
+              f"{args.limit}-SKU subset.\n"
+              f"Pass --out/--summary-out to write elsewhere, or drop --limit "
+              f"for a full run.")
+        return 1
 
     con = sqlite3.connect(DB_NAME)
     series, names, index = load_daily_series(con, args.limit)
@@ -165,11 +180,11 @@ def main():
         "SELECT product_id, fsn_class FROM Dim_Product").fetchall())
     results = service_metrics(results, series, fsn_class)
     results["item_name"] = results["sku"].map(names)
-    results.to_csv(OUT_CSV, index=False, lineterminator="\n")
+    results.to_csv(args.out, index=False, lineterminator="\n")
 
     n_scored = results["sku"].nunique()
     print(f"Scored {n_scored} SKUs x {len(methods)} methods "
-          f"in {elapsed:.1f}s -> {OUT_CSV} ({len(results):,} rows)")
+          f"in {elapsed:.1f}s -> {args.out} ({len(results):,} rows)")
     print(f"Insufficient history (<{MIN_FOLDS} folds): {len(insufficient)} SKUs "
           f"- reported, not scored\n")
 
@@ -236,7 +251,7 @@ def main():
         svc[["method", "fill_rate_at_target", "units_short", "units_held"]],
         on="method", how="left")
     summary["n_skus_priced"] = summary["method"].map(priced).astype(int)
-    summary.to_csv(SUMMARY_CSV, index=False, lineterminator="\n")
+    summary.to_csv(args.summary_out, index=False, lineterminator="\n")
 
     err_cols = ["method", "mae", "rmse", "mase", "pct_skus_beating_naive"]
     dec_cols = ["method", "n_skus_priced", "fill_rate_at_target",
@@ -305,7 +320,7 @@ This is a MEASUREMENT, not a selection. Which model USTore should use is
 deferred decision B3, and it sits downstream of B2 (whether the MAPE <= 20%
 gate in section 3.3.4 survives at all). No winner is declared here.
 """)
-    print(f"Wrote {SUMMARY_CSV}")
+    print(f"Wrote {args.summary_out}")
 
     # ---- A17 gates -------------------------------------------------
     print("=== ranking gates ===")
