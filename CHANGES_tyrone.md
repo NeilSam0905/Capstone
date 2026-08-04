@@ -7,7 +7,7 @@
 | **Operator** | Tyrone Yazon <tyronegryneth.yazon.cics@ust.edu.ph> |
 | **Date** | 2026-08-04 (Batch 1, A0–A11) · 2026-08-05 (Batch 2, A12–A19) |
 | **Model / effort** | Claude Opus 5, effort `high` |
-| **Environment** | Windows 11, Anaconda Python 3.13.9. pandas 2.3.3, numpy 2.3.5, scipy 1.16.3, openpyxl 3.1.5, pytest 8.4.2 — all already present, no `pip install` needed and no venv created |
+| **Environment** | Windows 11, CPython 3.13.9. Batch 1 ran against Anaconda base with nothing declared; Batch 2 pinned `requirements.txt` and re-verified the whole checklist from a clean venv with no Anaconda on PATH |
 
 ---
 
@@ -116,6 +116,39 @@ ranking B3 depends on.
 
 A single-point comparison would have missed it entirely. The **parameter sweep** caught it, and that
 asymmetry is now itself pinned by `test_the_found_defect_is_invisible_at_low_gamma`.
+
+### 2.6 A test was overwriting a committed data artifact (found during pre-push verification)
+
+Caught by the pre-push `git diff --stat neil..tyrone`, whose insertion count was far too low for a
+25,000-row CSV.
+
+`tests/test_benchmark_ranking.py` runs `model_benchmark.py --limit 5 --quick` as a subprocess to
+scan its real output. The script wrote to its default output paths — which are **tracked files**. So
+running `pytest` silently replaced the committed 266-SKU benchmark results with a 5-SKU smoke run,
+and in commit `1866a9d` I staged those CSVs immediately after a pytest invocation. The committed
+artifact recorded `n_skus = 5, n_folds = 60`.
+
+Nothing else would have caught it. Every assertion in that test file passes on a 5-SKU summary, and
+`tests/test_degenerate_forecast.py` — which reads the summary — also passes, because the qualitative
+result (rolling median ranks first, prices zero) holds at any scale. The numbers in
+`DEGENERATE_FORECAST.md` were correct because they were transcribed from the full run; the artifact
+backing them was not.
+
+Three fixes, so this cannot recur:
+
+- Output paths are now `--out` / `--summary-out` options, and the test writes into pytest's
+  `tmp_path`. The fixture also asserts the tracked files' mtimes are unchanged across the subprocess
+  call.
+- `--limit` combined with a default output path is **refused outright**, exit 1.
+- `test_tracked_artifacts_are_the_full_run_not_a_subset` asserts the committed summary covers 266
+  SKUs and 3,192 folds, so a substituted subset fails loudly.
+
+Verified after the fix: `git hash-object` on both CSVs is byte-identical before and after a full
+`pytest tests/` run. The artifacts were regenerated from a complete 266-SKU run.
+
+**The general lesson, which is the same one as §2.3 and §2.4:** a test that passes is not evidence
+unless you know what it ran against. Here the test passed, the gates passed, and the data underneath
+had been swapped.
 
 ---
 
@@ -275,7 +308,7 @@ regression. To re-check the true baseline, rebuild the database from scratch.
 | `model_benchmark.py` | Seven methods on identical folds, no Prophet |
 | `step5_prescriptive.py` | ROP / Safety Stock / EOQ across a 5×5 grid |
 | `tools/demand_basis_by_anchor.py` | The 30-day demand basis at all 27 month anchors (B14) |
-| `tests/` (7 files, 345 tests) | Property tests. The leakage tests in `test_evaluate.py` and the emptied-fixture tests in `test_gates_can_fail.py` are the ones that matter |
+| `tests/` (7 files, 347 tests) | Property tests. The leakage tests in `test_evaluate.py` and the emptied-fixture tests in `test_gates_can_fail.py` are the ones that matter |
 | `requirements*.txt` | Pinned runtime, dev and Prophet dependency sets |
 | `USTORE_AUTO_RUN_GUIDE_tyrone.md` | The canonical run and verification checklist |
 | `docs/DEGENERATE_FORECAST.md` | Why the most accurate method is unusable (Divergence #21) |
@@ -370,7 +403,7 @@ python tools/provenance_may2024.py              # 11 checks; TBS 4,022; DSR 4,31
 python tools/tier_counts.py                     # 92/51/123 all-moving; 38/10/10 Fast-only
 python tools/audit_price_suffix_skus.py         # 71 suffixed, 12 twins, 8 families
 python tools/demand_basis_by_anchor.py          # 27 anchors; 2026-07 = 79 @30d, 208 @365d
-pytest tests/                                   # 345 passed
+pytest tests/                                   # 347 passed
 python model_benchmark.py                       # 8 methods, both ranking tables (~6 min)
 python step5_prescriptive.py                    # 1,975 rows, all gates pass
 
@@ -458,7 +491,7 @@ together, from scratch, on a clean database.
 Repeated at the end of Batch 2, with the same result: **21/21** and a clean `git status`, then
 **22/22** after re-running `step5_prescriptive.py`. Batch 2 additionally verified the whole checklist
 from a venv built off `requirements.txt` alone with **no Anaconda on PATH** — pipeline, all six
-tools, the eight-method benchmark, the prescriptive step and 345 tests.
+tools, the eight-method benchmark, the prescriptive step and 347 tests.
 
 ---
 

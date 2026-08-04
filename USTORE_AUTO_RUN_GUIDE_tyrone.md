@@ -50,7 +50,7 @@ python tools/provenance_may2024.py               # 11 checks; TBS 4,022; DSR 4,3
 python tools/tier_counts.py                      # 92/51/123 all-moving; 38/10/10 Fast-only
 python tools/audit_price_suffix_skus.py          # 71 suffixed, 12 twins, 8 families
 python tools/demand_basis_by_anchor.py           # 27 anchors; 2026-07 gives 79 @30d, 208 @365d
-pytest tests/                                    # 345 passed
+pytest tests/                                    # 347 passed
 python model_benchmark.py                        # 8 methods, both ranking tables (~6 min)
 python step5_prescriptive.py                     # 1,975 rows, N excluded, all gates pass
 

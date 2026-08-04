@@ -33,16 +33,62 @@ BANNED = [
 ]
 
 
+TRACKED_ARTIFACTS = ["model_benchmark_results.csv", "model_benchmark_summary.csv"]
+
+
 @pytest.fixture(scope="module")
-def benchmark_output():
+def benchmark_output(tmp_path_factory):
+    """Run the real benchmark on a small subset, writing OUTSIDE the repo.
+
+    This used to write to the default paths, which are tracked files. So
+    running the test suite silently replaced the committed 266-SKU results
+    with a 5-SKU smoke run - and that smoke run was then committed, because
+    the CSVs were staged straight after a pytest invocation. A test must
+    not have side effects on tracked data.
+    """
     if not os.path.exists("ustore.db"):
         pytest.skip("ustore.db not built")
+
+    out = tmp_path_factory.mktemp("bench")
+    before = {p: os.path.getmtime(p) for p in TRACKED_ARTIFACTS if os.path.exists(p)}
+
     r = subprocess.run(
-        [sys.executable, "model_benchmark.py", "--limit", "5", "--quick"],
+        [sys.executable, "model_benchmark.py", "--limit", "5", "--quick",
+         "--out", str(out / "results.csv"),
+         "--summary-out", str(out / "summary.csv")],
         capture_output=True, text=True, timeout=900)
     assert r.returncode == 0, f"benchmark failed:\n{r.stdout[-3000:]}\n{r.stderr[-2000:]}"
     assert len(r.stdout) > 500, "suspiciously little output to scan"
+
+    after = {p: os.path.getmtime(p) for p in TRACKED_ARTIFACTS if os.path.exists(p)}
+    assert before == after, (
+        f"the benchmark modified tracked artifacts: "
+        f"{[p for p in before if before[p] != after.get(p)]}")
+
     return r.stdout
+
+
+def test_a_limited_run_refuses_to_overwrite_the_committed_artifacts():
+    """The guard that makes the bug above unrepeatable: --limit without an
+    explicit output path is refused outright."""
+    r = subprocess.run(
+        [sys.executable, "model_benchmark.py", "--limit", "3", "--quick"],
+        capture_output=True, text=True, timeout=900)
+    assert r.returncode == 1
+    assert "REFUSING to overwrite" in r.stdout
+
+
+def test_tracked_artifacts_are_the_full_run_not_a_subset():
+    """Guards the artifact itself. A 5-SKU summary passes every other test
+    in this file, so nothing else would notice the substitution."""
+    import pandas as pd
+    if not os.path.exists("model_benchmark_summary.csv"):
+        pytest.skip("benchmark has not been run")
+    s = pd.read_csv("model_benchmark_summary.csv")
+    assert (s["n_skus"] == 266).all(), (
+        f"committed summary covers {sorted(set(s['n_skus']))} SKUs, not 266 - "
+        f"a limited run was committed over the full one")
+    assert (s["n_folds"] == 3192).all()
 
 
 def test_output_contains_no_selection_language(benchmark_output):
