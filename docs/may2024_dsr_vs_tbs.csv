@@ -1,0 +1,88 @@
+item_label,dsr_units,tbs_units,delta,present_in
+Arch,33,0,-33,dsr_only
+Arch @320,0,33,33,tbs_only
+Back pack,0,1,1,tbs_only
+Backpack Bag,1,0,-1,dsr_only
+Bag,26,26,0,both
+Baller,29,29,0,both
+Caps,9,9,0,both
+Eco Bag,49,0,-49,dsr_only
+Eco Bag @ 130,0,34,34,tbs_only
+Eco Bag @80,0,20,20,tbs_only
+Eco Bag CGEEE!,12,12,0,both
+Front Tiger Hoodie,7,0,-7,dsr_only
+GT 375,0,6,6,tbs_only
+GT Shirt,6,0,-6,dsr_only
+Hoodie,3,3,0,both
+Hoodies Breaker,0,65,65,tbs_only
+Jacket,44,0,-44,dsr_only
+Jacket @1900,0,44,44,tbs_only
+Keychain,214,201,-13,both
+Keychain @160,0,7,7,tbs_only
+Lanyard,133,13,-120,both
+Lanyard @180,0,46,46,tbs_only
+Lanyard @190,0,70,70,tbs_only
+Laptop Bag,1,1,0,both
+Long Sticker,7,7,0,both
+Main Building,17,17,0,both
+Mug,7,0,-7,dsr_only
+Mug @170,0,7,7,tbs_only
+NB,265,0,-265,dsr_only
+NB @100,0,265,265,tbs_only
+Old Umbrella,41,0,-41,dsr_only
+Oversized Sweatshirt,4,4,0,both
+Polo Shirt,22,0,-22,dsr_only
+Polo Shirt @800,0,22,22,tbs_only
+Poloshirt 123455,1,0,-1,dsr_only
+Poloshirt 123456,17,0,-17,dsr_only
+Poloshirt 123456 @860,0,17,17,tbs_only
+Poloshirt 3 Color,1,0,-1,dsr_only
+Poloshirt 3 Colors,6,0,-6,dsr_only
+Poloshirt 3 Colors @800,0,8,8,tbs_only
+Sash Big,4,4,0,both
+Sash Small,140,140,0,both
+Scarves,8,8,0,both
+Script Santo Tomas with Tiger Back (B),27,0,-27,dsr_only
+Shabby Hat,35,35,0,both
+Shirts,28,228,200,both
+Side Tiger Hoodie,6,0,-6,dsr_only
+Sling Bag,94,94,0,both
+Sticker,336,0,-336,dsr_only
+Sticker @ 115,0,22,22,tbs_only
+Sticker @20,0,24,24,tbs_only
+Sticker Pack,12,12,0,both
+Subli. Shirt,116,0,-116,dsr_only
+Sublimation Shirt,0,116,116,tbs_only
+Tiger Shirt,1,0,-1,dsr_only
+Tiger Stuff Toy Small Grad,247,247,0,both
+Tote (One For UST),142,142,0,both
+Tote Bag Black,0,3,3,tbs_only
+Tote Bag Canvas White,574,574,0,both
+Tote Bag White,0,190,190,tbs_only
+Tubler @150,0,160,160,tbs_only
+Tumbler,160,0,-160,dsr_only
+UST Happy Tiger,130,0,-130,dsr_only
+UST OAT Hoodie Jacket,32,32,0,both
+UST OAT MUG,48,0,-48,dsr_only
+UST OAT MUG (W inside),0,27,27,tbs_only
+UST OAT MUG (WE) Inside,27,0,-27,dsr_only
+UST OAT MUG (Y/B inside),0,48,48,tbs_only
+UST OAT T-Shirt,23,0,-23,dsr_only
+UST OAT T-Shirt Colleges,21,0,-21,dsr_only
+UST Santo Tomas Script T-Shirt,0,1,1,tbs_only
+UST T-Shirt (College Shirt),0,44,44,tbs_only
+UST T-Shirt Happy Tiger,8,138,130,both
+UST T-Shirt STS,1,0,-1,dsr_only
+UST T-Shirt Sports,196,0,-196,dsr_only
+UST T-Shirt Sporty,0,196,196,tbs_only
+UST T-Shirt Tiger Pattern,101,101,0,both
+UST Tiger Front and Back Graphic (W),31,0,-31,dsr_only
+Umb (One For UST),142,142,0,both
+Umb Old,0,41,41,tbs_only
+University of Santo Tomas (B),142,0,-142,dsr_only
+Utensil,260,260,0,both
+VB Jersey w/o sig.,21,0,-21,dsr_only
+VB Jersey without Sig @1500,0,21,21,tbs_only
+Varsity Jacket,5,5,0,both
+White Tote Bag,193,0,-193,dsr_only
+Wind Breaker,52,0,-52,dsr_only

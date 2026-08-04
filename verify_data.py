@@ -62,6 +62,16 @@ EXPECTED_SALES_TOTAL = 89232
 # set of months, not a different count of the same months.
 EXPECTED_SALES_RAW_TOTAL = 88481
 
+# The +751 is not a lump sum to be taken on trust: it decomposes into
+# exactly two months and no others. May 2024 was re-sourced from the
+# workbook's daily DSR sheets to its TBS tally sheet (-296, same 23 tally
+# dates either way); July 2026 is a month the old file predated (+1,047).
+# If a third month ever moves, the zero-fill converter has changed
+# something it was not supposed to touch, and that must fail loudly here
+# rather than be absorbed into an unchanged grand total.
+# Reproduced in full by tools/provenance_may2024.py.
+EXPECTED_MONTH_DELTAS = {"2024-05": -296, "2026-07": 1047}
+
 failures = []
 
 
@@ -142,12 +152,41 @@ def verify_supplier_mapping(mapping_path=SUPPLIER_MAPPING_CSV, sales_path=SALES_
           f"that belongs in payment_status")
 
 
+def verify_zerofill_decomposition(raw_path=SALES_RAW_CSV,
+                                  zerofill_path=SALES_WITH_ZEROS_CSV,
+                                  expected=None):
+    """The zero-fill total may only differ from the raw total in the two
+    months we have accounted for. A grand total that still lands on 89,232
+    while units have quietly moved between months would pass every other
+    check in this file - this is the one that would catch it."""
+    expected = EXPECTED_MONTH_DELTAS if expected is None else expected
+
+    def by_month(path):
+        df = pd.read_csv(path, dtype={"Total Quantity": float})
+        month = pd.to_datetime(df["Date"], format="%Y-%m-%d").dt.strftime("%Y-%m")
+        return df.groupby(month)["Total Quantity"].sum()
+
+    raw, zf = by_month(raw_path), by_month(zerofill_path)
+    deltas = zf.subtract(raw, fill_value=0).round().astype(int)
+    moved = {m: int(d) for m, d in deltas.items() if d != 0}
+
+    check(moved == expected,
+          f"{zerofill_path} vs {raw_path}: per-month delta is {moved}, expected {expected} "
+          f"(a month moved that should not have - the zero-fill converter changed "
+          f"something beyond the May 2024 re-sourcing and the July 2026 addition)")
+
+    check(sum(expected.values()) == EXPECTED_SALES_TOTAL - EXPECTED_SALES_RAW_TOTAL,
+          f"the expected month deltas sum to {sum(expected.values())}, which does not "
+          f"reconcile {EXPECTED_SALES_RAW_TOTAL} -> {EXPECTED_SALES_TOTAL}")
+
+
 def main():
     for path, col in DATE_COLUMNS:
         verify_iso_dates(path, col)
 
     verify_calendar_ranges()
     verify_supplier_mapping()
+    verify_zerofill_decomposition()
 
     verify_sales_totals(SALES_RAW_CSV, EXPECTED_SALES_RAW_TOTAL)
     verify_sales_totals(SALES_WITH_ZEROS_CSV, EXPECTED_SALES_TOTAL)
