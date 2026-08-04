@@ -5,7 +5,7 @@
 | **Base** | `NeilSam0905/Capstone` @ `neil`, commit `1510a61` |
 | **Branch** | `tyrone` (local only — **not pushed**) |
 | **Operator** | Tyrone Yazon <tyronegryneth.yazon.cics@ust.edu.ph> |
-| **Date** | 2026-08-04 |
+| **Date** | 2026-08-04 (Batch 1, A0–A11) · 2026-08-05 (Batch 2, A12–A19) |
 | **Model / effort** | Claude Opus 5, effort `high` |
 | **Environment** | Windows 11, Anaconda Python 3.13.9. pandas 2.3.3, numpy 2.3.5, scipy 1.16.3, openpyxl 3.1.5, pytest 8.4.2 — all already present, no `pip install` needed and no venv created |
 
@@ -27,7 +27,11 @@ The single most important result: **the full data contract reproduces from a fro
 
 ## 2. Gate failures
 
-**None.** No gate in Part A failed, and no expected value was edited.
+**None, across both batches.** No gate failed, and no expected value was edited anywhere.
+
+Batch 2 did find two real defects — a wrong Holt-Winters recursion and a family of gates that could
+not fail — but both were *caught by checks doing their job*, which is the opposite of a gate failure.
+They are in §2.4 and §2.5.
 
 Three things did go wrong during the run and were fixed properly rather than worked around. They are
 not gate failures — every one of them was caught by a check doing its job — but they are the part of
@@ -73,6 +77,45 @@ minimum" are trivially true of zero rows.
 
 The cause was itself a finding (§4.1 below). The fix was a non-emptiness gate that runs *first* and
 short-circuits the rest, so the others can never again pass vacuously.
+
+### 2.4 The same vacuity was in the leakage tests (Batch 2, A12)
+
+§2.3 was not local to A10. `all()` over an empty iterable is `True`, and a loop over an empty list
+runs zero assertions and reports success — so three checks in `tests/test_evaluate.py` had the same
+shape. Real MASE numbers came out of Batch 1, so folds existed, but the *count* was never asserted:
+nothing proved the leakage check had iterated over anything.
+
+Worst case found: `test_longer_series_get_more_folds_never_fewer` was guarded by a literal
+`if folds:`, which made its only assertion **optional**. A change that stopped producing folds
+entirely would have passed it.
+
+Fixed by a rule applied repo-wide — *every existence-negation assert gets a population assert in
+front of it* — and enforced by `tests/test_gates_can_fail.py`, which feeds each gate a
+deliberately-emptied fixture and requires it to raise. It also pins the original A10 bug as a
+reproduction: all four prescriptive gates are shown passing against an empty table, then the
+non-emptiness guard catching it.
+
+One hole closed in `model_benchmark.py` deserves naming: the identical-folds gate compared fold
+layouts per SKU, and `nunique() == 1` stays true when a method contributes **no rows at all**. A
+method could silently vanish from the benchmark and the gate would still report agreement. Methods
+per SKU is now asserted explicitly.
+
+### 2.5 The hand-rolled Holt-Winters had a wrong seasonal update (Batch 2, A14)
+
+Implementing Holt-Winters rather than importing statsmodels was the right call — but it made the
+implementation a benchmark competitor, and it was subtly wrong.
+
+The seasonal update used `y[t] - l` (the newly updated level). Hyndman's standard additive
+formulation, which statsmodels implements, uses `y[t] - l_prev - phi*b_prev` — the level and trend
+from *before* the update. Using the new level is a different, non-standard model.
+
+The error is invisible at the default smoothing constants (0.89% divergence at γ = 0.1) and reaches
+**8.8% at γ = 0.3**, well inside the box the SSE optimiser searches. So it was distorting ETS's
+position in the benchmark at whatever parameters each SKU happened to fit to — quietly, and in the
+ranking B3 depends on.
+
+A single-point comparison would have missed it entirely. The **parameter sweep** caught it, and that
+asymmetry is now itself pinned by `test_the_found_defect_is_invisible_at_low_gamma`.
 
 ---
 
@@ -128,6 +171,39 @@ Widening the basis is a Block 5 decision. It is now measured rather than implici
 `rolling_mean_30` leads on MAE; `rolling_median_30` leads on MASE. Not a bug — MAE is dominated by
 high-volume SKUs, MASE scales each SKU by its own variability first. Which one matters is a
 question about what the store cares about, and it is part of **B3**.
+
+### 4.4a The degenerate forecast, stated properly (Batch 2, A18)
+
+§4.1 recorded that the MASE leader prices nothing. Batch 2 established *why*, and it is not a
+coincidence of this dataset's numbers — it follows from the definitions. MAE is minimised by the
+conditional median; MASE divides MAE by a forecast-independent scale and so shares its minimiser;
+81.2% of `Fact_Sales` rows are zero, so the median is zero. **Any rule that minimises MASE converges
+on "nothing will sell" by construction.**
+
+This upgrades the finding from an observation to a result, and it is what reframes B2. Full
+treatment in `docs/DEGENERATE_FORECAST.md`, Divergence Register **#21**.
+
+### 4.4b TSB is 2.3× better than Croston on this catalogue (Batch 2, A13)
+
+Batch 1 explained Croston's last place structurally — it never updates on zero-demand periods, so a
+dead SKU forecasts its old rate forever. TSB is the method designed for exactly that, and adding it
+confirmed the diagnosis at full scale:
+
+| | MASE | MAE | % beating naive | SKUs priced |
+|---|---:|---:|---:|---:|
+| TSB | **5.33** | 14.23 | **52.6%** | **266** |
+| SBA | 12.08 | 28.21 | 49.6% | 266 |
+| Croston | 12.50 | 29.28 | 49.2% | 266 |
+
+TSB has the highest share of SKUs beating naive of any of the eight methods. Which of the three
+Chapter 4 presents is **B15**.
+
+### 4.4c The current demand anchor is the worst one available (Batch 2, A16)
+
+Batch 1 noted 2026-07 gives 79 of 266 SKUs against 208 at a 365-day window. Measuring all 27 anchors
+sharpens it considerably: **of the last 12 anchors, none is lower than 79**, and 2026-06 — the month
+immediately before, in the same summer term — gives **130**. So "it is a break month" does not by
+itself account for it. This is **B14**.
 
 ### 4.4 `is_store_closed` looks like it may mean "holiday"
 
@@ -198,7 +274,12 @@ regression. To re-check the true baseline, rebuild the database from scratch.
 | `forecasting/baselines.py` | naive, seasonal naive, rolling mean/median, Holt-Winters |
 | `model_benchmark.py` | Seven methods on identical folds, no Prophet |
 | `step5_prescriptive.py` | ROP / Safety Stock / EOQ across a 5×5 grid |
-| `tests/` (3 files, 232 tests) | Property tests. The leakage tests in `test_evaluate.py` are the ones that matter |
+| `tools/demand_basis_by_anchor.py` | The 30-day demand basis at all 27 month anchors (B14) |
+| `tests/` (7 files, 345 tests) | Property tests. The leakage tests in `test_evaluate.py` and the emptied-fixture tests in `test_gates_can_fail.py` are the ones that matter |
+| `requirements*.txt` | Pinned runtime, dev and Prophet dependency sets |
+| `USTORE_AUTO_RUN_GUIDE_tyrone.md` | The canonical run and verification checklist |
+| `docs/DEGENERATE_FORECAST.md` | Why the most accurate method is unusable (Divergence #21) |
+| `docs/demand_basis_by_anchor.csv` | A16 output |
 | `conftest.py` | Puts the repo root on `sys.path` so bare `pytest tests/` works |
 | `docs/DIVERGENCE_REGISTER.md` | The register, promoted out of `CODE_WORK_PLAN_v2.md`, corrected and extended to 20 rows |
 | `docs/BUILD_PLAN_RECONCILIATION.md` | The delta against `USTore_Build_Plan.pdf` |
@@ -231,18 +312,45 @@ expected value in a verification script.
 | # | Decision | What's known now | What's missing | Who decides | What unblocks |
 |---|---|---|---|---|---|
 | B1 | Make the repo private | Still public with supplier names, unit prices, sales volumes | Nothing — it is a setting | Repo owner | Removes a disclosure risk before the defence |
-| B2 | The MAPE ≤20% framing | Provably unreachable; floor ≈89% daily / ≈60% monthly. Table 4 row 2 already prescribes assessing MAE/RMSE/MAPE collectively, contradicting §3.3.4's hard gate | Whether the adviser accepts replacing the gate | Adviser (Block 4.1) | **B3**. Nothing about model choice can be settled while the acceptance criterion is undefined |
-| B3 | Which model to select | A9 ranks 7 methods on identical folds. Option C two-track routing is the proposal. §4.1 above shows the MASE leader cannot drive the prescriptive math | B2, and a decision on whether accuracy or actionability leads | Team, after B2 | Phase 3 sign-off; the Demand Forecast dashboard view |
+| B2 ⚠ | The acceptance criterion — **reframed** | See below. No longer "≤20% MAPE is unreachable, please lower the bar" | Whether the adviser accepts the reframing | Adviser (Block 4.1) | **B3**. Nothing about model choice can be settled while the criterion is undefined |
+| B3 ⚠ | Which model to select — **sharpened** | See below. Selection cannot run on MASE | B2; then whether accuracy or service leads, and the target service level | Team, after B2 | Phase 3 sign-off; the Demand Forecast dashboard view |
 | B4 | `semester_week`: drop or cyclically re-encode | §1.2 and §3.3.2 name it as a regressor; continuous form extrapolates badly across term resets; Block 1 took it from 512 → 1,453 non-null rows | A trial of sin/cos encoding | Team — try sin/cos first, cheaper Ch4 story | The Prophet regressor spec |
-| B5 | Prophet / `prophet_flatlog` | Needs a cmdstan build. Vanilla Prophet hit 554,605% worst-case MAPE; flatlog collapses it to 422% and beats naive on 34% of SKUs. `step4` has **not** been re-run since Block 1 or Block 2.2 — stored forecasts are stale twice over | A working toolchain, and a re-run | Run in its own session | Divergence #9; whether Prophet appears in Ch4 at all |
+| B5 | Prophet / `prophet_flatlog` | Needs a cmdstan build. Vanilla Prophet hit 554,605% worst-case MAPE; flatlog collapses it to 422% and beats naive on 34% of SKUs. `step4` has **not** been re-run since Block 1 or Block 2.2 — stored forecasts are stale twice over. **Its absence now costs less than it appeared to**: the benchmark runs eight methods without it, and the leading ones are all cheap | A working toolchain, and a re-run | Run in its own session | Divergence #9; whether Prophet appears in Ch4 at all |
 | B6 | Price-suffix merge ruling | A4: 71 suffixed SKUs, 12 twins in 8 families. **4 families have a 0-unit N-class bare row (artifact, merging moves nothing); 4 carry real sales (merging moves units and changes the FSN split)** | Per-family confirmation that the labels mean one product or two | USTore staff | Only the second group of 4 is blocking |
 | B7 | May 2024 DSR vs TBS 296-unit gap | A3 proves TBS = 4,022 is faithful and that the DSR's channels sum to exactly 4,318. Leading hypothesis: the DSR's separate discounted-price column (551 units) and special-discount column (48) | Which figure the store considers the true May 2024 total | USTore staff | Closes Divergence #18 |
 | B8 | `is_store_closed` = closed or holiday? | 15 tally dates fall on flagged closures; month-day pairs repeat annually and match Philippine public holidays (§4.4) | What the flag was intended to mean | USTore staff | The depletion-rate denominator; Divergence #16 |
-| B9 | Lead time, ordering cost, holding cost | `lead_time_days` NULL for all 519. A10 gives the full surface across a 5×5 grid | Three numbers from the store | USTore staff — then read the value off `Result_Prescriptive` | Phase 4 becomes a lookup, not a recompute |
+| B9 | Lead time, ordering cost, holding cost | `lead_time_days` NULL for all 519. A10 gives the full surface across a 5×5 grid; A17 adds a fill-rate column at one fixed cell | Three numbers from the store | USTore staff — then read the value off `Result_Prescriptive` | The store visit becomes a **two-value lookup** — lead time and cost ratio — not a recompute |
 | B10 | Inventory coverage position | 76 vs 82 items in both sales and inventory depending on definition; 16.8% of `Fact_Sales` rows | An agreed definition, or a scoped claim | Whole group (Block 3.3) | The Stock Status dashboard view |
 | B11 | Holding cost under consignment | §3.1.1 counts opportunity cost of capital; the university doesn't own consignment stock | A reframing of `H` | Team | Whether EOQ is presented as cost-optimal or as order-batching |
 | B12 | The four attribution commits on `neil` | Removing them rewrites every SHA from `9c3c9c8` forward; `tyrone` would share zero history with `neil` | A group decision, taken once | Whole group, on `neil` — **recommendation: leave them** | Nothing. Cost of acting exceeds cost of not |
 | B13 | Post-defense revision window | If open: two Figure 3s, missing Table 1, §3.3.1's "20th percentile" → 80th, Figure 5's `is_suspension_day` → `is_store_closed` + `is_hvl` | Whether the window is still open | Programme coordinator — confirm status, don't assume | Four permanent errors, under an hour to fix |
+| **B14** | **Which demand anchor to standardise on** | A16 measures all 27. The build's current anchor, 2026-07, gives 79 of 266 SKUs at 30 days — and **of the last 12 anchors, none is lower**. 2026-06, the month before and in the same summer term, gives 130 | A choice: anchor on a representative term period, report a term-weighted average, or report both and state the choice in-text | Team | A one-line methodological note that pre-empts an obvious panel question |
+| **B15** | **Croston vs TSB for the S/N tiers** | A13 supplies both plus the obsolescence property test. At full scale TSB scores MASE 5.33 against Croston 12.50 and SBA 12.08, has the highest share of SKUs beating naive (52.6%), and prices all 266 | Which one Chapter 4 presents as *the* intermittent-demand method, or whether both are shown | Team, following B3 | Divergence #10's model-selection line |
+
+### B2 and B3, in full
+
+These two changed materially in Batch 2, and the change is the most consequential thing in this
+document.
+
+**B2 — the acceptance criterion.** The Batch 1 framing was "MAPE ≤ 20% is unreachable on this data,
+the floor is ≈89% daily / ≈60% monthly." True, but it reads as a concession — asking for the bar to
+be lowered because we could not clear it.
+
+A18 replaces it with a stronger claim, demonstrated on our own data:
+
+> An acceptance criterion defined purely on forecast error is **structurally invalid** for
+> intermittent demand, because its optimum is a forecast of zero.
+
+The chain: MAE is minimised by the conditional median; MASE is MAE over a forecast-independent
+scale, so it shares that minimiser; 81.2% of `Fact_Sales` rows are zero, so the median is zero.
+Measured instance — the MASE-leading method prices **0 of 266 SKUs**. Tightening the threshold makes
+this worse, not better. See `docs/DEGENERATE_FORECAST.md`; still the adviser's call.
+
+**B3 — model selection.** Selection cannot run on MASE, because A18 shows the MASE optimum is
+unusable for the thing the system exists to do. A17 supplies the decision-metric ranking beside the
+error-metric one, and the two invert: the MASE winner is the fill-rate loser. What remains for the
+team, after B2, is which column to select on and what service level to target — not which method
+scores best on error.
 
 ---
 
@@ -251,21 +359,31 @@ expected value in a verification script.
 Run from the repo root. `python` must be a 3.13 interpreter with pandas/numpy/scipy/openpyxl/pytest —
 on this machine that is `C:\Users\Ty\anaconda3\python.exe`, which is **not** on `PATH`.
 
+**The canonical copy of this checklist now lives in `USTORE_AUTO_RUN_GUIDE_tyrone.md`**, which is
+tracked in the repo. It kept drifting because it existed only inside the run prompts, so each batch
+fixed it in its own copy and the fix reached nobody. Where they disagree, that file is right.
+
 ```bash
 python tools/assert_invariants.py --phase a10   # 22/22, exit 0   (see §6)
 python verify_data.py                           # exit 0, incl. the A3 decomposition assert
 python tools/provenance_may2024.py              # 11 checks; TBS 4,022; DSR 4,318; net +751
 python tools/tier_counts.py                     # 92/51/123 all-moving; 38/10/10 Fast-only
 python tools/audit_price_suffix_skus.py         # 71 suffixed, 12 twins, 8 families
-pytest tests/                                   # 232 passed
-python model_benchmark.py                       # 7 methods, identical folds (~5 min)
+python tools/demand_basis_by_anchor.py          # 27 anchors; 2026-07 = 79 @30d, 208 @365d
+pytest tests/                                   # 345 passed
+python model_benchmark.py                       # 8 methods, both ranking tables (~6 min)
 python step5_prescriptive.py                    # 1,975 rows, all gates pass
 
 git status --porcelain                          # empty — the A1 gate
+git diff --stat HEAD -- '*.pdf' '*.xlsx'        # empty — binary assets byte-exact
 git log neil..tyrone --format='%B' | grep -Ei 'co-authored-by|claude-session|generated with'
                                                 # returns nothing
 git shortlog -sne HEAD                          # one entry per real person
 ```
+
+> **The binary-asset check is not redundant with `git status`.** `USTore_Build_Plan.pdf` was
+> corrupted on every Windows checkout before `.gitattributes` existed, and it still opened as a PDF.
+> Requiring the blob to match its committed bytes is what catches that; "it parses" does not.
 
 > **Note the `HEAD`.** Bare `git shortlog -sne` reads from stdin when it is not attached to a
 > terminal, so in a script or a piped shell it silently prints nothing and looks like a pass.
@@ -305,6 +423,21 @@ python tools/assert_invariants.py               # 21/21, exit 0
 | A9 | `4256241` | feat: seven-method benchmark, reproducible without Prophet (Block 4.6) |
 | A10 | `f07c0dc` | feat: ROP/Safety Stock/EOQ as a parameter sensitivity surface (Phase 4) |
 | A11 | `e5f8186` | docs: divergence register, build plan reconciliation, handoff record |
+| A11′ | `0753190` | docs: record the closing from-scratch rebuild in the handoff record |
+
+### Batch 2 — 2026-08-05
+
+| Task | SHA | Message |
+|---|---|---|
+| A12 | `a735693` | test: population asserts before every existence-negation gate; prove gates can fail |
+| A13 | `ec54ff5` | feat: TSB for obsolescence-prone intermittent demand (benchmark method 8) |
+| A14 | `0b7eb67` | test: validate hand-rolled Holt-Winters against statsmodels reference (skip-if-absent) |
+| A15 | `7b60d31` | chore: pin requirements.txt, verify full checklist from a clean venv |
+| A15′ | `25133ab` | fix: extend .gitattributes to .txt and .json |
+| A16 | `bae34d2` | analysis: 30-day demand basis across all month anchors (measurement only) |
+| A17 | `1866a9d` | analysis: add decision-metric ranking beside error-metric ranking (no selection) |
+| A18 | `87db696` | docs: pin the degenerate-forecast result (Divergence #21) |
+| A19 | — | docs: fold Part C corrections and binary-asset check into the canonical checklist |
 
 No commit carries an AI-attribution trailer.
 
