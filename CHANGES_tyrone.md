@@ -304,9 +304,23 @@ python tools/assert_invariants.py               # 21/21, exit 0
 | A8′ | `739f99b` | fix: Croston/SBA initialisation was dominated by the first demand |
 | A9 | `4256241` | feat: seven-method benchmark, reproducible without Prophet (Block 4.6) |
 | A10 | `f07c0dc` | feat: ROP/Safety Stock/EOQ as a parameter sensitivity surface (Phase 4) |
-| A11 | — | docs: divergence register, build plan reconciliation, handoff record |
+| A11 | `e5f8186` | docs: divergence register, build plan reconciliation, handoff record |
 
 No commit carries an AI-attribution trailer.
+
+### Closing verification
+
+After the final commit, the database was deleted and the pipeline rebuilt from empty:
+
+```
+create_schema → populate_dim_date → step1_apply_mapping
+              → proportional_allocation → step2_load_fact_sales
+              → step3_fsn_classification
+```
+
+Result: **21/21 baseline contract checks passed**, and `git status --porcelain` was **empty** — no
+modified CSVs after a full regeneration. That is the A1 fix and the whole data contract confirmed
+together, from scratch, on a clean database.
 
 ---
 
