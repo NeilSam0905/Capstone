@@ -1,0 +1,72 @@
+item_name,base_name,has_depriced_twin,in_allocation_groups,units,fact_rows,sale_days,fsn_class,is_hvl
+Lanyard @180,Lanyard,1,1,7201,602,358,F,0
+Ballpen 2 Designs @50 (B&Y),Ballpen 2 Designs,0,0,1466,217,126,F,0
+"Ballpen 3 Designs @50 (B,Y,W)",Ballpen 3 Designs,0,0,1275,194,99,F,0
+Pen @40,Pen,0,0,1153,406,116,F,0
+Tiger Paw Keychain @375,Tiger Paw Keychain,0,0,906,205,95,F,0
+Poloshirt @800,Poloshirt,0,0,703,566,244,S,0
+Lanyard @190,Lanyard,1,1,679,372,148,F,0
+Kraft Notebook @130,Kraft Notebook,0,0,646,376,74,F,0
+New Tiger Plushie Big @850,New Tiger Plushie Big,1,0,622,264,103,F,0
+"Hoodie UST embro (V,G,Y,B) @1800","Hoodie UST embro (V,G,Y,B)",0,0,613,291,147,F,0
+ID Case v2 @40,ID Case v2,0,0,608,290,142,F,0
+Pen @30,Pen,0,0,580,157,58,F,0
+"Go USTE (W,Y,B) @450","Go USTE (W,Y,B)",0,0,495,291,135,F,0
+Arch @320,Arch,1,0,447,383,139,S,0
+Bamboo Notebook @150,Bamboo Notebook,0,0,391,404,89,S,0
+New Tiger Plushie Small @750,New Tiger Plushie Small,1,0,391,264,93,S,0
+Bamboo Pen @60,Bamboo Pen,0,0,390,408,103,S,0
+Logo Sticker @25,Logo Sticker,0,0,385,178,83,F,0
+Keychain @180,Keychain,1,1,362,264,87,S,0
+Sticker @120,Sticker,0,0,356,277,123,S,0
+Keychain @160,Keychain,1,1,347,93,38,F,0
+Arch @350,Arch,1,0,341,194,66,F,0
+Polo Shirt @800,Polo Shirt,0,1,319,586,166,S,0
+Shirts all @450 UPSIZE (3XL-4XL),Shirts all,0,0,293,351,109,S,0
+Eco Bag @80,Eco Bag,1,0,266,258,73,S,0
+NB @100,NB,0,0,265,339,4,S,0
+Baseball Cap METAL @380,Baseball Cap METAL,0,0,254,400,104,S,0
+"Oversized shirt (V,B) @650","Oversized shirt (V,B)",0,0,252,147,68,F,0
+Scarf @490,Scarf,0,0,234,401,68,S,0
+Two-toned windbreaker @1700,Two-toned windbreaker,0,0,227,288,85,S,0
+Long Sticker @120,Long Sticker,1,1,217,281,82,S,0
+Logo Keychain @200,Logo Keychain,0,0,200,194,45,S,0
+Sticker @20,Sticker,0,0,171,174,42,S,0
+Discounted Yellow Lanyard @80,Discounted Yellow Lanyard,0,0,160,29,18,F,1
+Clock @700,Clock,0,0,155,342,19,S,0
+Poloshirt 123456 @860,Poloshirt 123456,0,0,154,577,94,S,0
+Tiger Claw Keychain @375,Tiger Claw Keychain,0,0,153,85,24,F,0
+Mug @170,Mug,0,0,107,349,20,S,0
+Logo Sticker @30,Logo Sticker,0,0,96,194,33,S,0
+Kraft Notebook @85,Kraft Notebook,0,0,92,30,11,F,0
+Eco Bag @ 130,Eco Bag,1,0,85,250,20,S,0
+College Sticker @120,College Sticker,0,0,79,221,45,S,0
+"UST TIGERS Oversized shirt (V,B) @650","UST TIGERS Oversized shirt (V,B)",0,0,78,141,37,S,0
+Shirts all @450 UPSIZE (5XL),Shirts all,0,0,70,343,38,S,0
+Clock @550,Clock,0,0,64,403,17,S,0
+VB Jersey without Sig @1500,VB Jersey without Sig,0,0,64,573,44,S,0
+Sticker @25,Sticker,0,0,61,30,16,F,0
+Shirts all @450 UPSIZE (3XL-5XL),Shirts all,0,0,51,117,32,S,0
+Umb Old @250,Umb Old,0,0,47,340,2,S,0
+C. Sticker @120,C. Sticker,0,0,25,289,19,S,0
+Sticker @ 115,Sticker,0,0,22,23,10,S,0
+Paper Bag  @ 130,Paper Bag,0,0,20,31,4,S,0
+ID Case @20,ID Case,1,0,18,250,5,S,0
+Paper weight @330,Paper weight,0,0,11,289,4,S,0
+Pen @ 50,Pen,0,0,10,342,3,S,0
+Paper Bag BIG @130,Paper Bag BIG,0,0,5,279,4,S,0
+Paper Bag @80,Paper Bag,0,0,4,31,2,S,0
+Baseball Cap VELCRO @380,Baseball Cap VELCRO,0,0,2,401,2,S,0
+Mug @220,Mug,0,0,1,1,1,S,0
+Paper Bag SMALL @80,Paper Bag SMALL,0,0,1,279,1,S,0
+VB Jersey without Sig @2000,VB Jersey without Sig,0,0,1,340,1,S,0
+Crew Neck Shirt @475,Crew Neck Shirt,0,0,0,339,0,S,0
+NB @75,NB,0,0,0,339,0,S,0
+Notebook @220,Notebook,0,0,0,339,0,S,0
+Pen @25,Pen,0,0,0,23,0,S,0
+Retractable @25,Retractable,0,0,0,339,0,S,0
+Socks @375,Socks,0,0,0,339,0,S,0
+Stylus pen @45,Stylus pen,0,0,0,339,0,S,0
+VB Jersey with Sig. @1800,VB Jersey with Sig.,0,0,0,23,0,S,0
+VB Jersey with Sig. @2800,VB Jersey with Sig.,0,0,0,339,0,S,0
+VB Jersey without Sig @1000,VB Jersey without Sig,0,0,0,339,0,S,0
