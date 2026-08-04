@@ -34,6 +34,20 @@ def series(n, seed=0):
     return np.random.default_rng(seed).integers(0, 12, size=n).astype(float)
 
 
+def rows_of(ev):
+    """Return an evaluation's rows, refusing to hand back an empty list.
+
+    Every `for row in ev.rows:` in this file is a check that iterates. If
+    the harness ever returned no rows, those loops would all pass without
+    testing anything - which is precisely the vacuous-gate failure this
+    audit exists to remove. Going through here makes that impossible.
+    """
+    assert ev.sufficient, f"evaluation was insufficient: {ev.reason}"
+    assert len(ev.rows) > 0, "no rows to check - the loop would pass vacuously"
+    assert len(ev.rows) == ev.n_folds
+    return ev.rows
+
+
 def mean_model(train, horizon):
     return np.full(horizon, train.mean() if train.size else 0.0)
 
@@ -50,6 +64,9 @@ def test_no_fold_uses_data_at_or_after_its_origin(n, horizon):
     """Structural: the training window must end exactly at the origin and
     the test window must start there. Never one index earlier."""
     folds = make_folds(n, horizon=horizon, min_folds=1, min_train=30)
+    assert len(folds) > 0, "no folds to check - this test would pass vacuously"
+
+    checked = 0
     for f in folds:
         assert f.train_end == f.origin
         assert f.test_start == f.origin
@@ -57,16 +74,25 @@ def test_no_fold_uses_data_at_or_after_its_origin(n, horizon):
         assert f.test_end <= n                     # never past the series
         assert f.n_train > 0
         f.assert_no_leakage(n)
+        checked += 1
+    assert checked == len(folds)
 
 
 @pytest.mark.parametrize("n", [200, 365, 500])
 def test_training_slice_never_contains_a_test_value_position(n):
     values = np.arange(n, dtype=float)      # value == its own index
-    for f in make_folds(n, horizon=30, min_folds=1, min_train=30):
+    folds = make_folds(n, horizon=30, min_folds=1, min_train=30)
+    assert len(folds) > 0, "no folds to check - this test would pass vacuously"
+
+    checked = 0
+    for f in folds:
         train = f.train_slice(values)
         test = f.test_slice(values)
+        assert train.size > 0 and test.size > 0
         assert train.max() < test.min(), "a training value came from at/after the origin"
         assert len(train) == f.origin
+        checked += 1
+    assert checked == len(folds)
 
 
 def test_a_cheating_model_cannot_see_its_test_window():
@@ -83,6 +109,10 @@ def test_a_cheating_model_cannot_see_its_test_window():
 
     ev = walk_forward_evaluate("sku", values, peeker, "peeker", horizon=30)
     assert ev.sufficient
+    # the model must actually have been called, and once per fold - a zip
+    # over two empty lists checks nothing at all
+    assert len(ev.rows) > 0
+    assert len(seen) == len(ev.rows) == ev.n_folds
 
     for row, (_lo, hi, size) in zip(ev.rows, seen):
         origin = row["origin"]
@@ -130,8 +160,13 @@ def test_every_scored_sku_has_at_least_min_folds():
 
     assert set(insufficient) == {"thin_a", "thin_b"}
     assert not results.empty
+    assert results["sku"].nunique() == 2, "expected both long SKUs to be scored"
+
+    checked = 0
     for sku, g in results.groupby("sku"):
         assert g["fold"].nunique() >= DEFAULT_MIN_FOLDS
+        checked += 1
+    assert checked == 2
 
     # and every SKU is accounted for exactly once, either scored or listed
     assert set(results["sku"]) | set(insufficient) == set(data)
@@ -141,8 +176,9 @@ def test_every_scored_sku_has_at_least_min_folds():
 @pytest.mark.parametrize("n,expected_at_least", [(150, 3), (400, 3), (800, 3)])
 def test_longer_series_get_more_folds_never_fewer(n, expected_at_least):
     folds = make_folds(n, horizon=30, min_folds=3, min_train=60)
-    if folds:
-        assert len(folds) >= expected_at_least
+    # NOT `if folds:` - that made the whole assertion optional, so a change
+    # that stopped producing folds entirely would have passed this test.
+    assert len(folds) >= expected_at_least
 
 
 # ---- 3. identical folds across methods -------------------------------
@@ -153,15 +189,26 @@ def test_every_method_is_scored_on_identical_folds():
                "last": lambda t, h: np.full(h, t[-1])}
 
     results, _ = evaluate_methods(data, methods)
+    assert not results.empty
+    assert results["sku"].nunique() == len(data)
+    assert results["method"].nunique() == len(methods)
 
+    checked = 0
     for sku, g in results.groupby("sku"):
         layouts = {
             m: sorted(map(tuple, mg[["fold", "origin", "n_train", "horizon"]].values.tolist()))
             for m, mg in g.groupby("method")
         }
+        # every method must be present, and each with a non-empty layout,
+        # or "all layouts agree" is a statement about nothing
+        assert set(layouts) == set(methods)
+        assert all(len(v) > 0 for v in layouts.values())
+
         reference = next(iter(layouts.values()))
         for method, layout in layouts.items():
             assert layout == reference, f"{method} was scored on different folds for {sku}"
+        checked += 1
+    assert checked == len(data)
 
 
 def test_every_method_sees_the_same_actuals():
@@ -170,16 +217,23 @@ def test_every_method_sees_the_same_actuals():
     results, _ = evaluate_methods(data, methods)
 
     pivot = results.pivot_table(index="fold", columns="method", values="actual_30d")
+    assert len(pivot) > 0 and len(pivot.columns) == len(methods)
+
+    compared = 0
     for col in pivot.columns[1:]:
         pd.testing.assert_series_equal(
             pivot[pivot.columns[0]], pivot[col], check_names=False)
+        compared += 1
+    assert compared == len(methods) - 1
 
 
 def test_reused_folds_are_the_same_objects_across_methods():
     values = series(400, 8)
     folds = make_folds(values.size)
+    assert len(folds) >= DEFAULT_MIN_FOLDS
     a = walk_forward_evaluate("s", values, mean_model, "mean", folds=folds)
     b = walk_forward_evaluate("s", values, zero_model, "zero", folds=folds)
+    assert len(rows_of(a)) == len(rows_of(b)) == len(folds)
     assert [r["origin"] for r in a.rows] == [r["origin"] for r in b.rows]
     assert [r["actual_30d"] for r in a.rows] == [r["actual_30d"] for r in b.rows]
 
@@ -192,7 +246,7 @@ def test_scoring_horizon_is_a_30_day_aggregate():
     values = np.ones(400)                      # 1 unit/day
     ev = walk_forward_evaluate("s", values, mean_model, "mean", horizon=30)
 
-    for row in ev.rows:
+    for row in rows_of(ev):
         assert row["horizon"] == DEFAULT_HORIZON == 30
         assert row["actual_30d"] == 30.0        # 30 days x 1 unit
         assert row["pred_30d"] == pytest.approx(30.0)
@@ -201,7 +255,7 @@ def test_scoring_horizon_is_a_30_day_aggregate():
 def test_actual_aggregate_equals_the_sum_of_the_test_window():
     values = series(400, 9)
     ev = walk_forward_evaluate("s", values, zero_model, "zero", horizon=30)
-    for row in ev.rows:
+    for row in rows_of(ev):
         o = row["origin"]
         assert row["actual_30d"] == pytest.approx(values[o:o + 30].sum())
 
@@ -209,7 +263,7 @@ def test_actual_aggregate_equals_the_sum_of_the_test_window():
 def test_zero_model_abs_error_equals_the_actual_aggregate():
     values = series(400, 10)
     ev = walk_forward_evaluate("s", values, zero_model, "zero")
-    for row in ev.rows:
+    for row in rows_of(ev):
         assert row["abs_error"] == pytest.approx(row["actual_30d"])
 
 
@@ -218,7 +272,7 @@ def test_horizon_is_configurable_and_respected(horizon):
     values = np.ones(600)
     ev = walk_forward_evaluate("s", values, zero_model, "zero",
                                horizon=horizon, min_train=60)
-    for row in ev.rows:
+    for row in rows_of(ev):
         assert row["horizon"] == horizon
         assert row["actual_30d"] == float(horizon)
 
