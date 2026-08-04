@@ -49,9 +49,11 @@ import numpy as np
 __all__ = [
     "CrostonResult", "croston", "sba", "decompose",
     "croston_fit_predict", "sba_fit_predict", "DEFAULT_ALPHA",
+    "TSBResult", "tsb", "tsb_fit_predict", "DEFAULT_BETA",
 ]
 
 DEFAULT_ALPHA = 0.1
+DEFAULT_BETA = 0.1
 
 
 @dataclass
@@ -184,6 +186,101 @@ def sba(y, alpha: float = DEFAULT_ALPHA, init: str = "mean") -> CrostonResult:
     return _croston_core(y, alpha, "sba", init)
 
 
+# ---- TSB (Teunter-Syntetos-Babai) ------------------------------------
+
+@dataclass
+class TSBResult:
+    """TSB's decomposition: demand PROBABILITY x demand SIZE.
+
+    Croston decomposes into size and *interval*, and updates both only when
+    demand arrives. TSB decomposes into size and *probability*, and updates
+    the probability EVERY period - including the zero ones. That single
+    change is the whole point: on an SKU that stops selling, the
+    probability decays toward zero and the forecast decays with it, where
+    Croston's interval estimate simply stops being updated and the forecast
+    holds flat forever.
+    """
+    point_forecast: float
+    size_estimate: float            # z-hat, updated on demand periods only
+    probability_estimate: float     # p-hat, updated every period
+    alpha: float
+    beta: float
+    method: str
+    n_periods: int
+    n_nonzero: int
+    sizes: np.ndarray = field(repr=False, default_factory=lambda: np.empty(0))
+
+    @property
+    def implied_interval(self) -> float:
+        """1/p, for comparison with Croston's interval estimate."""
+        return 1.0 / self.probability_estimate if self.probability_estimate > 0 else float("inf")
+
+    @property
+    def average_size(self) -> float:
+        return float(self.sizes.mean()) if self.sizes.size else float("nan")
+
+    def recombine(self) -> float:
+        """The point forecast rebuilt from its parts, so the identity
+        `probability x size == point_forecast` can be asserted."""
+        return self.probability_estimate * self.size_estimate
+
+    def __str__(self) -> str:
+        return (f"tsb: {self.point_forecast:.4f}/period "
+                f"= p {self.probability_estimate:.4f} x size {self.size_estimate:.3f} "
+                f"({self.n_nonzero}/{self.n_periods} periods with demand)")
+
+
+def tsb(y, alpha: float = DEFAULT_ALPHA, beta: float = DEFAULT_BETA) -> TSBResult:
+    """Teunter-Syntetos-Babai for obsolescence-prone intermittent demand.
+
+        z-hat  smoothed demand size, updated only when demand arrives
+        p-hat  smoothed demand probability, updated EVERY period
+        forecast = p-hat x z-hat
+
+    `alpha` smooths the size, `beta` the probability. Both estimates are
+    initialised from the empirical values (mean size, and the observed
+    fraction of periods with demand) for the same reason Croston defaults
+    to `init="mean"`: with a small smoothing constant and few demands, an
+    initialisation anchored on the first observation never moves.
+
+    Why this method is here: `N` is 233 of 519 products in this dataset, so
+    slow-and-dying is the modal case rather than an edge case, and Croston
+    is structurally unable to represent it.
+    """
+    if not 0.0 < alpha <= 1.0:
+        raise ValueError(f"alpha must be in (0, 1], got {alpha}")
+    if not 0.0 < beta <= 1.0:
+        raise ValueError(f"beta must be in (0, 1], got {beta}")
+
+    v = np.asarray(y, dtype=float).ravel()
+    if v.size == 0:
+        raise ValueError("empty series - nothing to forecast")
+    if np.any(v < 0):
+        raise ValueError("demand cannot be negative")
+
+    occurred = v > 0
+    sizes = v[occurred]
+
+    if sizes.size == 0:
+        # never sold: probability zero, and no size to speak of
+        return TSBResult(0.0, 0.0, 0.0, alpha, beta, "tsb", v.size, 0, sizes)
+
+    z_hat = float(sizes.mean())
+    p_hat = float(sizes.size) / float(v.size)      # empirical demand probability
+
+    for t in range(v.size):
+        if occurred[t]:
+            z_hat += alpha * (v[t] - z_hat)
+            p_hat += beta * (1.0 - p_hat)
+        else:
+            # THE line that distinguishes TSB from Croston: the zero periods
+            # are observations about demand probability, not gaps to skip.
+            p_hat += beta * (0.0 - p_hat)
+
+    return TSBResult(float(p_hat * z_hat), float(z_hat), float(p_hat),
+                     alpha, beta, "tsb", v.size, int(sizes.size), sizes)
+
+
 # ---- harness-compatible wrappers -------------------------------------
 # forecasting/evaluate.py calls fit_predict(train_values, horizon) -> array.
 # Croston produces a flat rate, so the horizon is filled with it.
@@ -201,4 +298,12 @@ def sba_fit_predict(alpha: float = DEFAULT_ALPHA, init: str = "mean"):
         rate = sba(train, alpha, init).point_forecast
         return np.full(horizon, 0.0 if not np.isfinite(rate) else rate)
     _f.__name__ = f"sba(alpha={alpha})"
+    return _f
+
+
+def tsb_fit_predict(alpha: float = DEFAULT_ALPHA, beta: float = DEFAULT_BETA):
+    def _f(train, horizon):
+        rate = tsb(train, alpha, beta).point_forecast
+        return np.full(horizon, 0.0 if not np.isfinite(rate) else rate)
+    _f.__name__ = f"tsb(alpha={alpha},beta={beta})"
     return _f

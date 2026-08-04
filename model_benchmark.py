@@ -1,13 +1,20 @@
 """
 model_benchmark.py
 ------------------------------------------------------------------
-Seven forecasting methods, scored on identical walk-forward folds.
+Eight forecasting methods, scored on identical walk-forward folds.
 Block 4.6.
 
     1. naive (persistence)          5. Croston
     2. seasonal naive (weekly)      6. SBA
-    3. rolling mean (30d)           7. ETS / Holt-Winters
-    4. rolling median (30d)
+    3. rolling mean (30d)           7. TSB
+    4. rolling median (30d)         8. ETS / Holt-Winters
+
+TSB was added after the first benchmark run showed Croston and SBA
+placing last for a structural reason: they update only on periods when
+demand arrives, so a dead SKU forecasts its old rate forever. TSB updates
+demand probability every period including the zeros, so its estimates
+decay on dying SKUs. With N at 233 of 519 products, slow-and-dying is the
+modal case in this catalogue rather than an edge case.
 
 **Prophet is deliberately absent.** It needs a cmdstan build, which is
 exactly the toolchain gamble that made Chapter 4's central result
@@ -44,7 +51,9 @@ from forecasting.baselines import (
     rolling_median_fit_predict, seasonal_naive_fit_predict,
 )
 from forecasting.evaluate import evaluate_methods, summarise
-from forecasting.intermittent import croston_fit_predict, sba_fit_predict
+from forecasting.intermittent import (
+    croston_fit_predict, sba_fit_predict, tsb_fit_predict,
+)
 
 DB_NAME = "ustore.db"
 OUT_CSV = "model_benchmark_results.csv"
@@ -55,6 +64,7 @@ MIN_FOLDS = 3
 MIN_TRAIN = 60
 MAX_FOLDS = 12          # most recent 12 origins = ~360 days of scoring
 ALPHA = 0.1
+BETA = 0.1              # TSB's probability-smoothing constant
 
 
 def build_methods(quick=False):
@@ -68,6 +78,7 @@ def build_methods(quick=False):
         "rolling_median_30": rolling_median_fit_predict(30),
         "croston": croston_fit_predict(ALPHA),
         "sba": sba_fit_predict(ALPHA),
+        "tsb": tsb_fit_predict(ALPHA, BETA),
         "ets": ets_fit_predict(7, optimise=not quick),
     }
 
@@ -221,14 +232,16 @@ READING NOTES - three things that will otherwise be misread.
    MASE. Which one matters is a question about what the store cares
    about, and it is part of B3.
 
-3. Croston and SBA place last, and the cause is structural rather than a
-   tuning failure. Croston updates its estimates ONLY on periods when
-   demand arrives, so an SKU that sold four times and then stopped keeps
-   forecasting its old rate forever - the 500 trailing zero days are
-   invisible to it (pinned by test_croston_cannot_see_trailing_zeros).
-   The "moving SKU" population here contains many such effectively-dead
-   items. The known remedy is an obsolescence-aware variant (TSB,
-   Teunter-Syntetos-Babai), which is NOT implemented here.
+3. Croston and SBA are handicapped structurally, not by mistuning. They
+   update ONLY on periods when demand arrives, so an SKU that sold four
+   times and then stopped keeps forecasting its old rate forever - the
+   trailing zero days are invisible to it (pinned by
+   test_croston_cannot_see_trailing_zeros). TSB is in the table as the
+   obsolescence-aware answer to exactly that: it updates demand
+   probability every period, so its forecast decays on a dying SKU
+   (pinned by test_tsb_decays_on_a_dead_sku_where_croston_holds_flat).
+   Compare the two rows before concluding anything about intermittent
+   methods in general - that comparison is B15.
 
 This is a MEASUREMENT, not a selection. Which model USTore should use is
 deferred decision B3, and it sits downstream of B2 (whether the MAPE <= 20%
