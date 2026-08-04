@@ -105,14 +105,22 @@ def _hw_recursion(y, alpha, beta, gamma, phi, season):
     sse = 0.0
     for t in range(n):
         si = t % season
-        fitted = l + phi * b + s[si]
+        l_prev, b_prev = l, b
+
+        fitted = l_prev + phi * b_prev + s[si]
         e = y[t] - fitted
         sse += e * e
 
-        l_prev = l
-        l = alpha * (y[t] - s[si]) + (1 - alpha) * (l + phi * b)
-        b = beta * (l - l_prev) + (1 - beta) * phi * b
-        s[si] = gamma * (y[t] - l) + (1 - gamma) * s[si]
+        l = alpha * (y[t] - s[si]) + (1 - alpha) * (l_prev + phi * b_prev)
+        b = beta * (l - l_prev) + (1 - beta) * phi * b_prev
+        # Seasonal update uses the PREVIOUS level and trend, not the newly
+        # updated level. This is Hyndman's standard additive formulation and
+        # the one statsmodels implements. Using `y[t] - l` instead is a
+        # different (and non-standard) model: the error is invisible at small
+        # gamma and reached 8.8% divergence at gamma = 0.3, which is inside
+        # the box the optimiser searches. Caught by
+        # tests/test_holtwinters_reference.py.
+        s[si] = gamma * (y[t] - l_prev - phi * b_prev) + (1 - gamma) * s[si]
 
     return l, b, s, sse
 
