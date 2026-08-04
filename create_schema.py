@@ -136,6 +136,45 @@ CREATE TABLE IF NOT EXISTS Event_Log (
 """)
 
 
+# ----- RESULT TABLE: Result_Prescriptive ---------------------------
+# ROP / Safety Stock / EOQ evaluated across a GRID of lead times and
+# cost ratios, not at a single chosen point.
+#
+# lead_time_days is NULL for all 519 products and nobody has confirmed an
+# ordering or holding cost, so committing to one set of numbers would be
+# inventing the inputs. Instead every (lead time x cost ratio) cell is
+# computed and stored, which makes the eventual store visit a lookup
+# rather than a recompute. See deferred decision B9.
+#
+# Costs are stored NORMALISED BY HOLDING COST (i.e. in units of H), since
+# EOQ depends only on the ratio S/H. That way the table needs no invented
+# peso figure to be useful.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Result_Prescriptive (
+    result_id          INTEGER PRIMARY KEY,
+    product_id         INTEGER NOT NULL,
+    fsn_class          TEXT    CHECK (fsn_class IN ('F', 'S')),  -- N is excluded
+    lead_time_days     INTEGER NOT NULL,
+    cost_ratio         REAL    NOT NULL,   -- S/H
+    avg_daily_demand   REAL,
+    annual_demand      REAL,               -- D, annualised 30-day forecast
+    sigma_demand       REAL,
+    sigma_source       TEXT,               -- 'observed' or 'cv_fallback'
+    z_value            REAL,               -- 1.65 for F (95%), 1.04 for S (85%)
+    safety_stock       REAL,
+    reorder_point      REAL,
+    eoq                REAL,
+    cost_at_eoq        REAL,               -- normalised by H
+    cost_at_half_eoq   REAL,
+    cost_at_double_eoq REAL,
+    demand_method      TEXT,               -- which forecast fed D
+    is_provisional     INTEGER DEFAULT 1,
+    generated_at       TEXT,
+    FOREIGN KEY (product_id) REFERENCES Dim_Product (product_id)
+);
+""")
+
+
 # Save all changes to the file
 connection.commit()
 

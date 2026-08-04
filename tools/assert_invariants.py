@@ -88,6 +88,7 @@ def main():
     con = sqlite3.connect(args.db)
     cur = con.cursor()
     c = Contract()
+    phase_hint = ""
 
     # ---- Dim_Date -------------------------------------------------
     c.expect("Dim_Date rows", scalar(cur, "SELECT COUNT(*) FROM Dim_Date"), 1461)
@@ -150,6 +151,22 @@ def main():
     n_params = scalar(cur, "SELECT COUNT(*) FROM Dim_Parameters")
     if args.phase == "baseline":
         c.expect("Dim_Parameters rows", n_params, expected_params)
+        # Distinguish "A10 has run" from "something unexpected wrote here".
+        # Without this the operator sees a CONTRACT VIOLATED banner for a
+        # state change the run made on purpose, which is the fastest way to
+        # teach someone to ignore the banner.
+        if n_params > 0:
+            not_provisional = scalar(cur, """
+                SELECT COUNT(*) FROM Dim_Parameters
+                WHERE unit IS NULL OR unit NOT LIKE '%PROVISIONAL%'""")
+            if not_provisional == 0:
+                phase_hint = (
+                    f"NOTE: all {n_params} Dim_Parameters rows are flagged "
+                    f"PROVISIONAL, which is what\n"
+                    f"      step5_prescriptive.py writes. If step5 has run, this is "
+                    f"the expected\n"
+                    f"      post-A10 state, not a regression. Re-run with:\n"
+                    f"          python tools/assert_invariants.py --phase a10")
     else:
         # A10 seeds the grid definition; every row must still be provisional.
         c.expect("Dim_Parameters rows > 0", n_params > 0, True)
@@ -158,7 +175,10 @@ def main():
             WHERE unit IS NULL OR unit NOT LIKE '%PROVISIONAL%'"""), 0)
 
     con.close()
-    sys.exit(c.report())
+    rc = c.report()
+    if rc and phase_hint:
+        print("\n" + phase_hint)
+    sys.exit(rc)
 
 
 if __name__ == "__main__":
