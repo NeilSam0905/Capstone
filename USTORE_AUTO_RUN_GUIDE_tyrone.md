@@ -50,7 +50,7 @@ python tools/provenance_may2024.py               # 11 checks; TBS 4,022; DSR 4,3
 python tools/tier_counts.py                      # 92/51/123 all-moving; 38/10/10 Fast-only
 python tools/audit_price_suffix_skus.py          # 71 suffixed, 12 twins, 8 families
 python tools/demand_basis_by_anchor.py           # 27 anchors; 2026-07 gives 79 @30d, 208 @365d
-pytest tests/                                    # 378 passed
+pytest tests/                                    # 379 passed
 python model_benchmark.py                        # 8 methods, both ranking tables (~6 min)
 python step5_prescriptive.py                     # 1,975 rows, N excluded, all gates pass
 
@@ -83,18 +83,32 @@ existed — inflated 13,058 → 13,220 bytes, which shifted every absolute offse
 still *looked* like a PDF. Checking that the blob matches its committed bytes is the only test that
 would have caught it.
 
-**(3b) Regenerating the benchmark may move ETS in the third decimal.**
-Two consecutive runs in the same environment are **byte-identical** — both CSVs hash the same. Across
-BLAS backends they are not: seven of the eight methods stay bit-identical, and **ETS does not**. It
-is the only method that fits parameters numerically, and MKL (Anaconda) and OpenBLAS (a pip venv)
-sum floats in a different order, which sends `scipy.optimize`'s L-BFGS-B down a marginally different
-path.
+**(3b) All eight methods are bit-reproducible under `requirements.txt`. ETS moves only if you
+substitute a different BLAS.**
 
-Measured: MASE 9.290576 under MKL against 9.275184 under OpenBLAS, and 251 vs 254 SKUs priced. The
-committed artifact is the OpenBLAS/venv run. **No documented conclusion depends on this** — ETS ranks
-6th of 8 either way, and everything in `DEGENERATE_FORECAST.md` concerns methods that are
-bit-identical. A random seed would not help; it is not randomness. Pinned by
-`tests/test_determinism.py`; tightening it is a Batch 3 item.
+Follow the pinned install and you reproduce the committed artifact exactly, ETS included — PyPI's
+numpy/scipy wheels bundle **OpenBLAS**, and the committed artifact is an OpenBLAS run. Two
+consecutive runs in that environment are byte-identical, both CSVs hashing the same.
+
+The caveat applies if you swap the BLAS — most commonly by installing scipy from **conda**, which
+links **MKL**. Then seven of the eight methods remain identical to 15 decimal places and **ETS does
+not**, because it is the only method that fits parameters numerically and the two libraries sum
+floats in a different order, moving `scipy.optimize`'s L-BFGS-B onto a marginally different path.
+A random seed would not help; this is not randomness.
+
+Measured across that substitution:
+
+| | MKL (conda) | OpenBLAS (pinned wheels) |
+|---|---:|---:|
+| ETS MASE | 9.290576 | 9.275184 |
+| ETS SKUs priced | 251 | **254** |
+
+The MASE delta is 0.17% — genuine numerical noise. **The SKUs-priced difference is not.** It is a
+discrete outcome flip: three SKUs sit so close to the pricing threshold that whether ETS forecasts
+them as positive depends on the BLAS backend. Bounded in practice — ETS ranks 6th of 8 under both,
+and its neighbours are 8.73 and 12.08, so no ranking can move — but ETS's *pricing decision* is
+numerically marginal for a handful of SKUs, which is a different statement from "the third decimal
+moves". Pinned by `tests/test_determinism.py`; tightening it is a Batch 3 item.
 
 **(4) `git shortlog -sne` needs the explicit `HEAD`.**
 Without a revision, shortlog reads from stdin. In a script or a piped shell it silently prints

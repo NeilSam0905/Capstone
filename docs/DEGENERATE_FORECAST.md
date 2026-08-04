@@ -78,6 +78,20 @@ Verified independently of the benchmark artifact in
 over all 266 eligible daily series and confirms it is zero for every one of them, while the trailing
 mean is not.
 
+### The price of usefulness
+
+The cleanest way to state the trade-off, and the one sentence to carry into Chapter 4:
+
+> **Ten percent more forecast error buys the difference between 0 usable SKUs and 266.**
+
+TSB scores MASE 5.3262 against the rolling median's 4.8341 — **10.2% worse** on the error metric —
+and prices the entire catalogue rather than none of it. Pinned by
+`test_the_cost_of_usefulness_is_about_ten_percent`, so the figure cannot drift in prose.
+
+That is the whole argument in one line. It is not that the error metric is wrong about which
+forecast is closest; it is that being closest and being usable are different properties, and on this
+data they point at different methods for a knowable price.
+
 ---
 
 ## What this means for the acceptance criterion

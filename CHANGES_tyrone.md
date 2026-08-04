@@ -160,24 +160,36 @@ The second is more interesting. **Within one environment the benchmark is byte-i
 consecutive full 266-SKU runs produce CSVs with the same `git hash-object`. So there is no unseeded
 shuffle, no dict-ordering dependency and no tie broken by iteration order.
 
-**Across BLAS backends, seven of eight methods are bit-identical and ETS is not:**
+**Stated correctly, the claim is not "ETS is non-reproducible":**
 
-| | MKL (Anaconda) | OpenBLAS (pip venv) |
+> All eight methods are bit-reproducible under the documented environment. ETS moves only if you
+> substitute a different BLAS.
+
+PyPI's numpy/scipy wheels bundle **OpenBLAS**, and the committed artifact is an OpenBLAS run — so
+anyone following `requirements.txt` reproduces it exactly, ETS included. The caveat applies to
+swapping the BLAS, most commonly by installing scipy from **conda**, which links **MKL**:
+
+| | MKL (conda) | OpenBLAS (pinned wheels) |
 |---|---:|---:|
-| ETS MASE | 9.290576 | **9.275184** |
+| ETS MASE | 9.290576 | 9.275184 |
 | ETS SKUs priced | 251 | **254** |
 | every other method | identical to 15 dp | identical to 15 dp |
 
 ETS is the only method that fits parameters numerically. MKL and OpenBLAS sum floats in a different
-order, which moves `scipy.optimize`'s L-BFGS-B onto a marginally different path. The other seven are
-closed-form, which is exactly why they are unaffected.
+order, moving `scipy.optimize`'s L-BFGS-B onto a marginally different path. The other seven are
+closed-form, which is exactly why they are unaffected. **A seed would not fix this** — it is not
+randomness.
 
-**A seed would not fix this** — it is not randomness. The committed artifact is the OpenBLAS/venv
-run, matching `requirements.txt`. No documented conclusion depends on it: ETS ranks 6th of 8 under
-both, and every figure in `DEGENERATE_FORECAST.md` concerns bit-identical methods. Recorded so that
-someone regenerating and seeing the third decimal move knows it is expected rather than a
-regression. Pinned by `tests/test_determinism.py`, which also fails if any *other* method ever
-acquires an optimiser and widens the caveat. Tightening it is a Batch 3 item.
+**Two different things are happening, and only one is noise.** The MASE delta is 0.17%, which is
+genuine numerical wobble. The SKUs-priced difference is a **discrete outcome flip**: three SKUs sit
+close enough to the pricing threshold that whether ETS forecasts them positive depends on the BLAS
+backend. Bounded — ETS ranks 6th of 8 under both, with neighbours at 8.73 and 12.08, so no ranking
+can move — but ETS's *pricing decision* is numerically marginal for a handful of SKUs, and "the
+third decimal moves" undersells that.
+
+No documented conclusion depends on any of it: every figure in `DEGENERATE_FORECAST.md` concerns
+bit-identical methods. Pinned by `tests/test_determinism.py`, which also fails if any *other* method
+ever acquires an optimiser and widens the caveat. Tightening it is a Batch 3 item.
 
 ---
 
@@ -337,7 +349,7 @@ regression. To re-check the true baseline, rebuild the database from scratch.
 | `model_benchmark.py` | Seven methods on identical folds, no Prophet |
 | `step5_prescriptive.py` | ROP / Safety Stock / EOQ across a 5×5 grid |
 | `tools/demand_basis_by_anchor.py` | The 30-day demand basis at all 27 month anchors (B14) |
-| `tests/` (8 files, 378 tests) | Property tests. The leakage tests in `test_evaluate.py` and the emptied-fixture tests in `test_gates_can_fail.py` are the ones that matter |
+| `tests/` (8 files, 379 tests) | Property tests. The leakage tests in `test_evaluate.py` and the emptied-fixture tests in `test_gates_can_fail.py` are the ones that matter |
 | `requirements*.txt` | Pinned runtime, dev and Prophet dependency sets |
 | `USTORE_AUTO_RUN_GUIDE_tyrone.md` | The canonical run and verification checklist |
 | `docs/DEGENERATE_FORECAST.md` | Why the most accurate method is unusable (Divergence #21) |
@@ -432,7 +444,7 @@ python tools/provenance_may2024.py              # 11 checks; TBS 4,022; DSR 4,31
 python tools/tier_counts.py                     # 92/51/123 all-moving; 38/10/10 Fast-only
 python tools/audit_price_suffix_skus.py         # 71 suffixed, 12 twins, 8 families
 python tools/demand_basis_by_anchor.py          # 27 anchors; 2026-07 = 79 @30d, 208 @365d
-pytest tests/                                   # 378 passed
+pytest tests/                                   # 379 passed
 python model_benchmark.py                       # 8 methods, both ranking tables (~6 min)
 python step5_prescriptive.py                    # 1,975 rows, all gates pass
 
@@ -522,7 +534,7 @@ together, from scratch, on a clean database.
 Repeated at the end of Batch 2, with the same result: **21/21** and a clean `git status`, then
 **22/22** after re-running `step5_prescriptive.py`. Batch 2 additionally verified the whole checklist
 from a venv built off `requirements.txt` alone with **no Anaconda on PATH** — pipeline, all six
-tools, the eight-method benchmark, the prescriptive step and 378 tests.
+tools, the eight-method benchmark, the prescriptive step and 379 tests.
 
 ---
 
