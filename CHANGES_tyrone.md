@@ -471,6 +471,8 @@ python tools/assert_invariants.py               # 21/21, exit 0
 | A17 | `1866a9d` | analysis: add decision-metric ranking beside error-metric ranking (no selection) |
 | A18 | `87db696` | docs: pin the degenerate-forecast result (Divergence #21) |
 | A19 | `e2cf423` | docs: fold Part C corrections and binary-asset check into the canonical checklist |
+| A19′ | `0a1acf4` | docs: record the Batch 2 closing rebuild and A19's SHA |
+| — | `adab0b8` | fix: a test was overwriting the committed benchmark artifacts (§2.6, found pre-push) |
 
 No commit carries an AI-attribution trailer.
 
