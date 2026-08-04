@@ -50,7 +50,7 @@ python tools/provenance_may2024.py               # 11 checks; TBS 4,022; DSR 4,3
 python tools/tier_counts.py                      # 92/51/123 all-moving; 38/10/10 Fast-only
 python tools/audit_price_suffix_skus.py          # 71 suffixed, 12 twins, 8 families
 python tools/demand_basis_by_anchor.py           # 27 anchors; 2026-07 gives 79 @30d, 208 @365d
-pytest tests/                                    # 347 passed
+pytest tests/                                    # 378 passed
 python model_benchmark.py                        # 8 methods, both ranking tables (~6 min)
 python step5_prescriptive.py                     # 1,975 rows, N excluded, all gates pass
 
@@ -82,6 +82,19 @@ git diff --exit-code --quiet && echo "identical"
 existed — inflated 13,058 → 13,220 bytes, which shifted every absolute offset in its xref table. It
 still *looked* like a PDF. Checking that the blob matches its committed bytes is the only test that
 would have caught it.
+
+**(3b) Regenerating the benchmark may move ETS in the third decimal.**
+Two consecutive runs in the same environment are **byte-identical** — both CSVs hash the same. Across
+BLAS backends they are not: seven of the eight methods stay bit-identical, and **ETS does not**. It
+is the only method that fits parameters numerically, and MKL (Anaconda) and OpenBLAS (a pip venv)
+sum floats in a different order, which sends `scipy.optimize`'s L-BFGS-B down a marginally different
+path.
+
+Measured: MASE 9.290576 under MKL against 9.275184 under OpenBLAS, and 251 vs 254 SKUs priced. The
+committed artifact is the OpenBLAS/venv run. **No documented conclusion depends on this** — ETS ranks
+6th of 8 either way, and everything in `DEGENERATE_FORECAST.md` concerns methods that are
+bit-identical. A random seed would not help; it is not randomness. Pinned by
+`tests/test_determinism.py`; tightening it is a Batch 3 item.
 
 **(4) `git shortlog -sne` needs the explicit `HEAD`.**
 Without a revision, shortlog reads from stdin. In a script or a piped shell it silently prints
