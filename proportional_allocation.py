@@ -185,10 +185,10 @@ def run(sales_path, inv_path, ag_path, map_path, out_path, audit_path):
     # sort chronologically: date, supplier, item (matches earlier sales_long ordering)
     out.sort(key=lambda x:(x[0], (x[3] or "").upper(), x[1].upper()))
     with open(out_path,"w",newline="",encoding="utf-8") as f:
-        w=csv.writer(f); w.writerow(["Date",ITEM_COL,"Total Quantity","Supplier","imputation_flag","weight"])
+        w=csv.writer(f, lineterminator="\n"); w.writerow(["Date",ITEM_COL,"Total Quantity","Supplier","imputation_flag","weight"])
         w.writerows(out)
     with open(audit_path,"w",newline="",encoding="utf-8") as f:
-        w=csv.writer(f)
+        w=csv.writer(f, lineterminator="\n")
         w.writerow(["Date","GroupLabel","GroupQty","Constituent","StockWeight","WeightBasis","Allocated","Supplier"])
         audit.sort(key=lambda x:(x[1].upper(), x[0]))
         w.writerows(audit)
