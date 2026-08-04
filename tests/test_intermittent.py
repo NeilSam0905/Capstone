@@ -18,6 +18,7 @@ import pytest
 
 from forecasting.intermittent import (
     croston, croston_fit_predict, decompose, sba, sba_fit_predict,
+    tsb, tsb_fit_predict,
 )
 
 ALPHAS = [0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.0]
@@ -254,3 +255,113 @@ def test_fit_predict_matches_the_underlying_estimator():
 def test_fit_predict_on_a_never_sold_series_returns_zeros():
     pred = croston_fit_predict(0.2)(np.zeros(40), 30)
     assert np.all(pred == 0.0)
+
+
+# ======================================================================
+# TSB (Teunter-Syntetos-Babai)
+# ======================================================================
+
+@pytest.mark.parametrize("alpha", ALPHAS)
+@pytest.mark.parametrize("constant", [1.0, 4.0, 7.5, 250.0])
+def test_tsb_of_a_constant_nonzero_series_is_that_constant(alpha, constant):
+    """Demand every period, so probability is 1 and size is the constant."""
+    y = np.full(30, constant)
+    assert tsb(y, alpha, beta=alpha).point_forecast == pytest.approx(constant)
+
+
+@pytest.mark.parametrize("alpha", ALPHAS)
+def test_probability_and_size_recombine_to_the_point_forecast(alpha):
+    for y in (INTERMITTENT, np.array([5.0, 0, 0, 2.0, 0, 9.0]), np.full(12, 3.0)):
+        r = tsb(y, alpha, beta=alpha)
+        assert r.recombine() == pytest.approx(r.point_forecast, rel=1e-12)
+        assert (r.probability_estimate * r.size_estimate
+                == pytest.approx(r.point_forecast, rel=1e-12))
+
+
+# ---- the obsolescence property: the whole reason TSB is here ---------
+
+DEAD = [5.0, 5.0, 5.0] + [0.0] * 200
+
+
+def test_tsb_decays_on_a_dead_sku_where_croston_holds_flat():
+    """Three sales, then 200 periods of nothing. Croston never updates on
+    a zero period, so its forecast is exactly what it was after the third
+    sale. TSB keeps updating the probability and decays toward zero."""
+    t = tsb(DEAD).point_forecast
+    c = croston(DEAD).point_forecast
+
+    assert t < c
+    assert t < 0.5 * c          # decays, not merely lower
+    assert t == pytest.approx(0.0, abs=1e-6)
+
+
+def test_croston_is_unchanged_by_the_trailing_zeros_but_tsb_is_not():
+    """States the contrast directly: the same 200 zeros are invisible to
+    one method and decisive for the other."""
+    alive = [5.0, 5.0, 5.0]
+    assert croston(DEAD).point_forecast == pytest.approx(croston(alive).point_forecast)
+    assert tsb(DEAD).point_forecast < tsb(alive).point_forecast
+
+
+@pytest.mark.parametrize("n_zeros", [0, 25, 50, 100, 200, 400])
+def test_tsb_forecast_falls_monotonically_with_the_length_of_the_dead_tail(n_zeros):
+    """More trailing zeros must never raise the forecast."""
+    short = tsb([5.0, 5.0, 5.0] + [0.0] * n_zeros).point_forecast
+    longer = tsb([5.0, 5.0, 5.0] + [0.0] * (n_zeros + 25)).point_forecast
+    assert longer <= short + 1e-12
+
+
+def test_tsb_probability_tracks_the_share_of_selling_periods():
+    """A dense series keeps a high probability; a sparse one does not."""
+    dense = tsb(np.full(60, 3.0))
+    sparse = tsb([3.0] + [0.0] * 59)
+    assert dense.probability_estimate > 0.9
+    assert sparse.probability_estimate < 0.1
+    assert dense.point_forecast > sparse.point_forecast
+
+
+def test_tsb_implied_interval_is_the_reciprocal_of_probability():
+    r = tsb(INTERMITTENT, 0.2, 0.2)
+    assert r.implied_interval == pytest.approx(1.0 / r.probability_estimate)
+
+
+def test_tsb_never_sold_series_forecasts_zero():
+    r = tsb(np.zeros(50))
+    assert r.point_forecast == 0.0
+    assert r.probability_estimate == 0.0
+    assert r.n_nonzero == 0
+
+
+def test_tsb_counts_are_reported():
+    r = tsb(INTERMITTENT, 0.2, 0.2)
+    assert r.n_periods == len(INTERMITTENT)
+    assert r.n_nonzero == int((INTERMITTENT > 0).sum()) == 5
+    assert r.average_size == pytest.approx(INTERMITTENT[INTERMITTENT > 0].mean())
+
+
+@pytest.mark.parametrize("bad", [0.0, -0.1, 1.5])
+def test_tsb_rejects_bad_smoothing_constants(bad):
+    with pytest.raises(ValueError, match="alpha"):
+        tsb(INTERMITTENT, alpha=bad)
+    with pytest.raises(ValueError, match="beta"):
+        tsb(INTERMITTENT, beta=bad)
+
+
+def test_tsb_rejects_empty_and_negative_series():
+    with pytest.raises(ValueError, match="empty"):
+        tsb([])
+    with pytest.raises(ValueError, match="negative"):
+        tsb([1.0, -2.0])
+
+
+def test_tsb_str_is_informative():
+    s = str(tsb(INTERMITTENT, 0.2, 0.2))
+    assert "tsb" in s and "p " in s and "size" in s
+
+
+@pytest.mark.parametrize("horizon", [1, 7, 30])
+def test_tsb_fit_predict_fills_the_horizon(horizon):
+    pred = tsb_fit_predict(0.2, 0.2)(INTERMITTENT, horizon)
+    assert pred.shape == (horizon,)
+    assert np.all(np.isfinite(pred)) and np.all(pred >= 0)
+    assert pred[0] == pytest.approx(tsb(INTERMITTENT, 0.2, 0.2).point_forecast)
