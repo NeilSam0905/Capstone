@@ -30,6 +30,7 @@ so nothing silently changes meaning between versions.
 | **18** | — | `SUM(quantity_sold)` 88,481 → **89,232**: May 2024 re-sourced DSR→TBS (−296), July 2026 added (+1,047) | Ch4 data description |
 | **19** | — | 71 of 519 products carry a price suffix; 12 have a de-priced twin. `Lanyard @180` is the largest SKU at 7,201 units | Ch4 data quality |
 | **20** | — | CSV line-ending split made the repo non-reproducible across platforms; `USTore_Build_Plan.pdf` was corrupted on every Windows checkout | Ch4 reproducibility note |
+| **21** | §3.3.4's error-threshold acceptance criterion | Not merely unreachable on this data — **degenerate**. The optimum of the criterion is a forecast of zero: the MASE-minimising method prices 0 of 266 SKUs | Ch4 results **and** limitations |
 
 ---
 
@@ -150,6 +151,30 @@ were auto-detected as binary and were never affected.
 
 Chapter 4 should note this as a reproducibility limitation that was found and closed, not as an
 open one.
+
+### #21 — the acceptance criterion is degenerate, not just strict
+
+This is the strongest result the project has, and it changes the shape of the argument in Chapter 4.
+
+Full detail and the identity chain are in `DEGENERATE_FORECAST.md`; pinned by
+`tests/test_degenerate_forecast.py`. In short:
+
+1. MAE is minimised by the conditional median of the predictive distribution.
+2. MASE is MAE divided by a scale that does not depend on the forecast, so it has the **same**
+   minimiser.
+3. 68,541 of 84,399 `Fact_Sales` rows are zero, so on this series the median **is** zero.
+
+Therefore any selection rule that minimises MASE converges, by construction, on the forecast
+"nothing will sell". Measured instance: the rolling 30-day median leads the eight-method benchmark
+on MASE **and prices 0 of 266 SKUs**, because an annualised demand of zero yields no EOQ.
+
+The distinction that matters for the write-up: divergence #6 says the ≤20% MAPE bar cannot be
+cleared, which reads as asking for the bar to be lowered. #21 says something different and stronger —
+**an error-minimising acceptance criterion is structurally invalid for intermittent demand**, and we
+can demonstrate it on our own data rather than citing it. That is a contribution, not a concession.
+
+Stated as a demonstration on this dataset. The recommendation is **not** drawn here; that is B2 and
+B3.
 
 ---
 
