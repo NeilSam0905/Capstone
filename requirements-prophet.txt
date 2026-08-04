@@ -1,0 +1,23 @@
+# USTore capstone - Prophet, deliberately separated
+#
+#   pip install -r requirements.txt -r requirements-prophet.txt
+#
+# NOT part of the standard install, and not needed by anything in the Part
+# C checklist. Installing prophet pulls in cmdstan, which is a toolchain
+# build that can consume a whole session and fail for environment reasons
+# that have nothing to do with this project.
+#
+# That is exactly why model_benchmark.py runs eight methods without it:
+# Block 6.2 recorded that Chapter 4's central result was unreproducible
+# from the repo because it required this dependency. It no longer does.
+#
+# step4_prophet_forecast.py is the only file that imports prophet, and it
+# has NOT been re-run since Block 1 or Block 2.2 - its stored forecasts are
+# stale twice over. Re-running it is deferred decision B5 and belongs in
+# its own session.
+#
+# Version left unpinned on purpose: nobody has verified one here, and
+# writing a number that has never been run would be worse than leaving it
+# to resolve.
+
+prophet

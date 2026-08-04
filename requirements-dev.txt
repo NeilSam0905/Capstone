@@ -1,0 +1,16 @@
+# USTore capstone - development and test dependencies
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# pytest      runs the test suite
+# statsmodels REFERENCE ONLY. forecasting/baselines.py implements
+#             Holt-Winters rather than importing it, so that the benchmark
+#             runs from requirements.txt alone. statsmodels is used solely
+#             by tests/test_holtwinters_reference.py to check that
+#             implementation against a known-good one - it found a real
+#             defect in the seasonal update. That module skips cleanly when
+#             statsmodels is absent, and nothing in the runtime path
+#             imports it.
+
+pytest==8.4.2
+statsmodels==0.14.5

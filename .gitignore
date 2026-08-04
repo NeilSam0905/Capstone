@@ -1,6 +1,9 @@
 ustore.db
 __pycache__/
 *.pyc
+.venv/
+venv/
+.pytest_cache/
 
 # raw inventory workbook (~131MB, mostly embedded product photos) - too big for
 # GitHub's 100MB limit; USTore_inventory_excel_long.csv has the usable data
