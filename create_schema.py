@@ -137,39 +137,45 @@ CREATE TABLE IF NOT EXISTS Event_Log (
 
 
 # ----- RESULT TABLE: Result_Prescriptive ---------------------------
-# ROP / Safety Stock / EOQ evaluated across a GRID of lead times and
-# cost ratios, not at a single chosen point.
+# ROP / Safety Stock / EOQ using REAL (but still provisional) USTore
+# estimates, not the abstract lead-time x cost-ratio grid this table
+# used to hold.
 #
-# lead_time_days is NULL for all 519 products and nobody has confirmed an
-# ordering or holding cost, so committing to one set of numbers would be
-# inventing the inputs. Instead every (lead time x cost ratio) cell is
-# computed and stored, which makes the eventual store visit a lookup
-# rather than a recompute. See deferred decision B9.
-#
-# Costs are stored NORMALISED BY HOLDING COST (i.e. in units of H), since
-# EOQ depends only on the ratio S/H. That way the table needs no invented
-# peso figure to be useful.
+# lead_time_days is now a real per-product value from Dim_Product
+# (step5a_set_lead_times.py, category-based: 14/18/28 days). Holding
+# cost is a single blended PHP/unit/year figure derived from USTore's
+# stated inventory value (see Dim_Parameters for the arithmetic).
+# Ordering cost is genuinely ambiguous (USTore's figure may be monthly
+# goods value, not a per-order admin cost), so it is NOT collapsed to
+# one number - every SKU is priced under BOTH a low (admin-cost) and a
+# high (goods-value) interpretation, one row each, so the spread is
+# visible rather than hidden behind a single choice. See deferred
+# decision B9.
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS Result_Prescriptive (
-    result_id          INTEGER PRIMARY KEY,
-    product_id         INTEGER NOT NULL,
-    fsn_class          TEXT    CHECK (fsn_class IN ('F', 'S')),  -- N is excluded
-    lead_time_days     INTEGER NOT NULL,
-    cost_ratio         REAL    NOT NULL,   -- S/H
-    avg_daily_demand   REAL,
-    annual_demand      REAL,               -- D, annualised 30-day forecast
-    sigma_demand       REAL,
-    sigma_source       TEXT,               -- 'observed' or 'cv_fallback'
-    z_value            REAL,               -- 1.65 for F (95%), 1.04 for S (85%)
-    safety_stock       REAL,
-    reorder_point      REAL,
-    eoq                REAL,
-    cost_at_eoq        REAL,               -- normalised by H
-    cost_at_half_eoq   REAL,
-    cost_at_double_eoq REAL,
-    demand_method      TEXT,               -- which forecast fed D
-    is_provisional     INTEGER DEFAULT 1,
-    generated_at       TEXT,
+    result_id                 INTEGER PRIMARY KEY,
+    product_id                INTEGER NOT NULL,
+    fsn_class                 TEXT    CHECK (fsn_class IN ('F', 'S')),  -- N is excluded
+    lead_time_days            INTEGER NOT NULL,
+    lead_time_category        TEXT,     -- which garment tier set this SKU's lead time
+    ordering_cost_scenario    TEXT    NOT NULL,  -- 'low_admin_cost' | 'high_goods_value'
+    ordering_cost_php         REAL    NOT NULL,  -- S, PHP per order
+    holding_cost_php_per_unit_year REAL NOT NULL, -- H, same across scenarios
+    cost_ratio                REAL,     -- S/H, kept for continuity with the EOQ theory checks
+    avg_daily_demand          REAL,
+    annual_demand             REAL,     -- D, annualised 30-day forecast
+    sigma_demand               REAL,
+    sigma_source              TEXT,     -- 'observed' or 'cv_fallback'
+    z_value                   REAL,     -- 1.65 for F (95%), 1.04 for S (85%)
+    safety_stock               REAL,
+    reorder_point              REAL,
+    eoq                        REAL,
+    cost_at_eoq                REAL,    -- real PHP/year: (D/Q)*S + (Q/2)*H
+    cost_at_half_eoq            REAL,
+    cost_at_double_eoq          REAL,
+    demand_method              TEXT,    -- which forecast fed D
+    is_provisional              INTEGER DEFAULT 1,
+    generated_at                TEXT,
     FOREIGN KEY (product_id) REFERENCES Dim_Product (product_id)
 );
 """)
