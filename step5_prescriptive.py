@@ -1,68 +1,80 @@
 """
 step5_prescriptive.py
 ------------------------------------------------------------------
-ROP / Safety Stock / EOQ as a SENSITIVITY SURFACE, not a point estimate.
+ROP / Safety Stock / EOQ using REAL (still provisional) USTore
+estimates, not the abstract lead-time x cost-ratio sensitivity grid
+this script used to produce.
 
-Why a surface
--------------
-`lead_time_days` is NULL for all 519 products, and no ordering or holding
-cost has been confirmed by anyone at USTore. Seeding those with invented
-numbers would produce a table that looks authoritative and is not. So
-this script does not pick values: it evaluates the formulas across a grid
-and stores every cell.
+Where the numbers come from
+----------------------------
+1. LEAD TIME - step5a_set_lead_times.py sets Dim_Product.lead_time_days
+   per product by garment category (14d simple/DTF/puff shirt, 18d
+   embroidered shirt, 28d jacket, 18d default/non-apparel). Run that
+   script first; this one exits if any priced SKU has a NULL lead time.
 
-    lead time   in {3, 7, 14, 21, 30} days
-    cost ratio  S/H in {0.5, 1, 2, 5, 10}
+2. HOLDING COST (H) - USTore gave an inventory VALUE, not a holding
+   cost: approximately PHP 120,000-300,000 of stock on hand. Converted
+   here as:
 
-25 cells per SKU. When someone finally asks the store what their lead
-time is, the answer is a lookup in this table rather than a recompute -
-and in the meantime the spread across the grid shows how much the answer
-actually depends on the number nobody has (deferred decision B9).
+       annual holding cost (PHP) = 25% x inventory value
+       H (PHP / unit / year)     = annual holding cost / units on hand
 
-The formulas, exactly as documented
------------------------------------
+   Using the midpoint of the range (PHP 210,000) and an estimated
+   36,051 units on hand (the latest COMPLETE monthly inventory
+   snapshot - 2026-03; 2026-04 was excluded because it is a partial
+   count, only 187 of the usual ~1,400 rows):
+
+       annual holding cost = 0.25 x 210,000       = PHP 52,500
+       H                   = 52,500 / 36,051       = PHP 1.4563 / unit / year
+
+   This is a single BLENDED rate averaged across the whole catalogue -
+   it does not distinguish a PHP 30 keychain from a PHP 1,500 jacket,
+   because USTore gave one inventory-value figure, not a per-item
+   breakdown. That is a real limitation, not an oversight; flagged in
+   Dim_Parameters and here.
+
+3. ORDERING COST (S) - USTore's figure (PHP 200,000-500,000/month) is
+   ambiguous: it may be the admin/setup cost of placing an order (what
+   EOQ actually wants), or it may just be the PESO VALUE of goods
+   ordered that month, which is a completely different quantity and
+   would make EOQ meaningless if used directly. Rather than silently
+   pick one reading, every SKU is priced under BOTH:
+
+       low_admin_cost  : PHP 1,250 / order  (midpoint of a plausible
+                          500-2,000 admin-cost range - staff time,
+                          paperwork, a phone call to the supplier)
+       high_goods_value: PHP 200,000 / order (USTore's own low-end
+                          figure, taken literally as if it WERE a
+                          per-order cost, to show how far EOQ swings
+                          under the more likely-wrong reading)
+
+   The gap between the two rows per SKU IS the finding: if EOQ moves
+   by an order of magnitude between them (it does), that is the
+   argument for going back to USTore and asking specifically "what
+   does it cost you, in staff time and paperwork, to place one
+   order?" rather than accepting the monthly figure as-is.
+
+4. 0.5x / 1x / 2x EOQ sensitivity - kept exactly as before, now
+   computed in real PHP/year instead of normalised-by-H units, since
+   real S and H both exist now: TC(Q) = (D/Q) x S + (Q/2) x H.
+
+Formulas (unchanged)
+---------------------
     ROP          = (Average Daily Demand x Lead Time) + Safety Stock
     Safety Stock = Z x sigma_demand x sqrt(Lead Time)
     EOQ          = sqrt((2 x D x S) / H)
 
-Z by FSN class: F = 1.65 (95% service), S = 1.04 (85%). **N is excluded
-entirely** - a non-moving item has no meaningful reorder point, and
-computing one would imply it should be restocked.
+Z by FSN class: F = 1.65 (95% service), S = 1.04 (85%). N excluded.
 
-Costs are normalised by holding cost
-------------------------------------
-EOQ depends only on the RATIO S/H, so the grid is over that ratio and
-total cost is reported in units of H:
-
-    TC(Q) / H = (D / Q) x (S/H) + Q / 2
-
-which is minimised at Q = EOQ. This keeps the whole table free of any
-invented peso figure while still letting the EOQ-is-the-minimum property
-be checked - it is asserted at 0.5x, 1x and 2x EOQ.
-
-Demand input, and a result worth reading
----------------------------------------
-D is the annualised 30-day forecast. The default is the rolling 30-day
-MEAN, and the reason is a finding in its own right:
-
-    The rolling 30-day MEDIAN leads the A9 ranking on MASE, and it is
-    unusable here. On an intermittent daily series most days are zero, so
-    the trailing median IS zero for nearly every SKU. Running this script
-    with --demand-method rolling_median_30 prices 0 of 266 SKUs, because
-    every annual demand comes out at zero and there is no EOQ to compute.
-
-That is the accuracy/actionability split in one line: the method that
-minimises forecast error predicts "nothing will sell", which is nearly
-right day-to-day and useless for deciding how much to order. Anyone
-choosing a model on MASE alone (deferred decision B3) needs to see this
-before choosing.
-
-The mean is used instead because it is the cheapest estimator that
-returns a positive rate. **That is an input choice, not a model
-selection.** Every row records which method fed it, and every row is
-flagged provisional.
+Demand input
+------------
+D is the annualised 30-day forecast, same rolling-mean default and
+caveat as before (--demand-method rolling_median_30 prices ~0 SKUs on
+intermittent series - see the git history for that finding). Every row
+records which method fed it and is flagged provisional.
 
 Run:
+    python step5a_set_lead_times.py     # first, if not already run
     python step5_prescriptive.py [--demand-method rolling_mean_30]
 ------------------------------------------------------------------
 """
@@ -78,23 +90,36 @@ from forecasting.baselines import (
     rolling_mean_fit_predict, rolling_median_fit_predict, seasonal_naive_fit_predict,
 )
 from forecasting.intermittent import croston_fit_predict, sba_fit_predict
+from step5a_set_lead_times import classify as classify_lead_time_tier
 
 DB_NAME = "ustore.db"
 HORIZON = 30
 DAYS_PER_YEAR = 365.0
 
-LEAD_TIMES = [3, 7, 14, 21, 30]
-COST_RATIOS = [0.5, 1.0, 2.0, 5.0, 10.0]
+# ---- Holding cost (H): inventory value -> PHP/unit/year -------------
+INVENTORY_VALUE_LOW = 120_000.0
+INVENTORY_VALUE_MID = 210_000.0
+INVENTORY_VALUE_HIGH = 300_000.0
+HOLDING_COST_ANNUAL_RATE = 0.25
+UNITS_ON_HAND_ESTIMATE = 36_051.0
+UNITS_ON_HAND_SOURCE = (
+    "latest COMPLETE monthly inventory snapshot (2026-03, 1,412 rows); "
+    "2026-04 excluded as a partial count (187 rows)"
+)
+H_PHP_PER_UNIT_YEAR = (HOLDING_COST_ANNUAL_RATE * INVENTORY_VALUE_MID) / UNITS_ON_HAND_ESTIMATE
 
-# Z by FSN class. N is not here because N is excluded, not zero-weighted.
+# ---- Ordering cost (S): two competing interpretations ----------------
+ORDERING_COST_SCENARIOS = {
+    "low_admin_cost": 1_250.0,     # midpoint of a plausible PHP 500-2,000/order admin cost
+    "high_goods_value": 200_000.0,  # USTore's own low-end monthly figure, taken literally
+}
+
 Z_BY_CLASS = {"F": 1.65, "S": 1.04}
 SERVICE_BY_CLASS = {"F": "95%", "S": "85%"}
 
-# A sigma estimated from too few non-zero days is noise. Below this many
-# selling days the class-median coefficient of variation is used instead.
 MIN_SALE_DAYS_FOR_SIGMA = 10
 
-PROVISIONAL = "PROVISIONAL - pending Block 5"
+PROVISIONAL = "PROVISIONAL - pending Block 5 (USTore site visit)"
 
 DEMAND_METHODS = {
     "rolling_median_30": rolling_median_fit_predict(30),
@@ -105,16 +130,15 @@ DEMAND_METHODS = {
 }
 
 
-def eoq(D, ratio):
-    """sqrt(2 D S / H) with the cost ratio standing in for S/H."""
-    return float(np.sqrt(2.0 * D * ratio)) if D > 0 and ratio > 0 else 0.0
+def eoq(D, S, H):
+    return float(np.sqrt(2.0 * D * S / H)) if D > 0 and S > 0 and H > 0 else 0.0
 
 
-def total_cost_normalised(D, ratio, Q):
-    """TC(Q)/H = (D/Q)(S/H) + Q/2. Minimised at Q = EOQ."""
+def total_cost(D, S, H, Q):
+    """TC(Q) = (D/Q)*S + (Q/2)*H, real PHP/year. Minimised at Q = EOQ."""
     if Q <= 0:
         return float("inf")
-    return (D / Q) * ratio + Q / 2.0
+    return (D / Q) * S + (Q / 2.0) * H
 
 
 def safety_stock(z, sigma, lead_time):
@@ -132,7 +156,7 @@ def load_series(con):
     """, con, parse_dates=["calendar_date"])
 
     products = pd.read_sql_query(
-        "SELECT product_id, item_name, fsn_class FROM Dim_Product", con)
+        "SELECT product_id, item_name, fsn_class, lead_time_days FROM Dim_Product", con)
 
     idx = pd.date_range(fact["calendar_date"].min(),
                         fact["calendar_date"].max(), freq="D")
@@ -145,30 +169,44 @@ def load_series(con):
 
 
 def seed_dim_parameters(con, demand_method):
-    """Store the GRID DEFINITION, not a chosen value. Every row is
-    flagged provisional; tools/assert_invariants.py --phase a10 checks
-    that none of them has lost the flag."""
     con.execute("DELETE FROM Dim_Parameters")
     now = dt.date.today().isoformat()
 
-    rows = []
-    for lt in LEAD_TIMES:
-        rows.append((f"grid.lead_time_days.{lt}", float(lt),
-                     f"days [{PROVISIONAL}]"))
-    for r in COST_RATIOS:
-        rows.append((f"grid.cost_ratio_S_over_H.{r}", float(r),
-                     f"ratio S/H, dimensionless [{PROVISIONAL}]"))
+    rows = [
+        ("assumption.inventory_value_php_low", INVENTORY_VALUE_LOW,
+         f"PHP, USTore-stated range low end [{PROVISIONAL}]"),
+        ("assumption.inventory_value_php_mid", INVENTORY_VALUE_MID,
+         f"PHP, range midpoint - USED for holding cost below [{PROVISIONAL}]"),
+        ("assumption.inventory_value_php_high", INVENTORY_VALUE_HIGH,
+         f"PHP, USTore-stated range high end [{PROVISIONAL}]"),
+        ("assumption.holding_cost_annual_rate", HOLDING_COST_ANNUAL_RATE,
+         f"fraction of inventory value assumed as annual holding cost [{PROVISIONAL}]"),
+        ("assumption.units_on_hand_estimate", UNITS_ON_HAND_ESTIMATE,
+         f"units, {UNITS_ON_HAND_SOURCE} [{PROVISIONAL}]"),
+        ("derived.holding_cost_php_per_unit_year", round(H_PHP_PER_UNIT_YEAR, 4),
+         f"PHP/unit/year = 0.25 x {INVENTORY_VALUE_MID:,.0f} / {UNITS_ON_HAND_ESTIMATE:,.0f}; "
+         f"a single BLENDED rate across the whole catalogue, not per-item [{PROVISIONAL}]"),
+        ("assumption.ordering_cost_low_admin_php", ORDERING_COST_SCENARIOS["low_admin_cost"],
+         f"PHP/order, midpoint of a plausible 500-2,000 admin-cost range [{PROVISIONAL}]"),
+        ("assumption.ordering_cost_high_goods_value_php", ORDERING_COST_SCENARIOS["high_goods_value"],
+         f"PHP/order, USTore's own 200k-500k/month figure taken literally - "
+         f"LIKELY MONTHLY GOODS VALUE, NOT A PER-ORDER ADMIN COST [{PROVISIONAL}]"),
+        ("assumption.lead_time_days.simple_dtf_puff_shirt", 14.0,
+         f"days [{PROVISIONAL}]"),
+        ("assumption.lead_time_days.embroidered_shirt", 18.0,
+         f"days [{PROVISIONAL}]"),
+        ("assumption.lead_time_days.jacket", 28.0,
+         f"days [{PROVISIONAL}]"),
+        ("assumption.lead_time_days.default", 18.0,
+         f"days, non-apparel and anything uncategorized [{PROVISIONAL}]"),
+        ("grid.horizon_days", float(HORIZON), f"days, forecast horizon [{PROVISIONAL}]"),
+        ("grid.days_per_year", DAYS_PER_YEAR, f"days, annualisation factor [{PROVISIONAL}]"),
+        ("input.demand_method", 0.0,
+         f"{demand_method}; an input, not a model selection (B3) [{PROVISIONAL}]"),
+    ]
     for cls, z in Z_BY_CLASS.items():
         rows.append((f"service.z_value.{cls}", z,
                      f"z for {SERVICE_BY_CLASS[cls]} service, class {cls} [{PROVISIONAL}]"))
-    rows.append(("grid.horizon_days", float(HORIZON),
-                 f"days, forecast horizon [{PROVISIONAL}]"))
-    rows.append(("grid.days_per_year", DAYS_PER_YEAR,
-                 f"days, annualisation factor [{PROVISIONAL}]"))
-    rows.append(("grid.eoq_sensitivity_multipliers", 0.0,
-                 f"evaluated at 0.5x / 1x / 2x EOQ [{PROVISIONAL}]"))
-    rows.append(("input.demand_method", 0.0,
-                 f"{demand_method}; an input, not a model selection (B3) [{PROVISIONAL}]"))
 
     con.executemany(
         "INSERT INTO Dim_Parameters (parameter_name, value, unit, last_updated) "
@@ -196,9 +234,17 @@ def main():
     series, products, idx = load_series(con)
     fit_predict = DEMAND_METHODS[args.demand_method]
 
+    print(f"Holding cost H = {H_PHP_PER_UNIT_YEAR:.4f} PHP/unit/year "
+          f"(0.25 x {INVENTORY_VALUE_MID:,.0f} / {UNITS_ON_HAND_ESTIMATE:,.0f})")
+    print(f"Ordering cost scenarios: "
+          f"low_admin_cost = PHP {ORDERING_COST_SCENARIOS['low_admin_cost']:,.0f}/order, "
+          f"high_goods_value = PHP {ORDERING_COST_SCENARIOS['high_goods_value']:,.0f}/order "
+          f"({ORDERING_COST_SCENARIOS['high_goods_value']/ORDERING_COST_SCENARIOS['low_admin_cost']:.0f}x apart)")
+
     # ---- per-SKU demand and variability ---------------------------
     stats = {}
     cv_by_class = {"F": [], "S": []}
+    missing_lead_time = []
 
     for _, row in products.iterrows():
         pid, cls = row["product_id"], row["fsn_class"]
@@ -212,70 +258,84 @@ def main():
         if forecast_30d <= 0:
             continue
 
+        if pd.isna(row["lead_time_days"]):
+            missing_lead_time.append(row["item_name"])
+            continue
+
         add = forecast_30d / HORIZON                       # average daily demand
         annual = forecast_30d * (DAYS_PER_YEAR / HORIZON)  # D
         sale_days = int((s > 0).sum())
         sigma_obs = float(np.std(s, ddof=1)) if s.size > 1 else 0.0
 
         stats[pid] = {"cls": cls, "add": add, "annual": annual,
-                      "sigma_obs": sigma_obs, "sale_days": sale_days}
+                      "sigma_obs": sigma_obs, "sale_days": sale_days,
+                      "lead_time_days": int(row["lead_time_days"])}
         if sale_days >= MIN_SALE_DAYS_FOR_SIGMA and add > 0 and sigma_obs > 0:
             cv_by_class[cls].append(sigma_obs / add)
 
+    if missing_lead_time:
+        print(f"\nABORTING: {len(missing_lead_time)} priced SKU(s) have no lead_time_days "
+              f"- run step5a_set_lead_times.py first: {missing_lead_time[:5]}")
+        return 1
+
     cv_median = {c: (float(np.median(v)) if v else 1.0) for c, v in cv_by_class.items()}
-    print("Class-median coefficient of variation (sigma fallback): "
+    print("\nClass-median coefficient of variation (sigma fallback): "
           + ", ".join(f"{c}={cv_median[c]:.3f}" for c in sorted(cv_median)))
 
-    # ---- the grid --------------------------------------------------
+    # ---- price every SKU under both ordering-cost scenarios --------
     con.execute("DELETE FROM Result_Prescriptive")
     now = dt.datetime.now().isoformat(timespec="seconds")
     out = []
     n_fallback = 0
+    # Re-derive the actual tier label the same way step5a computed it (not
+    # guessed back from lead_time_days, which can't tell "embroidered_shirt"
+    # apart from "default" - both are 18 days).
+    product_meta = pd.read_sql_query(
+        "SELECT product_id, item_name, category FROM Dim_Product", con
+    ).set_index("product_id")
+    lt_categories = product_meta.apply(
+        lambda r: classify_lead_time_tier(r["item_name"], r["category"])[1], axis=1
+    )
 
     for pid, st in stats.items():
-        cls, add, annual = st["cls"], st["add"], st["annual"]
+        cls, add, annual, lt = st["cls"], st["add"], st["annual"], st["lead_time_days"]
         z = Z_BY_CLASS[cls]
 
         if st["sale_days"] >= MIN_SALE_DAYS_FOR_SIGMA and st["sigma_obs"] > 0:
             sigma, src = st["sigma_obs"], "observed"
         else:
-            # too few selling days to estimate sigma directly
             sigma, src = add * cv_median[cls], "cv_fallback"
             n_fallback += 1
 
-        for lt in LEAD_TIMES:
-            ss = safety_stock(z, sigma, lt)
-            rop = reorder_point(add, lt, ss)
-            for ratio in COST_RATIOS:
-                q = eoq(annual, ratio)
-                out.append((
-                    int(pid), cls, int(lt), float(ratio), add, annual, sigma, src, z,
-                    ss, rop, q,
-                    total_cost_normalised(annual, ratio, q),
-                    total_cost_normalised(annual, ratio, 0.5 * q),
-                    total_cost_normalised(annual, ratio, 2.0 * q),
-                    args.demand_method, 1, now,
-                ))
+        ss = safety_stock(z, sigma, lt)
+        rop = reorder_point(add, lt, ss)
+
+        for scenario, S in ORDERING_COST_SCENARIOS.items():
+            q = eoq(annual, S, H_PHP_PER_UNIT_YEAR)
+            out.append((
+                int(pid), cls, lt, lt_categories.get(pid), scenario, S, H_PHP_PER_UNIT_YEAR,
+                S / H_PHP_PER_UNIT_YEAR, add, annual, sigma, src, z,
+                ss, rop, q,
+                total_cost(annual, S, H_PHP_PER_UNIT_YEAR, q),
+                total_cost(annual, S, H_PHP_PER_UNIT_YEAR, 0.5 * q),
+                total_cost(annual, S, H_PHP_PER_UNIT_YEAR, 2.0 * q),
+                args.demand_method, 1, now,
+            ))
 
     con.executemany("""
         INSERT INTO Result_Prescriptive
-          (product_id, fsn_class, lead_time_days, cost_ratio, avg_daily_demand,
-           annual_demand, sigma_demand, sigma_source, z_value, safety_stock,
-           reorder_point, eoq, cost_at_eoq, cost_at_half_eoq, cost_at_double_eoq,
+          (product_id, fsn_class, lead_time_days, lead_time_category,
+           ordering_cost_scenario, ordering_cost_php, holding_cost_php_per_unit_year,
+           cost_ratio, avg_daily_demand, annual_demand, sigma_demand, sigma_source, z_value,
+           safety_stock, reorder_point, eoq, cost_at_eoq, cost_at_half_eoq, cost_at_double_eoq,
            demand_method, is_provisional, generated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, out)
 
     n_params = seed_dim_parameters(con, args.demand_method)
     con.commit()
 
-    # ---- coverage diagnostic ---------------------------------------
-    # The spec's demand basis is an annualised 30-DAY forecast, so D is
-    # anchored on the trailing 30 days - which here is 2026-07, inside the
-    # AY2526 summer term. Most SKUs sell nothing then, so most get D = 0
-    # and drop out. That is a property of the definition, not a bug, but it
-    # decides how much of the catalogue gets a reorder point at all, so it
-    # is measured rather than left implicit.
+    # ---- coverage diagnostic (unchanged from before) ----------------
     eligible = [p for p in products["product_id"]
                 if products.set_index("product_id").loc[p, "fsn_class"] in Z_BY_CLASS
                 and series.get(p) is not None and series[p].sum() > 0]
@@ -285,15 +345,19 @@ def main():
                 if float(np.mean(series[p][-window:])) > 0)
         tag = "  <- the spec's 30-day basis" if window == 30 else ""
         print(f"   trailing {window:3d} days : {n:3d} / {len(eligible)} SKUs{tag}")
-    print("   The trailing 30 days fall in the 2026 summer term; a break window")
-    print("   is why the 30-day basis prices so few. Widening it is a decision")
-    print("   for Block 5, not a change this run makes.")
 
     print(f"\nSKUs priced        : {len(stats)} (F+S with demand > 0; N excluded)")
-    print(f"sigma via fallback : {n_fallback}")
+    print(f"sigma via fallback : {n_fallback} of {len(stats)}")
+    if n_fallback:
+        fallback_names = [
+            products.set_index("product_id").loc[pid, "item_name"]
+            for pid, st in stats.items()
+            if not (st["sale_days"] >= MIN_SALE_DAYS_FOR_SIGMA and st["sigma_obs"] > 0)
+        ]
+        print(f"   ({fallback_names})")
     print(f"Result_Prescriptive: {len(out):,} rows "
-          f"({len(LEAD_TIMES)} lead times x {len(COST_RATIOS)} cost ratios)")
-    print(f"Dim_Parameters     : {n_params} grid-definition rows, all provisional")
+          f"({len(stats)} SKUs x {len(ORDERING_COST_SCENARIOS)} ordering-cost scenarios)")
+    print(f"Dim_Parameters     : {n_params} assumption rows, all provisional")
 
     rc = run_gates(con)
     con.close()
@@ -312,21 +376,16 @@ def run_gates(con):
 
     print("\n=== gates ===")
 
-    # 0. The table must not be empty. Without this, every gate below
-    #    passes trivially on zero rows - which is exactly what happened
-    #    on the first run, when the rolling-median demand input priced
-    #    nothing and four "PASS" lines were printed against an empty table.
     n_rows = con.execute("SELECT COUNT(*) FROM Result_Prescriptive").fetchone()[0]
     n_skus = con.execute(
         "SELECT COUNT(DISTINCT product_id) FROM Result_Prescriptive").fetchone()[0]
     expect("Result_Prescriptive is non-empty", n_rows > 0, True)
-    expect("rows == SKUs x lead times x cost ratios",
-           n_rows, n_skus * len(LEAD_TIMES) * len(COST_RATIOS))
+    expect("rows == SKUs x ordering-cost scenarios",
+           n_rows, n_skus * len(ORDERING_COST_SCENARIOS))
     if n_rows == 0:
         print("\nFAILED: nothing was priced, so the remaining gates would be vacuous.")
         return 1
 
-    # 1. no N-class rows
     expect("N-class rows in Result_Prescriptive",
            con.execute("""SELECT COUNT(*) FROM Result_Prescriptive r
                           JOIN Dim_Product p ON p.product_id = r.product_id
@@ -335,7 +394,6 @@ def run_gates(con):
            con.execute("SELECT COUNT(*) FROM Result_Prescriptive "
                        "WHERE fsn_class NOT IN ('F','S')").fetchone()[0], 0)
 
-    # 2. EOQ is the cost minimum
     expect("rows where cost(EOQ) >= cost(0.5x EOQ)",
            con.execute("SELECT COUNT(*) FROM Result_Prescriptive "
                        "WHERE cost_at_eoq >= cost_at_half_eoq").fetchone()[0], 0)
@@ -343,7 +401,6 @@ def run_gates(con):
            con.execute("SELECT COUNT(*) FROM Result_Prescriptive "
                        "WHERE cost_at_eoq >= cost_at_double_eoq").fetchone()[0], 0)
 
-    # the textbook result: both off-optimum points cost exactly 1.25x
     ratio = con.execute("""SELECT AVG(cost_at_half_eoq / cost_at_eoq),
                                   AVG(cost_at_double_eoq / cost_at_eoq)
                            FROM Result_Prescriptive WHERE cost_at_eoq > 0""").fetchone()
@@ -355,7 +412,6 @@ def run_gates(con):
         expect("cost curve matches EOQ theory at 2x",
                round(float(ratio[1]), 4), 1.25)
 
-    # 3. every Dim_Parameters row flagged provisional
     expect("Dim_Parameters rows NOT flagged provisional",
            con.execute("SELECT COUNT(*) FROM Dim_Parameters "
                        "WHERE unit IS NULL OR unit NOT LIKE '%PROVISIONAL%'").fetchone()[0], 0)
@@ -363,16 +419,20 @@ def run_gates(con):
            con.execute("SELECT COUNT(*) FROM Result_Prescriptive "
                        "WHERE is_provisional != 1").fetchone()[0], 0)
 
-    # 4. Z is correct per class
     for cls, z in Z_BY_CLASS.items():
         expect(f"rows with wrong Z for class {cls}",
                con.execute("SELECT COUNT(*) FROM Result_Prescriptive "
                            "WHERE fsn_class = ? AND z_value != ?", (cls, z)).fetchone()[0], 0)
 
-    # 5. ROP >= safety stock (it is SS plus a non-negative demand term)
     expect("rows where ROP < safety stock",
            con.execute("SELECT COUNT(*) FROM Result_Prescriptive "
                        "WHERE reorder_point < safety_stock - 1e-9").fetchone()[0], 0)
+
+    expect("rows with wrong ordering cost for their scenario",
+           con.execute("""SELECT COUNT(*) FROM Result_Prescriptive
+                          WHERE (ordering_cost_scenario='low_admin_cost' AND ordering_cost_php!=1250.0)
+                             OR (ordering_cost_scenario='high_goods_value' AND ordering_cost_php!=200000.0)
+                       """).fetchone()[0], 0)
 
     if failures:
         print(f"\nFAILED: {len(failures)} gate(s). Record under 'Gate failures' "
