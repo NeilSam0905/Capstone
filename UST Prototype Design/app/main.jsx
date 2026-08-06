@@ -40,7 +40,7 @@ function App() {
               <Topbar page={page} />
               {page === 'overview'
                 ? <Overview />
-                : <Placeholder page={page} />}
+                : <PowerBIEmbed title={PAGE_TITLES[page]} />}
             </div>
           </div>
         )}
