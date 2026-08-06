@@ -1,0 +1,27 @@
+{
+ "generated_at": "2026-08-06",
+ "source": "ustore.db (see the repo README for the rebuild command)",
+ "sales_span": [
+  "2023-01-01",
+  "2026-12-31"
+ ],
+ "fact_sales_rows": 84399,
+ "total_units": 89232,
+ "products": 519,
+ "products_with_sales": 286,
+ "products_with_price": 280,
+ "unpriced_units": 73428,
+ "products_with_stock": 82,
+ "recent_window_days": 60,
+ "available": {
+  "sales": true,
+  "fsn": true,
+  "batch_report": true,
+  "forecast": false,
+  "reorder": false
+ },
+ "pending_reason": {
+  "forecast": "step4_prophet_forecast.py has not been re-run (needs cmdstan); Result_Forecast does not exist in the database.",
+  "reorder": "Dim_Parameters is empty - no lead times, ordering or holding costs have been collected yet (Block 5, the USTore site visit)."
+ }
+}
