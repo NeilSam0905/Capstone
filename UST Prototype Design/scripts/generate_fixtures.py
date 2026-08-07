@@ -24,7 +24,7 @@ from datetime import date
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[2]                      # scripts -> uploads -> UST Prototype Design -> Capstone
+REPO = HERE.parents[1]                      # scripts -> UST Prototype Design -> Capstone
 DB = REPO / "ustore.db"
 INVENTORY = REPO / "USTore_inventory_excel_long_mapped.csv"
 OUT = HERE.parent / "src" / "services" / "fixtures"

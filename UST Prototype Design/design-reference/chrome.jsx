@@ -32,7 +32,7 @@ function Sidebar({ page, setPage, setView }) {
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
-        <img src="app/assets/ustore-mark.png" alt="USTore" className="brand-mark" />
+        <img src="assets/ustore-mark.png" alt="USTore" className="brand-mark" />
         <div>
           <div className="wordmark">USTore</div>
           <div className="brand-sub">Inventory Analytics</div>

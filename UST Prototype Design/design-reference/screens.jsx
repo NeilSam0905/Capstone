@@ -131,7 +131,7 @@ function Tally({ setView }) {
     <div className="tally-wrap">
       <header className="tally-head" style={{ backgroundColor: "rgb(0, 0, 0)" }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <img src="app/assets/ustore-mark.png" alt="USTore" style={{ height: 40, width: 'auto', display: 'block' }} />
+          <img src="assets/ustore-mark.png" alt="USTore" style={{ height: 40, width: 'auto', display: 'block' }} />
           <div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
               <span className="wordmark" style={{ fontSize: 22 }}>USTore</span>

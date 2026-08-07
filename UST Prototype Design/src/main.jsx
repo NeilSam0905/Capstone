@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-// The redesign's design system (ported from "UST Prototype Design/app/styles.css").
+// The redesign's design system (ported from "design-reference/styles.css").
 // It is the source of truth for colour, type and spacing — screens use its
 // class vocabulary (.card, .kpi, .tbl, .tag) rather than ad-hoc utilities.
 import './styles/redesign.css'

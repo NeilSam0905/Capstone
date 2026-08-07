@@ -1,7 +1,11 @@
 {
- "generated_at": "2026-08-06",
+ "generated_at": "2026-08-07",
  "source": "ustore.db (see the repo README for the rebuild command)",
  "sales_span": [
+  "2024-05-02",
+  "2026-07-31"
+ ],
+ "calendar_span": [
   "2023-01-01",
   "2026-12-31"
  ],

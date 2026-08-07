@@ -35,15 +35,16 @@ fixtures already have the shape the Phase 3 API will return.
 
 ## Design system
 
-The look comes from the redesign prototype in the sibling folder
-(`UST Prototype Design/app/`), not from this app's original Tailwind styling.
+The look comes from the redesign prototype kept in `design-reference/`, not
+from this app's original Tailwind styling.
 `src/styles/redesign.css` **is** that prototype's `styles.css`, copied verbatim
 and then extended at the bottom for the screens the prototype never built
 (pending states, sortable tables, notices, the batch report). Screens use its
 class vocabulary — `.card`, `.card__pad`, `.kpi`, `.tbl`, `.tag`, `.banner`,
 `.field`, `.btn` — rather than utility classes.
 
-Also ported from the prototype: the sidebar/topbar markup (`app/chrome.jsx`),
+Also ported from the prototype: the sidebar/topbar markup
+(`design-reference/chrome.jsx`),
 the stroke icon set (`src/components/Icon.jsx`) and the hand-rolled SVG charts
 (`src/components/charts.jsx`). The design tokens are set once in `main.jsx` as
 `data-` attributes on `<html>`: gold accent, dark chrome, regular density, soft
