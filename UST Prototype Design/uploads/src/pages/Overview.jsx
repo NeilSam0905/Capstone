@@ -4,7 +4,7 @@ import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
 import Pending, { Loading, PendingValue } from '../components/Pending';
 import { LineChart, Donut, HBars, FSNStat, StackBar } from '../components/charts';
-import { pesoK, num, shortMonth } from '../lib/format';
+import { num, shortMonth } from '../lib/format';
 
 export default function Overview({ filters }) {
   const { data: products, loading } = useData(() => getProducts(filters), [filters], []);
@@ -14,11 +14,9 @@ export default function Overview({ filters }) {
 
   const totals = useMemo(() => {
     const units = products.reduce((s, p) => s + p.total_units, 0);
-    const revenue = products.reduce((s, p) => s + (p.revenue ?? 0), 0);
-    const unpricedUnits = products.filter(p => p.revenue == null).reduce((s, p) => s + p.total_units, 0);
     const fsn = { F: 0, S: 0, N: 0 };
     products.forEach(p => { if (fsn[p.fsn_class] !== undefined) fsn[p.fsn_class]++; });
-    return { units, revenue, unpricedUnits, fsn };
+    return { units, fsn };
   }, [products]);
 
   const top10 = useMemo(() => [...products]
@@ -46,15 +44,9 @@ export default function Overview({ filters }) {
   return (
     <div className="stack">
       {/* KPIs */}
-      <div className="grid-4">
+      <div className="grid-3">
         <KPICard
           accent
-          label="Remittance Value"
-          value={pesoK(totals.revenue)}
-          sub={`Reference only · ${num(totals.unpricedUnits)} units unpriced`}
-          icon="peso"
-        />
-        <KPICard
           label="Total Units Sold"
           value={num(totals.units)}
           sub={meta ? `${meta.sales_span[0]} → ${meta.sales_span[1]}` : ''}

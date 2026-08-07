@@ -17,19 +17,19 @@ export default function Reorder({ filters }) {
     : null;
 
   const columns = [
-    { key: 'item_name',     label: 'Product Name', strong: true },
-    { key: 'supplier_name', label: 'Supplier' },
-    { key: 'current_stock', label: 'Current Stock', num: true, render: v => num(v) },
-    { key: 'stock_as_of',   label: 'Counted', render: v => <span className="muted">{v}</span> },
+    { key: 'item_name',     label: 'Product Name', strong: true, truncate: true, width: '26%' },
+    { key: 'supplier_name', label: 'Supplier', truncate: true, width: '24%' },
+    { key: 'current_stock', label: 'Current Stock', num: true, width: '12%', render: v => num(v) },
+    { key: 'stock_as_of',   label: 'Counted', width: '10%', render: v => <span className="muted">{v}</span> },
     {
-      key: 'days_of_supply', label: 'Days of Supply', num: true,
+      key: 'days_of_supply', label: 'Days of Supply', num: true, width: '12%',
       render: v => v == null
         ? <span className="muted">—</span>
         : <span style={v < 30 ? { color: 'var(--warn)', fontWeight: 700 } : undefined}>{num(v)}</span>,
     },
-    { key: 'adus', label: 'ADUS', num: true, render: v => v.toFixed(3) },
+    { key: 'adus', label: 'ADUS', num: true, width: '8%', render: v => v.toFixed(3) },
     {
-      key: 'censored_days', label: 'Stockout days', num: true,
+      key: 'censored_days', label: 'Stockout', num: true, width: '8%',
       render: v => v > 0 ? <span style={{ color: 'var(--warn)', fontWeight: 700 }}>{v}</span> : <span className="muted">—</span>,
     },
   ];
@@ -89,7 +89,7 @@ export default function Reorder({ filters }) {
         </div>
         {items.length === 0
           ? <div className="empty">No inventory counts match this filter.</div>
-          : <DataTable columns={columns} data={items} />}
+          : <DataTable columns={columns} data={items} minWidth={900} />}
       </div>
     </div>
   );

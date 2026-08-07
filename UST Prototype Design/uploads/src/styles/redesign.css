@@ -361,3 +361,116 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn--sm { padding: 7px 12px; font-size: 12px; }
 .btn--crit { background: var(--crit-bg); color: var(--crit); border-color: var(--crit-line); }
+
+/* ========================================================================
+   Overrides on the ported block above. Kept here rather than edited inline
+   so styles.css stays a verbatim copy of the prototype's.
+   ======================================================================== */
+
+/* Tally screen scrolls. It renders outside the .app flex container, so the
+   `flex: 1` it was given had no flex parent to resolve against and #root's
+   `overflow: hidden` clipped it. */
+.tally-wrap { height: 100%; overflow-y: auto; }
+.tally-wrap::-webkit-scrollbar { width: 9px; }
+.tally-wrap::-webkit-scrollbar-thumb { background: #D8D4C9; border-radius: 6px; border: 2px solid var(--bg); }
+.tally-head { position: sticky; top: 0; z-index: 5; }
+
+/* Topbar wraps instead of letting the filters ride over the title.
+   Title block and filter block are both flex items with their own basis, so
+   they either sit side by side or stack cleanly - never overlap. */
+.topbar {
+  height: auto; min-height: 64px; flex-wrap: wrap;
+  padding: 10px 26px; row-gap: 10px; align-items: center;
+}
+.topbar > div:first-child { flex: 1 1 240px; min-width: 0; }
+.topbar__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar__crumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar__right { flex: 0 1 auto; flex-wrap: nowrap; justify-content: flex-end; min-width: 0; }
+.topbar__right .filter { min-width: 0; }
+.topbar__right .filter select { min-width: 0; width: 100%; }
+
+/* Truncating cell — long supplier names must not push later columns out of
+   view. The full value stays available via the title attribute. */
+.cell-trunc {
+  display: block; max-width: var(--trunc, 200px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Table pagination */
+.pager {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; padding-top: 12px; margin-top: 4px;
+  border-top: 1px solid var(--line-soft);
+}
+.pager__pages { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.pager__btn {
+  font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+  color: var(--text-2); background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r-xs); padding: 5px 10px; min-width: 32px;
+}
+.pager__btn:hover:not(:disabled) { background: var(--bg); color: var(--text); }
+.pager__btn:disabled { opacity: .45; cursor: not-allowed; }
+.pager__btn.active { background: var(--accent); border-color: var(--accent); color: var(--ink); }
+.pager__gap { color: var(--muted); padding: 0 2px; }
+
+/* Batch report subtotal — same bar treatment as .report-supplier, in gold */
+.report-subtotal {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; background: var(--gold); border-radius: 0 0 var(--r) var(--r);
+}
+.report-subtotal__label {
+  font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink); font-weight: 800;
+}
+.report-subtotal__note { text-transform: none; letter-spacing: 0; font-weight: 600; opacity: .7; }
+.report-subtotal__val {
+  margin-left: auto; text-align: right;
+  font-size: 15px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 1024px) {
+  .topbar { padding: 10px 16px; }
+  .topbar__right { width: 100%; justify-content: flex-start; }
+  .scroll { padding: 16px 16px 32px; }
+  .tally-body { padding: 20px 16px 40px; }
+  .tally-head { padding: 14px 16px; }
+}
+@media (max-width: 860px) {
+  .form-grid { grid-template-columns: 1fr; }
+  .filter select { min-width: 0; }
+  .topbar__right { gap: 8px; }
+  .topbar__right .filter { flex: 1 1 130px; }
+  .topbar__right .filter select { width: 100%; }
+}
+@media (max-width: 720px) {
+  /* icon-only sidebar so the content keeps its width */
+  .sidebar { width: 60px; }
+  .sidebar__brand { padding: 14px 10px; justify-content: center; }
+  .sidebar__brand > div, .nav__label, .nav__item > span, .nav__back > span { display: none; }
+  .nav__item { justify-content: center; padding: 10px 0; }
+  .nav__back { justify-content: center; }
+  .banner { gap: 14px; }
+}
+
+/* Fixed-layout table. With `table-layout: auto` the browser hands surplus
+   width to the widest column, so a capped supplier cell showed its text
+   truncated with a wide empty gap after it. Fixed layout + a <colgroup>
+   means each column gets exactly the width it asks for, and the ellipsis
+   lands at the edge of the cell. */
+.tbl--fixed { table-layout: fixed; }
+.tbl--fixed th, .tbl--fixed td { overflow: hidden; text-overflow: ellipsis; }
+.tbl--fixed th > span { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+/* the cell itself clips now, so the inner span must not add its own cap */
+.tbl--fixed .cell-trunc { max-width: 100%; }
+
+/* Topbar: filters take their own full-width row before they get squeezed */
+@media (max-width: 1180px) {
+  .topbar__right { flex: 1 1 100%; justify-content: flex-start; }
+  .topbar__right .filter { flex: 1 1 0; }
+}
+@media (max-width: 560px) {
+  .topbar__right { flex-wrap: wrap; }
+  .topbar__right .filter { flex: 1 1 140px; }
+}

@@ -5,6 +5,7 @@ import {
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
+import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
 import { num } from '../lib/format';
 import brandMark from '../assets/ustore-mark.png';
@@ -244,36 +245,33 @@ function CalendarControls({ onSaved, reloadKey }) {
 
 /* ------------------------------------------------------------- read views */
 
+function entryKey(e) {
+  return e.local_id ? `l${e.local_id}` : `s${e.sale_id}`;
+}
+
+const TYPE_CELL = v => <span className={`tag tag--${TYPE_TONE[v] || 'info'}`}>{v}</span>;
+
 function RecentEntries({ entries, loading }) {
+  const columns = [
+    { key: 'calendar_date', label: 'Date', width: '14%' },
+    { key: 'item_name',     label: 'Item', strong: true, truncate: true, width: '30%' },
+    { key: 'quantity_sold', label: 'Qty', num: true, strong: true, width: '8%' },
+    { key: 'supplier_name', label: 'Supplier', truncate: true, width: '24%' },
+    { key: 'transaction_type', label: 'Type', width: '13%', render: TYPE_CELL },
+    {
+      key: 'is_local', label: 'Origin', width: '11%',
+      render: v => v ? <span className="badge-local">this session</span> : <span className="muted">tallied</span>,
+    },
+  ];
+  const rows = entries.map(e => ({ ...e, rowKey: entryKey(e) }));
+
   return (
     <div className="card card__pad">
       <div className="card-h">
         <span className="section-h">Recent Entries</span>
-        <span className="hint">newest first · “this session” rows are local only</span>
+        <span className="hint">newest first · &ldquo;this session&rdquo; rows are local only</span>
       </div>
-      {loading ? <Loading /> : (
-        <div className="tbl__scroll">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Date</th><th>Item</th><th className="num">Qty</th><th>Supplier</th><th>Type</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map(e => (
-                <tr key={e.local_id ? `l${e.local_id}` : `s${e.sale_id}`}>
-                  <td>{e.calendar_date}</td>
-                  <td className="strong">{e.item_name}</td>
-                  <td className="num strong">{e.quantity_sold}</td>
-                  <td>{e.supplier_name}</td>
-                  <td><span className={`tag tag--${TYPE_TONE[e.transaction_type] || 'info'}`}>{e.transaction_type}</span></td>
-                  <td>{e.is_local && <span className="badge-local">this session</span>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {loading ? <Loading /> : <DataTable columns={columns} data={rows} pageSize={10} minWidth={760} />}
     </div>
   );
 }
@@ -282,6 +280,14 @@ function ByDate({ reloadKey }) {
   const [date, setDate] = useState(today());
   const { data: entries, loading } = useData(() => getEntriesByDate(date), [date, reloadKey], []);
   const total = entries.reduce((s, e) => s + e.quantity_sold, 0);
+
+  const columns = [
+    { key: 'item_name',        label: 'Item', strong: true, truncate: true, width: '46%' },
+    { key: 'supplier_name',    label: 'Supplier', truncate: true, width: '28%' },
+    { key: 'transaction_type', label: 'Type', width: '16%', render: TYPE_CELL },
+    { key: 'quantity_sold',    label: 'Qty', num: true, strong: true, width: '10%' },
+  ];
+  const rows = entries.map(e => ({ ...e, rowKey: entryKey(e) }));
 
   return (
     <div className="card card__pad">
@@ -298,19 +304,7 @@ function ByDate({ reloadKey }) {
           <div className="hint" style={{ marginBottom: 8 }}>
             {entries.length} entr{entries.length === 1 ? 'y' : 'ies'} · {num(total)} units
           </div>
-          <table className="tbl">
-            <tbody>
-              {entries.map(e => (
-                <tr key={e.local_id ? `l${e.local_id}` : `s${e.sale_id}`}>
-                  <td className="strong">{e.item_name}</td>
-                  <td style={{ width: 120 }}>
-                    <span className={`tag tag--${TYPE_TONE[e.transaction_type] || 'info'}`}>{e.transaction_type}</span>
-                  </td>
-                  <td className="num strong" style={{ width: 70 }}>{e.quantity_sold}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable columns={columns} data={rows} pageSize={10} minWidth={620} />
         </>
       )}
     </div>

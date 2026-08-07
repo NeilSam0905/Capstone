@@ -35,20 +35,22 @@ export default function Classification({ filters }) {
     }));
   }, [products]);
 
+  // explicit widths + fixed layout: every column stays on screen, and the
+  // supplier gets a generous share so the name reads before it ellipsises
   const columns = [
-    { key: 'item_name',     label: 'Product Name', strong: true },
-    { key: 'category',      label: 'Category' },
-    { key: 'supplier_name', label: 'Supplier' },
-    { key: 'total_units',   label: 'Units Sold', num: true, render: v => num(v) },
-    { key: 'avg_monthly',   label: 'Avg/Month',  num: true, render: v => v.toFixed(1) },
-    { key: 'adus',          label: 'ADUS',       num: true, render: v => v.toFixed(3) },
-    { key: 'cv',            label: 'CV%',        num: true, render: v => `${v.toFixed(1)}%` },
+    { key: 'item_name',     label: 'Product Name', strong: true, truncate: true, width: '20%' },
+    { key: 'category',      label: 'Category', truncate: true, width: '11%' },
+    { key: 'supplier_name', label: 'Supplier', truncate: true, width: '24%' },
+    { key: 'total_units',   label: 'Units Sold', num: true, width: '9%',  render: v => num(v) },
+    { key: 'avg_monthly',   label: 'Avg/Month',  num: true, width: '9%',  render: v => v.toFixed(1) },
+    { key: 'adus',          label: 'ADUS',       num: true, width: '8%',  render: v => v.toFixed(3) },
+    { key: 'cv',            label: 'CV%',        num: true, width: '8%',  render: v => `${v.toFixed(1)}%` },
     {
-      key: 'censored_days', label: 'Stockout days', num: true,
+      key: 'censored_days', label: 'Stockout', num: true, width: '8%',
       render: v => v > 0 ? <span style={{ color: 'var(--warn)', fontWeight: 700 }}>{v}</span> : <span className="muted">—</span>,
     },
     {
-      key: 'fsn_class', label: 'FSN Class',
+      key: 'fsn_class', label: 'FSN Class', width: '13%',
       render: (v, row) => (
         <span style={{ display: 'inline-flex', gap: 6 }}>
           <span className={`tag tag--${FSN_TONE[v]}`}>{FSN_LABEL[v]}</span>
@@ -161,7 +163,7 @@ export default function Classification({ filters }) {
           <span className="section-h">FSN Classification — Full Item List</span>
           <span className="hint">ADUS = Average Daily Units Sold (classification driver) · {products.length} rows</span>
         </div>
-        <DataTable columns={columns} data={products} />
+        <DataTable columns={columns} data={products} pageSize={10} minWidth={1040} />
       </div>
     </div>
   );
