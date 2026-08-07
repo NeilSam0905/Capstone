@@ -31,7 +31,7 @@ match the star schema in `create_schema.py`.
 | `getSellableProducts()` | `GET /api/products?has_history=1` | same shape, products with a `Fact_Sales` row, sorted by name |
 | `getProductHistory(id)` | `GET /api/products/:id/history` | `[{ month: 'YYYY-MM', units, tally_days }]` |
 | `getMonthlyUnits(filters)` | `GET /api/sales/monthly?…` | `[{ month, units, revenue, priced_units }]` |
-| `getBatchReport(month)` | `GET /api/reports/batch?month=YYYY-MM` | `[{ supplier, items: [{ item_name, quantity, unit_price_php, line_total }], subtotal, unpriced_units }]` |
+| `getBatchReport(month)` | `GET /api/reports/batch?month=YYYY-MM` | `[{ supplier, items: [{ item_name, quantity, unit_price_php, line_total }], total_units, subtotal, unpriced_units }]`. The screen subtotals on **`total_units`**; `subtotal` (pesos) stays in the payload as remittance reference data but is not displayed. |
 | `getFsnSensitivity()` | `GET /api/fsn/sensitivity` | `{ p75: {F,S,N,cutoff}, p80: {…}, p85: {…} }` |
 | `getStockPosition(filters)` | `GET /api/stock` | `{ items: [...products with current_stock], covered, total }` |
 | `getCalendar()` | `GET /api/calendar` | `Dim_Date` rows |

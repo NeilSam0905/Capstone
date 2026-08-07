@@ -474,3 +474,16 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
   .topbar__right { flex-wrap: wrap; }
   .topbar__right .filter { flex: 1 1 140px; }
 }
+
+/* Batch report: each supplier's item table scrolls past 10 rows rather than
+   running the page long. The row/head heights below match .tbl's padding and
+   line-height, so the cut lands exactly on the 10th row. */
+.report-items {
+  --tbl-head-h: 34px;
+  --tbl-row-h: 40px;
+  max-height: calc(var(--tbl-head-h) + 10 * var(--tbl-row-h));
+  overflow-y: auto;
+}
+.report-items thead th { position: sticky; top: 0; z-index: 1; }
+.report-items::-webkit-scrollbar { width: 9px; }
+.report-items::-webkit-scrollbar-thumb { background: #D8D4C9; border-radius: 6px; border: 2px solid var(--card); }

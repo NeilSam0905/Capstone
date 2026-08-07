@@ -17,13 +17,13 @@ export default function BatchReport() {
     []
   );
 
-  const unpricedUnits = report.reduce((s, r) => s + r.unpriced_units, 0);
-  // The grand total is a unit count, not a peso figure: per-supplier
-  // subtotals are what Finance reconciles against, and a store-wide peso
-  // total reads like a sales total, which this tool does not produce.
-  const grandUnits = report.reduce(
-    (s, r) => s + r.items.reduce((n, i) => n + i.quantity, 0), 0
+  const unpricedItems = report.reduce(
+    (s, r) => s + r.items.filter(i => i.unit_price_php == null).length, 0
   );
+  // Subtotals and the grand total are unit counts, not peso figures. This
+  // is an inventory counting tool; unit prices appear only as per-item
+  // reference data for supplier remittance.
+  const grandUnits = report.reduce((s, r) => s + r.total_units, 0);
 
   return (
     <div className="stack">
@@ -68,46 +68,47 @@ export default function BatchReport() {
 
       {loading ? <Loading label="Building report…" /> : (
         <>
-          {unpricedUnits > 0 && (
+          {unpricedItems > 0 && (
             <div className="notice notice--warn">
-              <b>{num(unpricedUnits)} units</b> in this period belong to items with no unit price on record. They are
-              counted in the quantities below, but subtotals cover priced items only.
+              <b>{num(unpricedItems)} line item{unpricedItems === 1 ? '' : 's'}</b> in this period have no unit price on
+              record, shown as “no price” below. Quantities and subtotals are unaffected — those are unit counts.
             </div>
           )}
 
-          {report.map(({ supplier, items, subtotal, unpriced_units }) => (
+          {report.map(({ supplier, items, total_units }) => (
             <div key={supplier} className="card" style={{ overflow: 'hidden' }}>
               <div className="report-supplier"><span>{supplier}</span></div>
-              <table className="tbl">
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th className="num">Quantity</th>
-                    <th className="num">Unit Price</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map(item => (
-                    <tr key={item.item_name}>
-                      <td className="strong">
-                        <span className="cell-trunc" style={{ '--trunc': '420px' }} title={item.item_name}>
-                          {item.item_name}
-                        </span>
-                      </td>
-                      <td className="num">{num(item.quantity)}</td>
-                      <td className="num">{item.unit_price_php != null ? peso(item.unit_price_php) : <span className="muted">no price</span>}</td>
+              {/* caps at 10 visible rows and scrolls; the header stays put */}
+              <div className="report-items">
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th className="num">Quantity</th>
+                      <th className="num">Unit Price</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {items.map(item => (
+                      <tr key={item.item_name}>
+                        <td className="strong">
+                          <span className="cell-trunc" style={{ '--trunc': '420px' }} title={item.item_name}>
+                            {item.item_name}
+                          </span>
+                        </td>
+                        <td className="num">{num(item.quantity)}</td>
+                        <td className="num">{item.unit_price_php != null ? peso(item.unit_price_php) : <span className="muted">no price</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <div className="report-subtotal">
                 <span className="report-subtotal__label">
                   Subtotal — {supplier}
-                  {unpriced_units > 0 && (
-                    <span className="report-subtotal__note"> · {num(unpriced_units)} unpriced units excluded</span>
-                  )}
+                  <span className="report-subtotal__note"> · {items.length} line item{items.length === 1 ? '' : 's'}</span>
                 </span>
-                <span className="report-subtotal__val">{peso(subtotal)}</span>
+                <span className="report-subtotal__val">{num(total_units)} units</span>
               </div>
             </div>
           ))}

@@ -139,7 +139,8 @@ export async function getBatchReport(month) {
     const p = productById.get(row.product_id);
     if (!p) continue;
     const supplier = p.supplier_name || UNATTRIBUTED;
-    const entry = bySupplier.get(supplier) || { supplier, items: [], subtotal: 0, unpriced_units: 0 };
+    const entry = bySupplier.get(supplier)
+      || { supplier, items: [], total_units: 0, subtotal: 0, unpriced_units: 0 };
     const lineTotal = p.unit_price_php != null ? row.units * p.unit_price_php : null;
     entry.items.push({
       item_name: p.item_name,
@@ -147,6 +148,10 @@ export async function getBatchReport(month) {
       unit_price_php: p.unit_price_php,
       line_total: lineTotal,
     });
+    // total_units is what the report subtotals on — every unit counts,
+    // priced or not. subtotal (pesos) stays in the payload as reference
+    // data for supplier remittance, but no screen totals money any more.
+    entry.total_units += row.units;
     if (lineTotal != null) entry.subtotal += lineTotal;
     else entry.unpriced_units += row.units;
     bySupplier.set(supplier, entry);
