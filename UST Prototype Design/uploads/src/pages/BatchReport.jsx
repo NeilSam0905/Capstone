@@ -17,8 +17,13 @@ export default function BatchReport() {
     []
   );
 
-  const grandTotal = report.reduce((s, r) => s + r.subtotal, 0);
   const unpricedUnits = report.reduce((s, r) => s + r.unpriced_units, 0);
+  // The grand total is a unit count, not a peso figure: per-supplier
+  // subtotals are what Finance reconciles against, and a store-wide peso
+  // total reads like a sales total, which this tool does not produce.
+  const grandUnits = report.reduce(
+    (s, r) => s + r.items.reduce((n, i) => n + i.quantity, 0), 0
+  );
 
   return (
     <div className="stack">
@@ -65,8 +70,8 @@ export default function BatchReport() {
         <>
           {unpricedUnits > 0 && (
             <div className="notice notice--warn">
-              <b>{num(unpricedUnits)} units</b> in this period belong to items with no unit price on record, so they are
-              counted but carry no line total. Subtotals below cover priced items only.
+              <b>{num(unpricedUnits)} units</b> in this period belong to items with no unit price on record. They are
+              counted in the quantities below, but subtotals cover priced items only.
             </div>
           )}
 
@@ -79,35 +84,37 @@ export default function BatchReport() {
                     <th>Item</th>
                     <th className="num">Quantity</th>
                     <th className="num">Unit Price</th>
-                    <th className="num">Line Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item, i) => (
-                    <tr key={i}>
-                      <td className="strong">{item.item_name}</td>
+                  {items.map(item => (
+                    <tr key={item.item_name}>
+                      <td className="strong">
+                        <span className="cell-trunc" style={{ '--trunc': '420px' }} title={item.item_name}>
+                          {item.item_name}
+                        </span>
+                      </td>
                       <td className="num">{num(item.quantity)}</td>
                       <td className="num">{item.unit_price_php != null ? peso(item.unit_price_php) : <span className="muted">no price</span>}</td>
-                      <td className="num strong">{item.line_total != null ? peso(item.line_total) : <span className="muted">—</span>}</td>
                     </tr>
                   ))}
                 </tbody>
-                <tfoot>
-                  <tr>
-                    <td className="num subtotal" colSpan={3}>
-                      Subtotal — {supplier}
-                      {unpriced_units > 0 && <span className="muted" style={{ fontWeight: 500 }}> · {num(unpriced_units)} unpriced units excluded</span>}
-                    </td>
-                    <td className="num subtotal">{peso(subtotal)}</td>
-                  </tr>
-                </tfoot>
               </table>
+              <div className="report-subtotal">
+                <span className="report-subtotal__label">
+                  Subtotal — {supplier}
+                  {unpriced_units > 0 && (
+                    <span className="report-subtotal__note"> · {num(unpriced_units)} unpriced units excluded</span>
+                  )}
+                </span>
+                <span className="report-subtotal__val">{peso(subtotal)}</span>
+              </div>
             </div>
           ))}
 
           <div className="report-total">
-            <span className="report-total__label">Grand Total — All Suppliers</span>
-            <span className="report-total__val">{peso(grandTotal)}</span>
+            <span className="report-total__label">Grand Total Units Sold — All Suppliers</span>
+            <span className="report-total__val">{num(grandUnits)} units</span>
           </div>
 
           <div className="card card__pad">

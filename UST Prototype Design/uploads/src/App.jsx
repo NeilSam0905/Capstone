@@ -79,8 +79,8 @@ export default function App() {
         </nav>
 
         <div className="nav__foot">
-          <button className="nav__back" onClick={() => setView('tally')}>
-            <Icon name="db" size={14} /> Back to Tally Interface
+          <button className="nav__back" onClick={() => setView('tally')} title="Back to Tally Interface">
+            <Icon name="db" size={14} /><span>Back to Tally Interface</span>
           </button>
         </div>
       </aside>
