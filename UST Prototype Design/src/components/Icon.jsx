@@ -1,6 +1,6 @@
 /**
  * Stroke icons, ported verbatim from the redesign prototype
- * ("UST Prototype Design/app/chrome.jsx"). Kept rather than swapped for a
+ * ("design-reference/chrome.jsx"). Kept rather than swapped for a
  * package so the sidebar renders exactly what the design shows.
  */
 export default function Icon({ name, size = 18, stroke = 2 }) {

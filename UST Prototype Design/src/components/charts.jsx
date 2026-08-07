@@ -1,6 +1,6 @@
 /**
  * Charts ported from the redesign prototype
- * ("UST Prototype Design/app/charts.jsx"): hand-rolled SVG, no chart
+ * ("design-reference/charts.jsx"): hand-rolled SVG, no chart
  * library, all colour from the design tokens. Generalised only so the
  * value axis can be units as well as pesos.
  */

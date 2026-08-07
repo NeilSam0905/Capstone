@@ -11,7 +11,7 @@ import Icon from './components/Icon';
 import brandMark from './assets/ustore-mark.png';
 
 // Shell markup and class names come from the redesign prototype
-// ("UST Prototype Design/app/chrome.jsx"); only the routing is ours.
+// ("design-reference/chrome.jsx"); only the routing is ours.
 const PAGES = [
   { id: 'overview',       label: 'Dashboard Overview', icon: 'dashboard' },
   { id: 'classification', label: 'FSN Classification', icon: 'tag' },
