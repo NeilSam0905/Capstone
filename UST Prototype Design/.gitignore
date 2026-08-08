@@ -11,3 +11,7 @@ dist/
 # NOTE: src/services/fixtures/*.json IS committed on purpose. They are
 # generated (scripts/generate_fixtures.py) but the app cannot run without
 # them, and regenerating needs ustore.db, which is gitignored.
+
+# Local environment config (Power BI embed URL, etc.)
+.env
+.env.local
