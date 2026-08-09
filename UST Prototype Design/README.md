@@ -1,9 +1,12 @@
 # USTore Frontend
 
-Vite + React + Tailwind frontend for the USTore demand-forecasting and inventory
-capstone. This is **Phase 1**: the UI runs standalone against a local mock data
-layer generated from the real pipeline. There is no backend yet (Phase 3) and no
-Power BI embed yet (Phase 2).
+Vite + React frontend for the USTore demand-forecasting and inventory capstone.
+
+**Phase 1** (done): the UI runs standalone against a local mock data layer
+generated from the real pipeline. **Phase 2** (done): the analytics route
+embeds a published Power BI report — add the URL and it appears, see below.
+**Phase 3** (not started): replace the mock data layer with a real backend, per
+`BACKEND_TODO.md`.
 
 ## Run it
 
@@ -15,6 +18,63 @@ npm run dev
 That's the one command pair — the app comes up at http://localhost:5173 with the
 Tally Interface as the landing view. `npm run build` produces `dist/`,
 `npm run lint` runs ESLint.
+
+## Set up the Power BI dashboard
+
+The **Analytics (Power BI)** screen embeds a published Power BI report. Until a
+URL is configured it shows a placeholder — the app runs fine without one, so
+you can ship and demo before the report exists.
+
+### 1. Where the URL goes
+
+```bash
+cp .env.example .env.local     # .env.local is gitignored
+```
+
+Then set the one key and restart `npm run dev`:
+
+```
+VITE_POWERBI_EMBED_URL=https://app.powerbi.com/view?r=eyJrIjoi…
+```
+
+That's the only place it lives — `src/config.js` reads it and nothing
+hardcodes it. Paste **only the URL**, not the whole `<iframe>` tag Power BI
+gives you; the screen detects that mistake and says so rather than rendering a
+dead frame.
+
+### 2. How to get the URL (a manual step, done once, by a human)
+
+The URL exists only **after** the `.pbix` is published to the Power BI Service.
+Building the report itself — the five views: stock status, FSN, forecast, batch
+sales report, calendar cards — is a separate task from this frontend.
+
+**Method A — Publish to web (free, PUBLIC).** In Power BI Desktop →
+**Publish** → sign in → pick a workspace. Then on
+[app.powerbi.com](https://app.powerbi.com) open the report →
+**File ▸ Embed report ▸ Publish to web (public)** → **Create embed code** →
+copy the URL inside the iframe's `src="…"`. It looks like
+`https://app.powerbi.com/view?r=…`.
+
+> ⚠️ This makes the report **publicly viewable and search-indexable by anyone
+> with the link**. Acceptable for a capstone demo; a genuine problem for live
+> client sales data, which this project is under a data-sharing agreement for.
+> Revoke anytime under **Settings ▸ Manage embed codes**.
+> If "Publish to web" is greyed out, the UST tenant has disabled it — publish
+> under a personal Microsoft account, or use Method B.
+
+**Method B — Secure embed (login required).** Needs **Power BI Pro** (60-day
+trial, or possibly via a student Microsoft 365 A1/A3 licence). Same publish
+flow, then **File ▸ Embed report ▸ Website or portal** → copy that URL
+(`https://app.powerbi.com/reportEmbed?reportId=…`). Viewers must sign in with
+an account that has access, so **the demo machine has to be logged in** — worth
+rehearsing before a defence.
+
+### 3. Not implemented: Power BI Embedded
+
+**Power BI Embedded / Azure "app-owns-data"** (a service principal minting
+embed tokens so viewers need no Microsoft account) is the production upgrade
+path, not part of this project. It requires a backend to mint tokens and a paid
+Azure capacity. Noted here so nobody assumes the current embed does it.
 
 ## Where the data comes from
 

@@ -487,3 +487,16 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .report-items thead th { position: sticky; top: 0; z-index: 1; }
 .report-items::-webkit-scrollbar { width: 9px; }
 .report-items::-webkit-scrollbar-thumb { background: #D8D4C9; border-radius: 6px; border: 2px solid var(--card); }
+
+/* Power BI embed — fills the analytics route, keeps a usable height on
+   short viewports. The report has its own internal scrolling, so the frame
+   is sized to the viewport rather than to the report's content. */
+.pbi {
+  position: relative; width: 100%;
+  height: calc(100vh - 190px); min-height: 620px;
+  border: 1px solid var(--line); border-radius: var(--r);
+  overflow: hidden; background: var(--card); box-shadow: var(--shadow);
+}
+.pbi__frame { width: 100%; height: 100%; border: 0; display: block; }
+@media (max-width: 1024px) { .pbi { height: calc(100vh - 240px); min-height: 520px; } }
+@media (max-width: 720px)  { .pbi { min-height: 440px; } }

@@ -1,58 +1,47 @@
-import Icon from '../components/Icon';
-
-// Set in .env as VITE_POWERBI_EMBED_URL — see README "Set up the Power BI dashboard".
-const EMBED_URL = import.meta.env.VITE_POWERBI_EMBED_URL;
+import PowerBIEmbed from '../components/PowerBIEmbed';
+import { POWERBI_EMBED_URL, inspectEmbedUrl } from '../config';
 
 /**
- * The analytics dashboard is Power BI, embedded here via a responsive
- * iframe. Falls back to a placeholder card when the embed URL isn't set,
- * so the app never renders a broken iframe.
+ * The analytics dashboard: a published Power BI report, embedded.
  *
- * The coded screens beside it (Overview, Classification, Forecast,
- * Reorder, Batch Sales Report) are kept as-is. Whether they stay
- * alongside the embed or are eventually replaced by it is a separate
- * decision — nothing here deletes that design work.
+ * Per the manuscript the five analytical views (stock status, FSN, demand
+ * forecast, batch sales report, calendar cards) are authored in Power BI
+ * against the same SQLite star schema this app reads — so they are embedded
+ * here rather than rebuilt in code.
+ *
+ * The coded screens in the sidebar stay alongside this one; that was an
+ * explicit call, not an oversight. They read real pipeline data through
+ * dataService and remain useful while the .pbix is still being built.
  */
 export default function PowerBIDashboard() {
-  if (!EMBED_URL) {
-    return (
-      <div className="stack">
-        <div className="pending" style={{ padding: '70px 32px', borderWidth: 2 }}>
-          <span className="pending__icon" style={{ width: 54, height: 54 }}>
-            <Icon name="chart" size={24} />
-          </span>
-          <div className="section-title" style={{ fontSize: 18 }}>
-            Power BI report not configured
-          </div>
-          <div className="pending__body">
-            Set <span className="mono">VITE_POWERBI_EMBED_URL</span> in your <span className="mono">.env</span> file
-            to embed the published report here.
-          </div>
-          <span className="tag tag--gold">Awaiting embed URL</span>
-        </div>
-
-        <div className="card card__pad">
-          <div className="card-h"><span className="section-h">Coded screens kept for now</span></div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.55 }}>
-            The sidebar's other screens are the design team's coded versions, now reading real pipeline data through
-            <span className="mono"> dataService</span>. Once the embed URL is set, decide whether it replaces those
-            screens or sits alongside them — until then they stay exactly where they are.
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const check = inspectEmbedUrl(POWERBI_EMBED_URL);
 
   return (
     <div className="stack">
-      <div className="card" style={{ overflow: 'hidden' }}>
-        <iframe
-          title="USTore Analytics — Power BI"
-          src={EMBED_URL}
-          allowFullScreen
-          style={{ width: '100%', minHeight: 720, border: 0, display: 'block' }}
-        />
-      </div>
+      {check.state === 'ok' && (
+        <div className="card-h" style={{ marginBottom: 0 }}>
+          <span className="section-h">USTore Analytics — Power BI</span>
+          <span className="hint">
+            {check.method}
+            {check.method.startsWith('Publish to web') && ' · this report is publicly viewable'}
+          </span>
+        </div>
+      )}
+
+      <PowerBIEmbed />
+
+      {check.state !== 'ok' && (
+        <div className="card card__pad">
+          <div className="card-h"><span className="section-h">What goes here</span></div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.55 }}>
+            The five analytical views are authored in Power BI Desktop against the same SQLite star
+            schema this app reads, published to the Power BI Service, and embedded on this route.
+            Building the <span className="mono">.pbix</span> is a separate task; this screen is the
+            container that holds it. The sidebar’s coded screens stay where they are — Phase 2 adds
+            the embed, it does not replace them.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
