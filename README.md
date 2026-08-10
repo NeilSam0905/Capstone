@@ -6,6 +6,12 @@ the raw monthly tally-sheet workbooks into a clean star-schema SQLite
 database (`ustore.db`), classifies every product as Fast/Slow/Non-moving,
 and produces Prophet-based 30-day forecasts for the Fast-moving SKUs.
 
+The pipeline below (Phases 1–4) is the whole analytics side. A React
+frontend and Flask backend also exist now — see **"Frontend + backend"**
+near the end of this file for what they are and how to run them, and
+`STATUS_AND_NEXT_STEPS.md` for the full status/blocker register, including
+Power BI (Phase 6), which hasn't been built yet.
+
 Run the scripts below **in order** — each one reads the previous step's
 output and writes into `ustore.db`. All of them are safe to re-run: they
 clear their own tables/files before writing, so re-running never
@@ -24,6 +30,8 @@ that touches a CSV (see Block 1 below for what it checks).
 | 2 | `step2_load_fact_sales.py` | Loads the allocated CSV into `Fact_Sales` (84,399 rows: 68,541 zero-quantity + 15,858 positive; sums to **89,232** units — see Block 0 below for why that's not the older 88,481), routing unresolvable rows to `Exception_Log` instead of dropping them. Item names arrive canonical, so it joins straight to `Dim_Product` and applies no mapping of its own. Derives `cumulative_monthly_units`, `daily_depletion_rate`, `days_of_supply` and `is_censored` — the four rules behind those are settled in the script's docstring and summarised under Blocks 2.4/2.6 below. |
 | 3 | `step3_fsn_classification.py` | Computes ADUS (Average Daily Units Sold) per SKU, weighting imputed/allocated rows at 0.5, and classifies Fast/Slow/Non-moving at the 80th-percentile ADUS cutoff (currently F=58, S=228, N=233; it was S=230/N=231 before Block 2.2 below). Days flagged `is_censored` are dropped from the ADUS denominator — `EXCLUDE_CENSORED_DAYS = False` reverts that, see Block 2.4 below. Flags High-Velocity-Limited (HVL) items with thin history. Writes `fsn_class`/`is_hvl` back to `Dim_Product`. |
 | 4 | `step4_prophet_forecast.py` | Fits Prophet per Fast SKU with a data-sufficiency tier, keyed on **distinct sale-days (quantity_sold > 0), not raw row count** — currently 38 standard (60+ sale-days), 10 simplified (30-59), 10 rolling-average (<30, no real model). Validates against a naive baseline, writes 30-day forecasts + metrics to `Result_Forecast` / `Result_Forecast_Metrics`. Requires `cmdstan` (see below). |
+| 5a | `step5a_set_lead_times.py` | Sets `Dim_Product.lead_time_days` per product from a name-keyword classifier (jacket/windbreaker → 28d, embroidered → 18d, shirt/jersey/polo/tee → 14d, else → 18d default). Provisional, pending Block 5 (USTore site visit). |
+| 5 | `step5_prescriptive.py` | ROP / Safety Stock / EOQ per Fast+Slow SKU, using `step5a`'s real lead time and a holding cost derived from USTore's stated inventory value (arithmetic + every assumption written to `Dim_Parameters`, all flagged provisional). Ordering cost is genuinely ambiguous, so every SKU is priced under **two** scenarios (`low_admin_cost` / `high_goods_value`) rather than one guess — see `STATUS_AND_NEXT_STEPS.md` for the numbers. Writes `Result_Prescriptive`. |
 
 Supporting/one-off scripts still in the repo: `build_vocab_mapping.py` /
 `diag_token_match.py` (fuzzy-matching tools used to build and refine the
@@ -373,3 +381,82 @@ deleting a row from a copy.
   anywhere in this branch; looks like a parallel workstream from another
   teammate that hasn't been merged in), 6.3 (`.mailmap`), 6.4 (reconcile
   `USTore_Build_Plan.pdf`)
+
+> **This "Status against `CODE_WORK_PLAN_v2.md`" section predates a large
+> merge and is now stale in places** — e.g. Block 6.2's files (
+> `model_benchmark.py`, tests, `.mailmap`, etc.) **do** exist in this
+> branch now, and Block 4's forecasting overhaul is partly done (an
+> 8-method benchmark exists, though Prophet itself is still unrun). Left
+> as-is rather than rewritten, since `CHANGES_tyrone.md` is the corrected,
+> authoritative record of that merge. Treat this section as history, not
+> current status — see `STATUS_AND_NEXT_STEPS.md` for what's actually true
+> today.
+
+---
+
+## Changes added since the ETL pipeline above (frontend + backend)
+
+The pipeline (Phases 1–4) is unchanged by this. What's new sits on top of
+the same `ustore.db`:
+
+- **`UST Prototype Design/`** — a React + Vite frontend (five analytics
+  screens plus a Digital Tallying Interface), built in two earlier passes
+  (`PROMPT_1_FRONTEND.md`, mock data only; a Power BI embed placeholder).
+  Every screen reads through one module, `src/services/dataService.js`.
+- **`backend/`** — a Flask + SQLite API (`PROMPT_3_BACKEND.md`, Phase 3)
+  that replaces the frontend's mock fixtures with real reads/writes
+  against the same `ustore.db` the pipeline above builds. It does **not**
+  reseed from CSVs — it's a read/write layer on the pipeline's output, not
+  a second data path. `dataService.js` was swapped to call it; no other
+  frontend file changed except `Reorder.jsx` (see below).
+- **`step5a_set_lead_times.py` / `step5_prescriptive.py`** (Pipeline table
+  above) — real per-SKU lead time, holding cost, and dual-scenario
+  ordering cost replaced the old abstract 5×5 sensitivity grid.
+  `Dim_Parameters` and `Result_Prescriptive` are populated now, so the
+  Reorder Alerts screen shows real (provisional) numbers instead of a
+  permanent "pending" state.
+
+**Run both together:**
+
+```bash
+cd backend && pip install -r requirements.txt && python app.py       # :5000
+cd "UST Prototype Design" && npm install && npm run dev              # :5173, proxies /api to :5000
+```
+
+See `backend/README.md` and `UST Prototype Design/README.md` for details,
+and `UST Prototype Design/BACKEND_TODO.md` for the endpoint-by-endpoint
+contract the backend implements.
+
+## Problems that still need fixing
+
+- **`Overview.jsx`'s "Items Below / Near ROP" KPI is stale.** It still
+  shows "Needs lead time & cost inputs" — true when that screen was
+  built, false now that `Dim_Parameters`/`Result_Prescriptive` are
+  populated. Only `Reorder.jsx` was updated to show real reorder data
+  this pass (an explicit, scoped decision); `Overview.jsx` needs the same
+  treatment but wasn't touched.
+- **No PDF export on the Batch Sales Report.** `BACKEND_TODO.md` flags
+  this as a Phase 3 item; the buttons are still disabled
+  (`TODO: backend`, server-rendered PDF not implemented).
+- **No auth on the backend.** `Event_Log.created_by` is hardcoded
+  `'local'`. Fine for a single-machine capstone demo, not for anything
+  beyond that.
+- **Prophet is still blocked** (Block 5/B5 — needs a `cmdstan` build) —
+  `Result_Forecast` doesn't exist, so the Demand Forecast screen correctly
+  shows "pending," not a number.
+- **Power BI itself (Phase 6) hasn't been built.** The frontend has an
+  embed placeholder (`PowerBIDashboard.jsx`) wired to `VITE_POWERBI_EMBED_URL`,
+  but no `.pbix` has been authored or published yet. Two of its five views
+  (Stock Status, Demand Forecast) are additionally blocked on data
+  decisions — see `STATUS_AND_NEXT_STEPS.md` §4 for the per-view
+  breakdown and what's blocking each one.
+- **Inventory coverage is still low** (~14–17% of products have any stock
+  count), which limits both the Stock Status view and the Reorder
+  screen's "on hand" column to a minority of SKUs — Block 3/B10, unresolved.
+- **Everything Phase 4 produces is explicitly provisional.** Lead time,
+  holding cost, and both ordering-cost interpretations are estimates
+  pending the actual USTore site visit (Block 5/B9) — not yet confirmed
+  numbers. Don't treat `Result_Prescriptive` as final.
+
+Full status/blocker register (B1–B15, all still-open team decisions):
+`STATUS_AND_NEXT_STEPS.md`.
