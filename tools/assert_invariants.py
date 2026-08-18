@@ -61,7 +61,7 @@ class Contract:
 
         if failed:
             print("\nCONTRACT VIOLATED - do not 'fix' this by editing the expected values.")
-            print("Record it under 'Gate failures' in CHANGES_tyrone.md and report it.\n")
+            print("Record it under 'Gate failures' in docs/CHANGES_tyrone.md and report it.\n")
             for label, actual, expected, _ in failed:
                 print(f"  {label}\n      actual   = {actual!r}\n      expected = {expected!r}")
             return 1

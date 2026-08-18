@@ -8,9 +8,9 @@ import re
 
 import pandas as pd
 
-SALES_MAPPED_CSV = "USTore_sales_long_May_Aug2024-May2026_mapped.csv"
-INVENTORY_MAPPED_CSV = "USTore_inventory_excel_long_mapped.csv"
-OUT_CSV = "candidate_pairs.csv"
+SALES_MAPPED_CSV = "data/USTore_sales_long_May_Aug2024-May2026_mapped.csv"
+INVENTORY_MAPPED_CSV = "data/USTore_inventory_excel_long_mapped.csv"
+OUT_CSV = "data/candidate_pairs.csv"
 
 # generic/connective words that would create false-positive overlaps
 STOPWORDS = {

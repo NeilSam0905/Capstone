@@ -2,7 +2,7 @@
 
 Where the pipeline stands after seeding Phase 4 with real (provisional) USTore estimates, what is
 still open, and what Phase 6 (Power BI) needs from here. Written as a handoff snapshot, not a
-manuscript section — see `CHANGES_tyrone.md` and `docs/BUILD_PLAN_RECONCILIATION.md` for the fuller
+manuscript section — see `CHANGES_tyrone.md` and `BUILD_PLAN_RECONCILIATION.md` for the fuller
 history this builds on.
 
 ---

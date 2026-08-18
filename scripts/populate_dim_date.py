@@ -65,8 +65,8 @@ from datetime import date, timedelta
 import pandas as pd
 
 DB_NAME = "ustore.db"
-CSV_NAME = "calendar_ranges.csv"
-SALES_WITH_ZEROS_CSV = "USTore_sales_long_with_zeros.csv"
+CSV_NAME = "data/calendar_ranges.csv"
+SALES_WITH_ZEROS_CSV = "data/USTore_sales_long_with_zeros.csv"
 
 START_DATE = date(2023, 1, 1)
 END_DATE = date(2026, 12, 31)

@@ -32,6 +32,7 @@ __all__ = [
     "naive_fit_predict", "seasonal_naive_fit_predict",
     "rolling_mean_fit_predict", "rolling_median_fit_predict",
     "ets_fit_predict", "holt_winters_forecast", "DEFAULT_SEASON",
+    "ewma_fit_predict", "rolling_quantile_fit_predict",
 ]
 
 DEFAULT_SEASON = 7          # weekly: the store's trading rhythm
@@ -79,6 +80,50 @@ def rolling_median_fit_predict(window: int = DEFAULT_WINDOW):
         w = t[-window:] if t.size >= window else t
         return _clip(np.full(horizon, np.median(w) if w.size else 0.0))
     _f.__name__ = f"rolling_median({window})"
+    return _f
+
+
+def ewma_fit_predict(alpha: float = 0.1):
+    """Exponentially weighted moving average, held flat over the horizon.
+
+    Genuinely different smoothing profile from rolling_mean/median: those
+    are flat (boxcar) windows where every one of the last 30 days counts
+    equally and the 31st day is dropped outright. EWMA weights every
+    observation, decaying geometrically, so a demand shift shows up
+    gradually rather than falling off a window edge. Level-only (no trend,
+    no season) - that is what distinguishes it from ETS, which is already
+    in the benchmark.
+    """
+    def _f(train, horizon):
+        t = np.asarray(train, dtype=float)
+        if t.size == 0:
+            return _clip(np.zeros(horizon))
+        level = t[0]
+        for x in t[1:]:
+            level = alpha * x + (1 - alpha) * level
+        return _clip(np.full(horizon, level))
+    _f.__name__ = f"ewma(alpha={alpha})"
+    return _f
+
+
+def rolling_quantile_fit_predict(window: int = DEFAULT_WINDOW, q: float = 0.75):
+    """Forecast the SKU's own trailing q-th percentile instead of its
+    mean/median - deliberately biased high on purpose.
+
+    Not a variant of rolling_mean/median: those minimise point error
+    (MAE), which on an 81%-zero series is minimised by predicting low
+    (often zero). This forecasts the upper end of the observed
+    distribution instead, trading point accuracy for a better chance of
+    covering actual demand - the same empirical-quantile idea
+    docs/SERVICE_LEVEL_FRONTIER.md applies to the safety-stock buffer,
+    applied here to the point forecast itself so it can be scored on the
+    identical walk-forward folds as every other method.
+    """
+    def _f(train, horizon):
+        t = np.asarray(train, dtype=float)
+        w = t[-window:] if t.size >= window else t
+        return _clip(np.full(horizon, np.quantile(w, q) if w.size else 0.0))
+    _f.__name__ = f"rolling_q{int(q * 100)}({window})"
     return _f
 
 

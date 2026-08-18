@@ -29,13 +29,13 @@ import pandas as pd
 
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-CALENDAR_RANGES_CSV = "calendar_ranges.csv"
-SALES_RAW_CSV = "USTore_sales_long_May_Aug2024-May2026.csv"
-SALES_WITH_ZEROS_CSV = "USTore_sales_long_with_zeros.csv"
-SALES_ALLOCATED_CSV = "USTore_sales_long_allocated.csv"
-INVENTORY_CSV = "USTore_inventory_excel_long.csv"
-ALLOCATION_AUDIT_CSV = "allocation_audit.csv"
-SUPPLIER_MAPPING_CSV = "supplier_mapping.csv"
+CALENDAR_RANGES_CSV = "data/calendar_ranges.csv"
+SALES_RAW_CSV = "data/USTore_sales_long_May_Aug2024-May2026.csv"
+SALES_WITH_ZEROS_CSV = "data/USTore_sales_long_with_zeros.csv"
+SALES_ALLOCATED_CSV = "data/USTore_sales_long_allocated.csv"
+INVENTORY_CSV = "data/USTore_inventory_excel_long.csv"
+ALLOCATION_AUDIT_CSV = "data/allocation_audit.csv"
+SUPPLIER_MAPPING_CSV = "data/supplier_mapping.csv"
 
 VALID_PAYMENT_STATUS = {"CONSIGNMENT", "PAID", "UNKNOWN"}
 

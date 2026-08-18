@@ -55,7 +55,7 @@ FILES = [
     f"{SRC_DIR}/2025 USTore TBS.xlsx",
     f"{SRC_DIR}/USTore TBS OCTOBER A.Y. 2025-2026.xlsx",
 ]
-OUT_PATH = "USTore_sales_long_with_zeros.csv"
+OUT_PATH = "data/USTore_sales_long_with_zeros.csv"
 DENSE_THRESHOLD = 0.7
 
 MONTHS = {

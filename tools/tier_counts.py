@@ -132,7 +132,7 @@ def main():
 
     if failures:
         print("\nFAILED: %d check(s). Record under 'Gate failures' in "
-              "CHANGES_tyrone.md; do not edit the expected values." % len(failures))
+              "docs/CHANGES_tyrone.md; do not edit the expected values." % len(failures))
         return 1
     return 0
 

@@ -72,7 +72,7 @@ Two schema notes:
   `'sale'`, and historical rows use lowercase. Either add a
   `CHECK (transaction_type IN (...))` and migrate the existing rows, or
   normalise case on read. The frontend uppercases for display.
-- The tally screen's four types come from `PROMPT_1_FRONTEND.md §4`. The
+- The tally screen's four types come from `docs/PROMPT_1_FRONTEND.md §4`. The
   original design had `Return` instead of `PROMO`. If the store actually needs
   to record returns, that is a fifth value and a decision for the team — it was
   not silently kept.

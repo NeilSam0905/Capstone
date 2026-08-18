@@ -1,5 +1,5 @@
 """
-app.py — USTore backend (Flask + SQLite), Phase 3 of PROMPT_3_BACKEND.md.
+app.py — USTore backend (Flask + SQLite), Phase 3 of docs/PROMPT_3_BACKEND.md.
 
 Reads and writes ../ustore.db directly (see db.py for why: it's the same
 database the ETL pipeline already builds and populates - this app is not a
@@ -8,7 +8,7 @@ second seed path). Endpoint shapes match what
 `UST Prototype Design/BACKEND_TODO.md` - so swapping the frontend from
 mocks to this API is a same-shape change, not a rewrite.
 
-BIR compliance (see PROMPT_1_FRONTEND.md / PROMPT_3_BACKEND.md §1): this is
+BIR compliance (see docs/PROMPT_1_FRONTEND.md / docs/PROMPT_3_BACKEND.md §1): this is
 an internal inventory counting service only. No checkout, payment, customer
 total, or receipt endpoint exists anywhere in this file, and none should be
 added.

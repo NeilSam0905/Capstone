@@ -76,8 +76,8 @@ from collections import defaultdict
 
 import pandas as pd
 
-SALES_CSV = "USTore_sales_long_allocated.csv"
-INVENTORY_CSV = "USTore_inventory_excel_long_mapped.csv"
+SALES_CSV = "data/USTore_sales_long_allocated.csv"
+INVENTORY_CSV = "data/USTore_inventory_excel_long_mapped.csv"
 ITEM_COL = "canonical_item_name"
 DB_PATH = "ustore.db"
 

@@ -38,8 +38,8 @@ import sys
 from collections import defaultdict
 
 DB_NAME = "ustore.db"
-ALLOC_GROUPS = "allocation_groups.csv"
-VOCAB = "vocab_mapping_FINAL_v5.csv"
+ALLOC_GROUPS = "data/allocation_groups.csv"
+VOCAB = "data/vocab_mapping_FINAL_v5.csv"
 DOCS = "docs"
 OUT_CSV = os.path.join(DOCS, "price_suffix_audit.csv")
 OUT_MD = os.path.join(DOCS, "PRICE_SUFFIX_AUDIT.md")
@@ -171,7 +171,7 @@ def main():
 
     if failures:
         print("\nFAILED: %d check(s). Record under 'Gate failures' in "
-              "CHANGES_tyrone.md; do not edit the expected values." % len(failures))
+              "docs/CHANGES_tyrone.md; do not edit the expected values." % len(failures))
         return 1
     print("\nAudit complete. Nothing was modified.")
     return 0

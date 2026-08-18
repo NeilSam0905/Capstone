@@ -255,7 +255,7 @@ conditional median; MASE divides MAE by a forecast-independent scale and so shar
 on "nothing will sell" by construction.**
 
 This upgrades the finding from an observation to a result, and it is what reframes B2. Full
-treatment in `docs/DEGENERATE_FORECAST.md`, Divergence Register **#21**.
+treatment in `DEGENERATE_FORECAST.md`, Divergence Register **#21**.
 
 ### 4.4b TSB is 2.3× better than Croston on this catalogue (Batch 2, A13)
 
@@ -352,13 +352,13 @@ regression. To re-check the true baseline, rebuild the database from scratch.
 | `tests/` (8 files, 379 tests) | Property tests. The leakage tests in `test_evaluate.py` and the emptied-fixture tests in `test_gates_can_fail.py` are the ones that matter |
 | `requirements*.txt` | Pinned runtime, dev and Prophet dependency sets |
 | `USTORE_AUTO_RUN_GUIDE_tyrone.md` | The canonical run and verification checklist |
-| `docs/DEGENERATE_FORECAST.md` | Why the most accurate method is unusable (Divergence #21) |
-| `docs/demand_basis_by_anchor.csv` | A16 output |
+| `DEGENERATE_FORECAST.md` | Why the most accurate method is unusable (Divergence #21) |
+| `demand_basis_by_anchor.csv` | A16 output |
 | `conftest.py` | Puts the repo root on `sys.path` so bare `pytest tests/` works |
-| `docs/DIVERGENCE_REGISTER.md` | The register, promoted out of `CODE_WORK_PLAN_v2.md`, corrected and extended to 20 rows |
-| `docs/BUILD_PLAN_RECONCILIATION.md` | The delta against `USTore_Build_Plan.pdf` |
-| `docs/DATA_PROVENANCE.md`, `docs/may2024_dsr_vs_tbs.csv` | A3 outputs |
-| `docs/PRICE_SUFFIX_AUDIT.md`, `docs/price_suffix_audit.csv` | A4 outputs |
+| `DIVERGENCE_REGISTER.md` | The register, promoted out of `CODE_WORK_PLAN_v2.md`, corrected and extended to 20 rows |
+| `BUILD_PLAN_RECONCILIATION.md` | The delta against `USTore_Build_Plan.pdf` |
+| `DATA_PROVENANCE.md`, `may2024_dsr_vs_tbs.csv` | A3 outputs |
+| `PRICE_SUFFIX_AUDIT.md`, `price_suffix_audit.csv` | A4 outputs |
 | `model_benchmark_results.csv`, `model_benchmark_summary.csv` | A9 outputs |
 | `.gitattributes`, `.mailmap`, `CLAUDE.md`, `.claude/settings.json` | A0/A1 policy |
 
@@ -418,7 +418,7 @@ A18 replaces it with a stronger claim, demonstrated on our own data:
 The chain: MAE is minimised by the conditional median; MASE is MAE over a forecast-independent
 scale, so it shares that minimiser; 81.2% of `Fact_Sales` rows are zero, so the median is zero.
 Measured instance — the MASE-leading method prices **0 of 266 SKUs**. Tightening the threshold makes
-this worse, not better. See `docs/DEGENERATE_FORECAST.md`; still the adviser's call.
+this worse, not better. See `DEGENERATE_FORECAST.md`; still the adviser's call.
 
 **B3 — model selection.** Selection cannot run on MASE, because A18 shows the MASE optimum is
 unusable for the thing the system exists to do. A17 supplies the decision-metric ranking beside the
@@ -439,14 +439,14 @@ fixed it in its own copy and the fix reached nobody. Where they disagree, that f
 
 ```bash
 python tools/assert_invariants.py --phase a10   # 22/22, exit 0   (see §6)
-python verify_data.py                           # exit 0, incl. the A3 decomposition assert
+python scripts/verify_data.py                   # exit 0, incl. the A3 decomposition assert
 python tools/provenance_may2024.py              # 11 checks; TBS 4,022; DSR 4,318; net +751
 python tools/tier_counts.py                     # 92/51/123 all-moving; 38/10/10 Fast-only
 python tools/audit_price_suffix_skus.py         # 71 suffixed, 12 twins, 8 families
 python tools/demand_basis_by_anchor.py          # 27 anchors; 2026-07 = 79 @30d, 208 @365d
 pytest tests/                                   # 379 passed
-python model_benchmark.py                       # 8 methods, both ranking tables (~6 min)
-python step5_prescriptive.py                    # 1,975 rows, all gates pass
+python scripts/model_benchmark.py               # 8 methods, both ranking tables (~6 min)
+python scripts/step5_prescriptive.py            # 1,975 rows, all gates pass
 
 git status --porcelain                          # empty — the A1 gate
 git diff --stat HEAD -- '*.pdf' '*.xlsx'        # empty — binary assets byte-exact
@@ -472,9 +472,9 @@ To re-verify the **baseline** contract (`Dim_Parameters = 0`), rebuild first:
 
 ```bash
 rm ustore.db
-python create_schema.py && python populate_dim_date.py && python step1_apply_mapping.py \
-  && python proportional_allocation.py && python step2_load_fact_sales.py \
-  && python step3_fsn_classification.py
+python scripts/create_schema.py && python scripts/populate_dim_date.py && python scripts/step1_apply_mapping.py \
+  && python scripts/proportional_allocation.py && python scripts/step2_load_fact_sales.py \
+  && python scripts/step3_fsn_classification.py
 python tools/assert_invariants.py               # 21/21, exit 0
 ```
 
