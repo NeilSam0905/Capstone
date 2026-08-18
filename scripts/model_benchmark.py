@@ -31,14 +31,15 @@ run's to make.
 Every method is scored on folds computed ONCE per SKU, so no method can
 be advantaged by a different split - see forecasting/evaluate.py.
 
-Run:
-    python model_benchmark.py [--max-folds N] [--limit N] [--quick]
+Run (from the repo root):
+    python scripts/model_benchmark.py [--max-folds N] [--limit N] [--quick]
 
-Outputs model_benchmark_results.csv (per SKU, per method, per fold) and
+Outputs data/model_benchmark_results.csv (per SKU, per method, per fold) and
 prints the ranked summary.
 ------------------------------------------------------------------
 """
 import argparse
+import os
 import sqlite3
 import sys
 import time
@@ -46,9 +47,16 @@ import time
 import numpy as np
 import pandas as pd
 
+# forecasting/ lives at the repo root, one level above this file (scripts/) -
+# Python only auto-adds the directory of the script being RUN to sys.path,
+# not the caller's cwd, so `python scripts/model_benchmark.py` cannot see it
+# without this. Mirrors what conftest.py does for the test suite.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from forecasting.baselines import (
-    ets_fit_predict, naive_fit_predict, rolling_mean_fit_predict,
-    rolling_median_fit_predict, seasonal_naive_fit_predict,
+    ets_fit_predict, ewma_fit_predict, naive_fit_predict,
+    rolling_mean_fit_predict, rolling_median_fit_predict,
+    rolling_quantile_fit_predict, seasonal_naive_fit_predict,
 )
 from forecasting.evaluate import evaluate_methods, summarise
 from forecasting.intermittent import (
@@ -56,8 +64,8 @@ from forecasting.intermittent import (
 )
 
 DB_NAME = "ustore.db"
-OUT_CSV = "model_benchmark_results.csv"
-SUMMARY_CSV = "model_benchmark_summary.csv"
+OUT_CSV = "data/model_benchmark_results.csv"
+SUMMARY_CSV = "data/model_benchmark_summary.csv"
 
 HORIZON = 30
 MIN_FOLDS = 3
@@ -91,6 +99,8 @@ def build_methods(quick=False):
         "sba": sba_fit_predict(ALPHA),
         "tsb": tsb_fit_predict(ALPHA, BETA),
         "ets": ets_fit_predict(7, optimise=not quick),
+        "ewma_a0.1": ewma_fit_predict(0.1),
+        "rolling_q75_30": rolling_quantile_fit_predict(30, 0.75),
     }
 
 

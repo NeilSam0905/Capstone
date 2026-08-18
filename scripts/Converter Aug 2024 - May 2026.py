@@ -243,7 +243,7 @@ def main():
     ]
     ap = argparse.ArgumentParser(description="Convert USTore TBS workbooks to a tidy CSV.")
     ap.add_argument("files", nargs="*", default=default_files, help="Input .xlsx files")
-    ap.add_argument("-o", "--output", default="USTore_sales_long.csv", help="Output CSV path")
+    ap.add_argument("-o", "--output", default="data/USTore_sales_long.csv", help="Output CSV path")
     args = ap.parse_args()
 
     per_sheet, warnings, n = convert(args.files, args.output)

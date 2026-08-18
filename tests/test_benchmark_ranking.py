@@ -33,7 +33,7 @@ BANNED = [
 ]
 
 
-TRACKED_ARTIFACTS = ["model_benchmark_results.csv", "model_benchmark_summary.csv"]
+TRACKED_ARTIFACTS = ["data/model_benchmark_results.csv", "data/model_benchmark_summary.csv"]
 
 
 @pytest.fixture(scope="module")
@@ -53,7 +53,7 @@ def benchmark_output(tmp_path_factory):
     before = {p: os.path.getmtime(p) for p in TRACKED_ARTIFACTS if os.path.exists(p)}
 
     r = subprocess.run(
-        [sys.executable, "model_benchmark.py", "--limit", "5", "--quick",
+        [sys.executable, "scripts/model_benchmark.py", "--limit", "5", "--quick",
          "--out", str(out / "results.csv"),
          "--summary-out", str(out / "summary.csv")],
         capture_output=True, text=True, timeout=900)
@@ -72,7 +72,7 @@ def test_a_limited_run_refuses_to_overwrite_the_committed_artifacts():
     """The guard that makes the bug above unrepeatable: --limit without an
     explicit output path is refused outright."""
     r = subprocess.run(
-        [sys.executable, "model_benchmark.py", "--limit", "3", "--quick"],
+        [sys.executable, "scripts/model_benchmark.py", "--limit", "3", "--quick"],
         capture_output=True, text=True, timeout=900)
     assert r.returncode == 1
     assert "REFUSING to overwrite" in r.stdout
@@ -82,9 +82,9 @@ def test_tracked_artifacts_are_the_full_run_not_a_subset():
     """Guards the artifact itself. A 5-SKU summary passes every other test
     in this file, so nothing else would notice the substitution."""
     import pandas as pd
-    if not os.path.exists("model_benchmark_summary.csv"):
+    if not os.path.exists("data/model_benchmark_summary.csv"):
         pytest.skip("benchmark has not been run")
-    s = pd.read_csv("model_benchmark_summary.csv")
+    s = pd.read_csv("data/model_benchmark_summary.csv")
     assert (s["n_skus"] == 266).all(), (
         f"committed summary covers {sorted(set(s['n_skus']))} SKUs, not 266 - "
         f"a limited run was committed over the full one")

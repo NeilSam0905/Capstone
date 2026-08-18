@@ -44,7 +44,7 @@ import argparse
 import openpyxl
 
 DEFAULT_INPUT = "Copy of USTORE INVENTORY REPORT (1).xlsx"
-DEFAULT_OUTPUT = "USTore_inventory_excel_long.csv"
+DEFAULT_OUTPUT = "data/USTore_inventory_excel_long.csv"
 
 DATE_RE = re.compile(r"DATE:\s*(\d{1,2}/\d{1,2}/\d{4})")
 MONTH_RE = re.compile(r"([A-Za-z]+)\.?\s+(\d{4})\s+INVENTORY", re.I)

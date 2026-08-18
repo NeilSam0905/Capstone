@@ -17,11 +17,11 @@ Batch 1 did, and it hid a missing `rapidfuzz` that made `build_vocab_mapping.py`
 ```bash
 python -m venv .venv
 .venv/Scripts/activate            # Windows;  source .venv/bin/activate elsewhere
-pip install -r requirements.txt              # runtime
-pip install -r requirements-dev.txt          # pytest + the statsmodels reference
+pip install -r requirements/requirements.txt              # runtime
+pip install -r requirements/requirements-dev.txt          # pytest + the statsmodels reference
 ```
 
-`requirements-prophet.txt` is separate on purpose: installing Prophet pulls in a cmdstan build, and
+`requirements/requirements-prophet.txt` is separate on purpose: installing Prophet pulls in a cmdstan build, and
 nothing in this checklist needs it. See **B5**.
 
 ---
@@ -30,9 +30,9 @@ nothing in this checklist needs it. See **B5**.
 
 ```bash
 rm ustore.db
-python create_schema.py && python populate_dim_date.py && python step1_apply_mapping.py \
-  && python proportional_allocation.py && python step2_load_fact_sales.py \
-  && python step3_fsn_classification.py
+python scripts/create_schema.py && python scripts/populate_dim_date.py && python scripts/step1_apply_mapping.py \
+  && python scripts/proportional_allocation.py && python scripts/step2_load_fact_sales.py \
+  && python scripts/step3_fsn_classification.py
 ```
 
 Then `python tools/assert_invariants.py` → **21/21, exit 0**. That is the baseline contract.
@@ -45,14 +45,14 @@ Run from the repo root.
 
 ```bash
 python tools/assert_invariants.py --phase a10   # 22/22, exit 0      (1)
-python verify_data.py                            # exit 0
+python scripts/verify_data.py                    # exit 0
 python tools/provenance_may2024.py               # 11 checks; TBS 4,022; DSR 4,318; net +751
 python tools/tier_counts.py                      # 92/51/123 all-moving; 38/10/10 Fast-only
 python tools/audit_price_suffix_skus.py          # 71 suffixed, 12 twins, 8 families
 python tools/demand_basis_by_anchor.py           # 27 anchors; 2026-07 gives 79 @30d, 208 @365d
 pytest tests/                                    # 379 passed
-python model_benchmark.py                        # 8 methods, both ranking tables (~6 min)
-python step5_prescriptive.py                     # 1,975 rows, N excluded, all gates pass
+python scripts/model_benchmark.py                # 8 methods, both ranking tables (~6 min)
+python scripts/step5_prescriptive.py             # 1,975 rows, N excluded, all gates pass
 
 git status --porcelain                           # empty — no modified CSVs        (2)
 git diff --stat HEAD -- '*.pdf' '*.xlsx'         # empty — binaries byte-exact     (3)
@@ -83,7 +83,7 @@ existed — inflated 13,058 → 13,220 bytes, which shifted every absolute offse
 still *looked* like a PDF. Checking that the blob matches its committed bytes is the only test that
 would have caught it.
 
-**(3b) All eight methods are bit-reproducible under `requirements.txt`. ETS moves only if you
+**(3b) All eight methods are bit-reproducible under `requirements/requirements.txt`. ETS moves only if you
 substitute a different BLAS.**
 
 Follow the pinned install and you reproduce the committed artifact exactly, ETS included — PyPI's
@@ -138,9 +138,9 @@ git push -u origin tyrone
 | Question | File |
 |---|---|
 | What changed on this branch, and what is still open | `CHANGES_tyrone.md` |
-| Every departure from Chapters 1–3 | `docs/DIVERGENCE_REGISTER.md` |
-| Why `SUM(quantity_sold)` is 89,232 | `docs/DATA_PROVENANCE.md` |
-| Why the most accurate method is unusable | `docs/DEGENERATE_FORECAST.md` |
-| The build plan vs. what exists | `docs/BUILD_PLAN_RECONCILIATION.md` |
-| The 71 price-suffixed SKUs | `docs/PRICE_SUFFIX_AUDIT.md` |
-| How the demand basis varies by anchor | `docs/demand_basis_by_anchor.csv` |
+| Every departure from Chapters 1–3 | `DIVERGENCE_REGISTER.md` |
+| Why `SUM(quantity_sold)` is 89,232 | `DATA_PROVENANCE.md` |
+| Why the most accurate method is unusable | `DEGENERATE_FORECAST.md` |
+| The build plan vs. what exists | `BUILD_PLAN_RECONCILIATION.md` |
+| The 71 price-suffixed SKUs | `PRICE_SUFFIX_AUDIT.md` |
+| How the demand basis varies by anchor | `demand_basis_by_anchor.csv` |

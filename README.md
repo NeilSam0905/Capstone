@@ -9,32 +9,44 @@ and produces Prophet-based 30-day forecasts for the Fast-moving SKUs.
 The pipeline below (Phases 1–4) is the whole analytics side. A React
 frontend and Flask backend also exist now — see **"Frontend + backend"**
 near the end of this file for what they are and how to run them, and
-`STATUS_AND_NEXT_STEPS.md` for the full status/blocker register, including
+`docs/STATUS_AND_NEXT_STEPS.md` for the full status/blocker register, including
 Power BI (Phase 6), which hasn't been built yet.
 
-Run the scripts below **in order** — each one reads the previous step's
+## Layout
+
+```
+scripts/       the pipeline below, plus the two one-off converters/diagnostics
+data/          every CSV: raw inputs, hand-maintained mappings, generated intermediates
+requirements/  requirements.txt / requirements-dev.txt / requirements-prophet.txt
+tools/, tests/, forecasting/, docs/   unchanged
+ustore.db      stays at the repo root (gitignored) - every script below is run
+               FROM THE REPO ROOT (e.g. `python scripts/create_schema.py`), never from
+               inside scripts/, so its bare "ustore.db" path keeps resolving correctly
+```
+
+Run the scripts below **in order, from the repo root** — each one reads the previous step's
 output and writes into `ustore.db`. All of them are safe to re-run: they
 clear their own tables/files before writing, so re-running never
-duplicates data. Run `python verify_data.py` before committing any change
+duplicates data. Run `python scripts/verify_data.py` before committing any change
 that touches a CSV (see Block 1 below for what it checks).
 
 ## Pipeline
 
 | Step | Script | What it does |
 |---|---|---|
-| — | `create_schema.py` | Builds the empty `ustore.db` (all 5 tables). Run once, or whenever rebuilding from scratch. |
-| — | `populate_dim_date.py` | Fills `Dim_Date` (1,461 rows, 2023-01-01–2026-12-31) from `calendar_ranges.csv`: calendar flags, `semester_id`/`semester_week` derived from 12 term windows, and `is_tally_date` from the sales data. |
-| 0 | `step0_convert_sales_with_zeros.py` | Converts the raw TBS tally-sheet workbooks (`drive-download-.../*.xlsx`) into `USTore_sales_long_with_zeros.csv`. Per month, decides whether the sheet is a genuine daily tally (has a date column for ~most calendar days) or a sparse periodic stock-count, and only zero-fills blank/missing sale cells for the dense months. Currently: Aug–Sep 2024 stay sparse; every month Oct 2024–Jul 2026 is zero-filled. |
-| 1 | `step1_apply_mapping.py` | Applies `vocab_mapping_FINAL_v5.csv` (the controlled vocabulary — 597 raw names → 540 canonical products) to both the sales and inventory CSVs, reports any unmapped raw name (should be 0), and (re)builds `Dim_Product` (519 rows — some canonical names in the mapping file have no live data behind them, which is expected). Writes `USTore_sales_long_with_zeros_mapped.csv` + `USTore_inventory_excel_long_mapped.csv`, which are what the allocation step reads. **This is the only place the vocabulary mapping is applied.** Also applies `supplier_mapping.csv` (42 raw supplier strings → 19 suppliers + a `payment_status`) — see Block 2.7 below. |
-| — | `proportional_allocation.py` | Splits price-grouped tally rows (a single row covering several SKUs sharing a price point) into per-SKU rows, weighted by each SKU's beginning-of-month stock. Reads step 1's *mapped* CSVs and joins on `canonical_item_name` (see Block 2.2 below); defaults now point at those files, so plain `python proportional_allocation.py` is correct. Outputs `USTore_sales_long_allocated.csv` (+ `allocation_audit.csv` documenting every split). Zero-quantity rows survive the split — a grouped row with 0 units on a given day emits 0 for every constituent instead of being dropped. |
-| 2 | `step2_load_fact_sales.py` | Loads the allocated CSV into `Fact_Sales` (84,399 rows: 68,541 zero-quantity + 15,858 positive; sums to **89,232** units — see Block 0 below for why that's not the older 88,481), routing unresolvable rows to `Exception_Log` instead of dropping them. Item names arrive canonical, so it joins straight to `Dim_Product` and applies no mapping of its own. Derives `cumulative_monthly_units`, `daily_depletion_rate`, `days_of_supply` and `is_censored` — the four rules behind those are settled in the script's docstring and summarised under Blocks 2.4/2.6 below. |
-| 3 | `step3_fsn_classification.py` | Computes ADUS (Average Daily Units Sold) per SKU, weighting imputed/allocated rows at 0.5, and classifies Fast/Slow/Non-moving at the 80th-percentile ADUS cutoff (currently F=58, S=228, N=233; it was S=230/N=231 before Block 2.2 below). Days flagged `is_censored` are dropped from the ADUS denominator — `EXCLUDE_CENSORED_DAYS = False` reverts that, see Block 2.4 below. Flags High-Velocity-Limited (HVL) items with thin history. Writes `fsn_class`/`is_hvl` back to `Dim_Product`. |
-| 4 | `step4_prophet_forecast.py` | Fits Prophet per Fast SKU with a data-sufficiency tier, keyed on **distinct sale-days (quantity_sold > 0), not raw row count** — currently 38 standard (60+ sale-days), 10 simplified (30-59), 10 rolling-average (<30, no real model). Validates against a naive baseline, writes 30-day forecasts + metrics to `Result_Forecast` / `Result_Forecast_Metrics`. Requires `cmdstan` (see below). |
-| 5a | `step5a_set_lead_times.py` | Sets `Dim_Product.lead_time_days` per product from a name-keyword classifier (jacket/windbreaker → 28d, embroidered → 18d, shirt/jersey/polo/tee → 14d, else → 18d default). Provisional, pending Block 5 (USTore site visit). |
-| 5 | `step5_prescriptive.py` | ROP / Safety Stock / EOQ per Fast+Slow SKU, using `step5a`'s real lead time and a holding cost derived from USTore's stated inventory value (arithmetic + every assumption written to `Dim_Parameters`, all flagged provisional). Ordering cost is genuinely ambiguous, so every SKU is priced under **two** scenarios (`low_admin_cost` / `high_goods_value`) rather than one guess — see `STATUS_AND_NEXT_STEPS.md` for the numbers. Writes `Result_Prescriptive`. |
+| — | `scripts/create_schema.py` | Builds the empty `ustore.db` (all 5 tables). Run once, or whenever rebuilding from scratch. |
+| — | `scripts/populate_dim_date.py` | Fills `Dim_Date` (1,461 rows, 2023-01-01–2026-12-31) from `data/calendar_ranges.csv`: calendar flags, `semester_id`/`semester_week` derived from 12 term windows, and `is_tally_date` from the sales data. |
+| 0 | `scripts/step0_convert_sales_with_zeros.py` | Converts the raw TBS tally-sheet workbooks (`drive-download-.../*.xlsx`) into `data/USTore_sales_long_with_zeros.csv`. Per month, decides whether the sheet is a genuine daily tally (has a date column for ~most calendar days) or a sparse periodic stock-count, and only zero-fills blank/missing sale cells for the dense months. Currently: Aug–Sep 2024 stay sparse; every month Oct 2024–Jul 2026 is zero-filled. |
+| 1 | `scripts/step1_apply_mapping.py` | Applies `data/vocab_mapping_FINAL_v5.csv` (the controlled vocabulary — 597 raw names → 540 canonical products) to both the sales and inventory CSVs, reports any unmapped raw name (should be 0), and (re)builds `Dim_Product` (519 rows — some canonical names in the mapping file have no live data behind them, which is expected). Writes `data/USTore_sales_long_with_zeros_mapped.csv` + `data/USTore_inventory_excel_long_mapped.csv`, which are what the allocation step reads. **This is the only place the vocabulary mapping is applied.** Also applies `data/supplier_mapping.csv` (42 raw supplier strings → 19 suppliers + a `payment_status`) — see Block 2.7 below. |
+| — | `scripts/proportional_allocation.py` | Splits price-grouped tally rows (a single row covering several SKUs sharing a price point) into per-SKU rows, weighted by each SKU's beginning-of-month stock. Reads step 1's *mapped* CSVs and joins on `canonical_item_name` (see Block 2.2 below); defaults now point at those files, so plain `python scripts/proportional_allocation.py` is correct. Outputs `data/USTore_sales_long_allocated.csv` (+ `data/allocation_audit.csv` documenting every split). Zero-quantity rows survive the split — a grouped row with 0 units on a given day emits 0 for every constituent instead of being dropped. |
+| 2 | `scripts/step2_load_fact_sales.py` | Loads the allocated CSV into `Fact_Sales` (84,399 rows: 68,541 zero-quantity + 15,858 positive; sums to **89,232** units — see Block 0 below for why that's not the older 88,481), routing unresolvable rows to `Exception_Log` instead of dropping them. Item names arrive canonical, so it joins straight to `Dim_Product` and applies no mapping of its own. Derives `cumulative_monthly_units`, `daily_depletion_rate`, `days_of_supply` and `is_censored` — the four rules behind those are settled in the script's docstring and summarised under Blocks 2.4/2.6 below. |
+| 3 | `scripts/step3_fsn_classification.py` | Computes ADUS (Average Daily Units Sold) per SKU, weighting imputed/allocated rows at 0.5, and classifies Fast/Slow/Non-moving at the 80th-percentile ADUS cutoff (currently F=58, S=228, N=233; it was S=230/N=231 before Block 2.2 below). Days flagged `is_censored` are dropped from the ADUS denominator — `EXCLUDE_CENSORED_DAYS = False` reverts that, see Block 2.4 below. Flags High-Velocity-Limited (HVL) items with thin history. Writes `fsn_class`/`is_hvl` back to `Dim_Product`. |
+| 4 | `scripts/step4_prophet_forecast.py` | Fits Prophet per Fast SKU with a data-sufficiency tier, keyed on **distinct sale-days (quantity_sold > 0), not raw row count** — currently 38 standard (60+ sale-days), 10 simplified (30-59), 10 rolling-average (<30, no real model). Validates against a naive baseline, writes 30-day forecasts + metrics to `Result_Forecast` / `Result_Forecast_Metrics`. Requires `cmdstan` (see below). |
+| 5a | `scripts/step5a_set_lead_times.py` | Sets `Dim_Product.lead_time_days` per product from a name-keyword classifier (jacket/windbreaker → 28d, embroidered → 18d, shirt/jersey/polo/tee → 14d, else → 18d default). Provisional, pending Block 5 (USTore site visit). |
+| 5 | `scripts/step5_prescriptive.py` | ROP / Safety Stock / EOQ per Fast+Slow SKU, using `step5a`'s real lead time and a holding cost derived from USTore's stated inventory value (arithmetic + every assumption written to `Dim_Parameters`, all flagged provisional). Ordering cost is genuinely ambiguous, so every SKU is priced under **two** scenarios (`low_admin_cost` / `high_goods_value`) rather than one guess — see `docs/STATUS_AND_NEXT_STEPS.md` for the numbers. Writes `Result_Prescriptive`. |
 
-Supporting/one-off scripts still in the repo: `build_vocab_mapping.py` /
-`diag_token_match.py` (fuzzy-matching tools used to build and refine the
+Supporting/one-off scripts still in the repo: `scripts/build_vocab_mapping.py` /
+`scripts/diag_token_match.py` (fuzzy-matching tools used to build and refine the
 vocabulary mapping — not part of the regular run order, only needed if
 you're revisiting the vocabulary itself).
 
@@ -114,7 +126,7 @@ you're revisiting the vocabulary itself).
 
 Superseded vocabulary-mapping versions are left out to keep the repo
 readable. `ustore.db` is gitignored (binary, machine-specific); run
-`create_schema.py` → `populate_dim_date.py` → the pipeline above to
+`scripts/create_schema.py` → `scripts/populate_dim_date.py` → the pipeline above to
 rebuild it from scratch.
 
 This section used to say the `*_mapped.csv` files from Step 1 were left
@@ -128,7 +140,7 @@ named after a file it isn't built from.) `vocab_mapping_FINAL_v5.csv`
 and `supplier_mapping.csv` are hand-maintained inputs rather than
 intermediates, and are committed.
 
-## Status against `CODE_WORK_PLAN_v2.md`
+## Status against `docs/CODE_WORK_PLAN_v2.md`
 
 That file is a team audit/remediation plan; this section tracks what's
 actually been done against it so nobody re-does or skips work.
@@ -382,14 +394,14 @@ deleting a row from a copy.
   teammate that hasn't been merged in), 6.3 (`.mailmap`), 6.4 (reconcile
   `USTore_Build_Plan.pdf`)
 
-> **This "Status against `CODE_WORK_PLAN_v2.md`" section predates a large
+> **This "Status against `docs/CODE_WORK_PLAN_v2.md`" section predates a large
 > merge and is now stale in places** — e.g. Block 6.2's files (
 > `model_benchmark.py`, tests, `.mailmap`, etc.) **do** exist in this
 > branch now, and Block 4's forecasting overhaul is partly done (an
 > 8-method benchmark exists, though Prophet itself is still unrun). Left
-> as-is rather than rewritten, since `CHANGES_tyrone.md` is the corrected,
+> as-is rather than rewritten, since `docs/CHANGES_tyrone.md` is the corrected,
 > authoritative record of that merge. Treat this section as history, not
-> current status — see `STATUS_AND_NEXT_STEPS.md` for what's actually true
+> current status — see `docs/STATUS_AND_NEXT_STEPS.md` for what's actually true
 > today.
 
 ---
@@ -401,9 +413,9 @@ the same `ustore.db`:
 
 - **`UST Prototype Design/`** — a React + Vite frontend (five analytics
   screens plus a Digital Tallying Interface), built in two earlier passes
-  (`PROMPT_1_FRONTEND.md`, mock data only; a Power BI embed placeholder).
+  (`docs/PROMPT_1_FRONTEND.md`, mock data only; a Power BI embed placeholder).
   Every screen reads through one module, `src/services/dataService.js`.
-- **`backend/`** — a Flask + SQLite API (`PROMPT_3_BACKEND.md`, Phase 3)
+- **`backend/`** — a Flask + SQLite API (`docs/PROMPT_3_BACKEND.md`, Phase 3)
   that replaces the frontend's mock fixtures with real reads/writes
   against the same `ustore.db` the pipeline above builds. It does **not**
   reseed from CSVs — it's a read/write layer on the pipeline's output, not
@@ -448,7 +460,7 @@ contract the backend implements.
   embed placeholder (`PowerBIDashboard.jsx`) wired to `VITE_POWERBI_EMBED_URL`,
   but no `.pbix` has been authored or published yet. Two of its five views
   (Stock Status, Demand Forecast) are additionally blocked on data
-  decisions — see `STATUS_AND_NEXT_STEPS.md` §4 for the per-view
+  decisions — see `docs/STATUS_AND_NEXT_STEPS.md` §4 for the per-view
   breakdown and what's blocking each one.
 - **Inventory coverage is still low** (~14–17% of products have any stock
   count), which limits both the Stock Status view and the Reorder
@@ -459,4 +471,4 @@ contract the backend implements.
   numbers. Don't treat `Result_Prescriptive` as final.
 
 Full status/blocker register (B1–B15, all still-open team decisions):
-`STATUS_AND_NEXT_STEPS.md`.
+`docs/STATUS_AND_NEXT_STEPS.md`.

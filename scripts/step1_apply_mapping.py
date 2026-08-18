@@ -9,17 +9,17 @@ import sys
 
 import pandas as pd
 
-MAPPING_CSV = "vocab_mapping_FINAL_v5.csv"
-SUPPLIER_MAPPING_CSV = "supplier_mapping.csv"
-SALES_CSV = "USTore_sales_long_with_zeros.csv"
-INVENTORY_CSV = "USTore_inventory_excel_long.csv"
+MAPPING_CSV = "data/vocab_mapping_FINAL_v5.csv"
+SUPPLIER_MAPPING_CSV = "data/supplier_mapping.csv"
+SALES_CSV = "data/USTore_sales_long_with_zeros.csv"
+INVENTORY_CSV = "data/USTore_inventory_excel_long.csv"
 DB_PATH = "ustore.db"
 
 # Named after its actual input (SALES_CSV), not the older pre-zero-fill
 # file - proportional_allocation.py reads this, so the name has to say
 # which sales file it came from.
-SALES_MAPPED_CSV = "USTore_sales_long_with_zeros_mapped.csv"
-INVENTORY_MAPPED_CSV = "USTore_inventory_excel_long_mapped.csv"
+SALES_MAPPED_CSV = "data/USTore_sales_long_with_zeros_mapped.csv"
+INVENTORY_MAPPED_CSV = "data/USTore_inventory_excel_long_mapped.csv"
 
 
 def load_mapping():

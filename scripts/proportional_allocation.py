@@ -217,11 +217,11 @@ if __name__=="__main__":
     # /mnt/user-data/outputs/, a path from the environment this was first
     # written in, so a plain `python proportional_allocation.py` either
     # allocated on raw names or crashed on a missing directory.
-    ap.add_argument("--sales", default="USTore_sales_long_with_zeros_mapped.csv")
-    ap.add_argument("--inventory", default="USTore_inventory_excel_long_mapped.csv")
-    ap.add_argument("--groups", default="allocation_groups.csv")
-    ap.add_argument("--mapping", default="vocab_mapping_FINAL_v5.csv")
-    ap.add_argument("-o","--output", default="USTore_sales_long_allocated.csv")
-    ap.add_argument("--audit", default="allocation_audit.csv")
+    ap.add_argument("--sales", default="data/USTore_sales_long_with_zeros_mapped.csv")
+    ap.add_argument("--inventory", default="data/USTore_inventory_excel_long_mapped.csv")
+    ap.add_argument("--groups", default="data/allocation_groups.csv")
+    ap.add_argument("--mapping", default="data/vocab_mapping_FINAL_v5.csv")
+    ap.add_argument("-o","--output", default="data/USTore_sales_long_allocated.csv")
+    ap.add_argument("--audit", default="data/allocation_audit.csv")
     a=ap.parse_args()
     run(a.sales, a.inventory, a.groups, a.mapping, a.output, a.audit)

@@ -73,18 +73,25 @@ caveat as before (--demand-method rolling_median_30 prices ~0 SKUs on
 intermittent series - see the git history for that finding). Every row
 records which method fed it and is flagged provisional.
 
-Run:
-    python step5a_set_lead_times.py     # first, if not already run
-    python step5_prescriptive.py [--demand-method rolling_mean_30]
+Run (from the repo root):
+    python scripts/step5a_set_lead_times.py     # first, if not already run
+    python scripts/step5_prescriptive.py [--demand-method rolling_mean_30]
 ------------------------------------------------------------------
 """
 import argparse
 import datetime as dt
+import os
 import sqlite3
 import sys
 
 import numpy as np
 import pandas as pd
+
+# forecasting/ lives at the repo root, one level above this file (scripts/) -
+# Python only auto-adds the directory of the script being RUN to sys.path,
+# not the caller's cwd, so `python scripts/step5_prescriptive.py` cannot see
+# it without this. Mirrors what conftest.py does for the test suite.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from forecasting.baselines import (
     rolling_mean_fit_predict, rolling_median_fit_predict, seasonal_naive_fit_predict,
@@ -436,7 +443,7 @@ def run_gates(con):
 
     if failures:
         print(f"\nFAILED: {len(failures)} gate(s). Record under 'Gate failures' "
-              f"in CHANGES_tyrone.md.")
+              f"in docs/CHANGES_tyrone.md.")
         return 1
     print("\nAll prescriptive gates passed.")
     return 0

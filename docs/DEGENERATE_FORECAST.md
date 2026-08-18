@@ -138,7 +138,7 @@ Worth stating plainly, because each of these is an easy misreading:
 ## Reproducing it
 
 ```bash
-python model_benchmark.py            # writes model_benchmark_summary.csv
+python scripts/model_benchmark.py    # writes data/model_benchmark_summary.csv
 pytest tests/test_degenerate_forecast.py
 ```
 

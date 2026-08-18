@@ -1,6 +1,6 @@
 # USTore capstone - Prophet, deliberately separated
 #
-#   pip install -r requirements.txt -r requirements-prophet.txt
+#   pip install -r requirements/requirements.txt -r requirements/requirements-prophet.txt
 #
 # NOT part of the standard install, and not needed by anything in the Part
 # C checklist. Installing prophet pulls in cmdstan, which is a toolchain

@@ -48,8 +48,8 @@ from collections import defaultdict
 import openpyxl
 import pandas as pd
 
-RAW_CSV = "USTore_sales_long_May_Aug2024-May2026.csv"
-ZEROFILL_CSV = "USTore_sales_long_with_zeros.csv"
+RAW_CSV = "data/USTore_sales_long_May_Aug2024-May2026.csv"
+ZEROFILL_CSV = "data/USTore_sales_long_with_zeros.csv"
 WORKBOOK = "drive-download-20260724T120738Z-1-001/2024 5 MAY DSR & TBS.xlsx"
 DOCS = "docs"
 DIFF_CSV = os.path.join(DOCS, "may2024_dsr_vs_tbs.csv")
@@ -210,7 +210,7 @@ def main():
 
     if failures:
         print("\nFAILED: %d check(s). This is a finding - record it under "
-              "'Gate failures' in CHANGES_tyrone.md. Do not edit the expected values."
+              "'Gate failures' in docs/CHANGES_tyrone.md. Do not edit the expected values."
               % len(failures))
         for lab, a, e in failures:
             print("  %s: actual=%r expected=%r" % (lab, a, e))

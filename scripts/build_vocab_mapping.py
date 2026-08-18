@@ -14,9 +14,9 @@ from collections import defaultdict
 import pandas as pd
 from rapidfuzz import fuzz, process
 
-SALES_FILE = "USTore_sales_long_May_Aug2024-May2026.csv"
-INVENTORY_FILE = "USTore_inventory_excel_long.csv"
-OUTPUT_FILE = "vocab_mapping_draft.csv"
+SALES_FILE = "data/USTore_sales_long_May_Aug2024-May2026.csv"
+INVENTORY_FILE = "data/USTore_inventory_excel_long.csv"
+OUTPUT_FILE = "data/vocab_mapping_draft.csv"
 
 # Words that mark a real product-level difference (size / color / pattern).
 # If two similar names differ in these, they must NOT be auto-merged.

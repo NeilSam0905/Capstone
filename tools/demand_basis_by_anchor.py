@@ -204,7 +204,7 @@ def main():
 
     if failures:
         print(f"\nFAILED: {len(failures)} gate(s). Record under 'Gate failures' "
-              f"in CHANGES_tyrone.md.")
+              f"in docs/CHANGES_tyrone.md.")
         return 1
     return 0
 

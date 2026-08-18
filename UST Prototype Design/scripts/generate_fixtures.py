@@ -26,7 +26,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]                      # scripts -> UST Prototype Design -> Capstone
 DB = REPO / "ustore.db"
-INVENTORY = REPO / "USTore_inventory_excel_long_mapped.csv"
+INVENTORY = REPO / "data" / "USTore_inventory_excel_long_mapped.csv"
 OUT = HERE.parent / "src" / "services" / "fixtures"
 
 RECENT_DAYS = 60          # window for the tally screen's recent-entries list

@@ -37,7 +37,7 @@ import pytest
 from forecasting.baselines import rolling_mean_fit_predict, rolling_median_fit_predict
 from forecasting.metrics import mae
 
-SUMMARY_CSV = "model_benchmark_summary.csv"
+SUMMARY_CSV = "data/model_benchmark_summary.csv"
 DB = "ustore.db"
 
 

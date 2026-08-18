@@ -11,7 +11,7 @@
  * item_name, unit_price_php, calendar_date, quantity_sold), so the API
  * responses have the same shape the fixtures used to.
  *
- * BIR compliance (see PROMPT_1_FRONTEND.md §1): this is an internal
+ * BIR compliance (see docs/PROMPT_1_FRONTEND.md §1): this is an internal
  * inventory counting service. It exposes unit counts, and unit prices as
  * reference data for supplier-remittance reporting. It must never gain a
  * cart, a checkout, a customer total, change due, or a receipt.

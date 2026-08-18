@@ -10,7 +10,7 @@ import sqlite3
 from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent / "ustore.db"
-INVENTORY_CSV = Path(__file__).resolve().parent.parent / "USTore_inventory_excel_long_mapped.csv"
+INVENTORY_CSV = Path(__file__).resolve().parent.parent / "data" / "USTore_inventory_excel_long_mapped.csv"
 
 
 def get_db():

@@ -86,8 +86,8 @@ python scripts/generate_fixtures.py
 ```
 
 Re-run that after re-running the ETL pipeline. If `ustore.db` doesn't exist,
-rebuild it first — see the repo README (`create_schema.py` →
-`populate_dim_date.py` → `step1` → `proportional_allocation` → `step2` → `step3`).
+rebuild it first — see the repo README (`scripts/create_schema.py` →
+`scripts/populate_dim_date.py` → `scripts/step1` → `scripts/proportional_allocation` → `scripts/step2` → `scripts/step3`, run from the repo root).
 
 Field names mirror the star schema in `create_schema.py` (`product_id`,
 `item_name`, `unit_price_php`, `calendar_date`, `quantity_sold`), so the
