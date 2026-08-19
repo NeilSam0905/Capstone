@@ -82,8 +82,23 @@ BETA = 0.1              # TSB's probability-smoothing constant
 # time or a cost ratio (deferred decision B9). They are held fixed here so
 # the comparison between methods is like-for-like; they are not a claim
 # about the store's actual parameters.
-SERVICE_LEAD_TIME = 7          # days   [PROVISIONAL - pending Block 5]
+SERVICE_LEAD_TIME = 7          # days, supplier lead time [PROVISIONAL - pending Block 5]
 SERVICE_COST_RATIO = 1.0       # S/H    [PROVISIONAL - pending Block 5]
+
+# Remediation D1. Each fold is periodic-review, order-up-to: stock is set
+# ONCE at the fold origin and 30 days of demand hit it with no
+# replenishment inside the window (see service_metrics() below - there is
+# no re-stocking event between origin and origin+horizon). The buffer
+# therefore has to survive the review period PLUS the lead time, not the
+# lead time alone - z*sigma*sqrt(L) with L = SERVICE_LEAD_TIME is the
+# CONTINUOUS-review formula, where an order fires the instant stock
+# crosses the reorder point and only the lead time is ever exposed. Using
+# it here understated every method's safety stock by a factor of
+# sqrt(37/7) ~= 2.30 and reported the resulting stockouts as forecast
+# failure. step5_prescriptive.py does NOT share this defect - its ROP is
+# genuinely continuous-review, matching what it simulates.
+SERVICE_REVIEW_PERIOD = 30     # days, the fold horizon - no replenishment inside it
+SERVICE_RISK_PERIOD = SERVICE_REVIEW_PERIOD + SERVICE_LEAD_TIME
 
 
 def build_methods(quick=False):
@@ -278,22 +293,23 @@ def main():
         kind="stable").reset_index(drop=True)
 
     print("\n" + "=" * 78)
-    print(f"TABLE 2 - DECISION METRIC: ordered by fill rate at lead time "
-          f"{SERVICE_LEAD_TIME}d,")
+    print(f"TABLE 2 - DECISION METRIC: ordered by fill rate at risk period "
+          f"{SERVICE_RISK_PERIOD}d (review {SERVICE_REVIEW_PERIOD}d + lead {SERVICE_LEAD_TIME}d),")
     print(f"           cost ratio {SERVICE_COST_RATIO} "
           f"[PROVISIONAL - pending Block 5 / B9]")
     print("=" * 78)
     print(by_fill[dec_cols].to_string(index=False,
                                       float_format=lambda x: f"{x:.4f}"))
     print("=" * 78)
-    print("""
-The two tables rank the same eight methods and do not agree. That
+    print(f"""
+The two tables rank the same {len(methods)} methods and do not agree. That
 disagreement is the point of printing both: Table 1 asks which method is
 least wrong, Table 2 asks which one would have met demand. `n_skus_priced`
 is the column to read first - a method that prices zero SKUs cannot stock
 anything, whatever its error metric says.
 
-Safety stock in Table 2 uses A10's formula at one fixed grid cell, with
+Safety stock in Table 2 uses A10's formula, risk period corrected to
+review + lead time (remediation D1) rather than lead time alone, with
 sigma computed from each fold's TRAINING slice only. The lead time and
 cost ratio are provisional placeholders held constant so the comparison
 is like-for-like; they are not USTore's actual parameters (B9).
@@ -361,8 +377,10 @@ def service_metrics(results, series, fsn_class):
     """Turn each forecast into a stocking decision and score the outcome.
 
     Per fold: stock = forecast + safety stock, where safety stock is
-    A10's formula (Z x sigma x sqrt(lead time)) at the fixed grid cell
-    above. Then
+    A10's formula (Z x sigma x sqrt(risk period)) at the fixed grid cell
+    above - risk period = review period + lead time (remediation D1),
+    since each fold is periodic-review with no replenishment inside the
+    30-day window being scored. Then
 
         served = min(actual, stock)      short = max(0, actual - stock)
                                          held  = max(0, stock - actual)
@@ -396,7 +414,7 @@ def service_metrics(results, series, fsn_class):
         sigma = sigma_cache[key]
 
         z = Z_BY_CLASS.get(fsn_class.get(sku), 0.0)
-        ss = z * sigma * np.sqrt(SERVICE_LEAD_TIME)
+        ss = z * sigma * np.sqrt(SERVICE_RISK_PERIOD)
         stock = max(pred + ss, 0.0)
 
         ss_col[i] = ss

@@ -38,9 +38,14 @@ against the criterion #6 proposes.
 
 ---
 
-## Cause 1 — the risk period is wrong in `service_metrics()` (a defect)
+## Cause 1 — the risk period was wrong in `service_metrics()` (a defect, fixed 2026-08-19)
 
-`model_benchmark.py` sets
+**Status: fixed.** `REMEDIATION_MASTER_v2.md` D1 corrected this at the source in
+`scripts/model_benchmark.py`; what follows is the historical record of the defect, not the current
+state. `tools/service_frontier.py` measures today's committed data directly (no rescaling needed
+any more) and confirms the fix — see its Cause-1 output.
+
+`model_benchmark.py` used to set
 
 ```python
 ss    = z * sigma * np.sqrt(SERVICE_LEAD_TIME)   # SERVICE_LEAD_TIME = 7
@@ -53,23 +58,25 @@ therefore **review + lead time = 37 days**, not the 7-day lead time alone. `z·�
 continuous-review ROP formula, where an order is triggered the moment stock crosses the point and
 only the lead time is exposed. The two are not interchangeable.
 
-**`step5_prescriptive.py` does not share this defect.** Its `reorder_point(add, lt, ss) = add*lt + ss`
+**`step5_prescriptive.py` never shared this defect.** Its `reorder_point(add, lt, ss) = add*lt + ss`
 paired with `safety_stock(z, sigma, lt) = z*sigma*sqrt(lt)` is a correct continuous-review ROP —
 internally consistent, and exactly what §3.3.3 specifies. The separate question it raises is whether
 continuous review is the right *policy*: USTore reorders on the monthly billing cycle, and §3.3.2
 regenerates the forecast "at the start of each billing month," which is periodic review with R = 30.
-That is a modelling assumption to justify or change, not a bug to fix. The benchmark's defect is
-narrower and unambiguous: it simulates periodic review while sizing the buffer for continuous review.
+That remains a modelling assumption to justify or change, not a bug to fix (`REMEDIATION_MASTER_v2.md`
+explicitly leaves it alone). The benchmark's defect was narrower and unambiguous: it simulated
+periodic review while sizing the buffer for continuous review.
 
-Correcting `√7 → √37` scales every safety stock by 2.2991 and moves the fill rate:
+Correcting `√7 → √37` (now done at the source, `SERVICE_RISK_PERIOD = SERVICE_REVIEW_PERIOD +
+SERVICE_LEAD_TIME`) scaled every safety stock by 2.2991 and moved the fill rate:
 
-| method | as built | risk period corrected |
+| method | as built (pre-fix) | risk period corrected (now the default) |
 |---|---|---|
 | ets | 0.7161 | 0.7775 |
 | rolling_mean_30 | 0.7098 | 0.7746 |
 | tsb | 0.6862 | 0.7538 |
 
-Real, and worth fixing on its own account. Not nearly enough to reach 95%.
+Real, and worth having fixed on its own account. Not nearly enough to reach 95%.
 
 ---
 
@@ -103,9 +110,20 @@ it is a cold-start property of a catalogue where SKUs enter mid-series.
 right-skewed, and a normal quantile understates its upper tail.
 
 Replacing the formula with the **empirical quantile of the SKU's own walk-forward forecast errors** —
-expanding window, strictly prior folds only, never the fold being scored — reaches **0.818** at
+expanding window, strictly prior folds only, never the fold being scored — reaches **0.794** at
 q = 0.95 on `rolling_mean_30`. Better than 0.710. Still not 0.95, because Cause 2 caps it at 0.949
 and the remaining shortfall is per-SKU volatility that no buffer priced at a fixed quantile removes.
+
+**Reconciled 2026-08-19 (remediation C4):** the table below is `tools/service_frontier.py`'s own
+measured output, made authoritative over this document's original prose figures. The two never
+agreed exactly — the sentence above originally read 0.818, the script has always measured 0.794 —
+because "expanding window, strictly prior folds only" under-specifies what a SKU's *first* scored
+fold (zero prior observations) should do, and no script producing the original 0.673→0.818 numbers
+was ever committed to check against. Now pinned by `tests/test_service_frontier.py` (R3) so it can't
+drift again. What survives the reconciliation, and is the actual load-bearing claim: the frontier is
+monotonic, the knee sits at q ≈ 0.80, and `rolling_mean_30` dominates `ets`/`tsb` there — all three
+hold under both the original and the script's methodology, which is itself a robustness result, not
+a discrepancy to explain away.
 
 The evidence needed for this was already in the repository: 3,192 folds of `(pred_30d, actual_30d)`
 pairs the benchmark computed and then only used for error metrics.
@@ -114,22 +132,23 @@ pairs the benchmark computed and then only used for error metrics.
 
 ## What to report instead
 
-Sweeping the empirical quantile produces a service / holding curve. `rolling_mean_30`:
+Sweeping the empirical quantile produces a service / holding curve. `rolling_mean_30`, from
+`tools/service_frontier.py` (authoritative — see the reconciliation note above):
 
 | q | fill rate | units short | units held | held per *extra* unit served |
 |---|---|---|---|---|
-| 0.50 | 0.673 | 17,523 | 34,529 | — |
-| 0.60 | 0.691 | 16,547 | 37,958 | 3.5 |
-| 0.70 | 0.724 | 14,781 | 43,934 | 3.4 |
-| 0.75 | 0.744 | 13,711 | 47,925 | 3.7 |
-| **0.80** | **0.767** | **12,503** | **52,728** | **4.0** |
-| 0.85 | 0.783 | 11,627 | 59,573 | 7.8 |
-| 0.90 | 0.803 | 10,540 | 68,681 | 8.4 |
-| 0.95 | 0.818 | 9,736 | 81,756 | 16.2 |
-| 0.98 | 0.824 | 9,410 | 89,757 | 24.5 |
+| 0.50 | 0.645 | 19,018.5 | 30,115.0 | — |
+| 0.60 | 0.664 | 17,984.0 | 34,031.2 | 3.8 |
+| 0.70 | 0.699 | 16,151.4 | 40,511.2 | 3.5 |
+| 0.75 | 0.719 | 15,065.5 | 44,773.8 | 3.9 |
+| **0.80** | **0.742** | **13,844.4** | **49,852.6** | **4.2** |
+| 0.85 | 0.758 | 12,955.3 | 56,972.6 | 8.0 |
+| 0.90 | 0.779 | 11,856.5 | 66,360.2 | 8.5 |
+| 0.95 | 0.794 | 11,040.2 | 79,714.6 | 16.4 |
+| 0.98 | 0.800 | 10,707.4 | 87,887.6 | 24.6 |
 
 The last column is the whole argument. Below q ≈ 0.80 a unit of service costs about four units of
-holding. Above it the price roughly doubles, then doubles again. **The knee is at q ≈ 0.80–0.85, and
+holding. Above it the price roughly doubles, then doubles again. **The knee is at q ≈ 0.80, and
 it is a property of USTore's demand rather than of a number we picked.**
 
 This is also what §1.2 already promised and never delivered: *"an EOQ-based optimization model to
@@ -140,9 +159,9 @@ At the knee, the model comparison changes character. Same rule, q = 0.80:
 
 | method | fill rate | units short | units held |
 |---|---|---|---|
-| rolling_mean_30 | 0.767 | 12,503 | 52,728 |
-| ets | 0.763 | 12,706 | 68,365 |
-| tsb | 0.745 | 13,668 | 55,604 |
+| rolling_mean_30 | 0.742 | 13,844.4 | 49,852.6 |
+| ets | 0.738 | 14,032.1 | 64,336.4 |
+| tsb | 0.722 | 14,913.9 | 52,202.2 |
 
 `rolling_mean_30` **dominates**: higher service *and* less stock than both. On the frontier there is
 no accuracy-versus-usability trade to adjudicate, which is the trade B3 and B15 are currently
@@ -193,7 +212,7 @@ cited"* passage both need rewriting regardless — that debt predates this docum
 - **Not** that fill rate is a bad metric. It is the right one. What fails is pinning a *fixed target*
   to it, for the same structural reason a fixed MAPE target fails: the criterion was chosen before
   the demand distribution was known.
-- **Not** that 0.767 is a good service level in absolute terms. It is the honest one at a defensible
+- **Not** that 0.742 is a good service level in absolute terms. It is the honest one at a defensible
   holding cost on this data, and stating it with the curve behind it is stronger than asserting a
   95% that was never met.
 - **Not** a decision. #22 supplies evidence for **B2** (adviser) and **B3** (team, after B2) and
@@ -213,9 +232,10 @@ python tools/service_frontier.py
 The script reads only `data/model_benchmark_results.csv`, touches no database and fits no models, so it
 cannot change what the benchmark found — only what is asked of it.
 
-Not yet pinned by a test. The three figures worth asserting before this reaches Chapter 4 are the
-0.9490 ceiling, the knee's location in the marginal-cost column, and `rolling_mean_30`'s dominance at
-q = 0.80, on the pattern `tests/test_degenerate_forecast.py` set.
+Pinned by `tests/test_service_frontier.py` (remediation R3, on the pattern
+`tests/test_degenerate_forecast.py` set): the 0.9490 ceiling, the knee being a real (>2x) jump in the
+marginal-cost column rather than a rounding artefact, `rolling_mean_30`'s dominance over `ets`/`tsb`
+at q = 0.80, and the 208-of-266 EOQ demand-basis count.
 
 ---
 

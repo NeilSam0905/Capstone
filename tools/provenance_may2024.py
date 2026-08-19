@@ -50,7 +50,7 @@ import pandas as pd
 
 RAW_CSV = "data/USTore_sales_long_May_Aug2024-May2026.csv"
 ZEROFILL_CSV = "data/USTore_sales_long_with_zeros.csv"
-WORKBOOK = "drive-download-20260724T120738Z-1-001/2024 5 MAY DSR & TBS.xlsx"
+WORKBOOK = "rawdata/2024 5 MAY DSR & TBS.xlsx"
 DOCS = "docs"
 DIFF_CSV = os.path.join(DOCS, "may2024_dsr_vs_tbs.csv")
 NARRATIVE_MD = os.path.join(DOCS, "DATA_PROVENANCE.md")

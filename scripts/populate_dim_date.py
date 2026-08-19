@@ -77,6 +77,7 @@ FLAG_COLUMNS = [
     "is_event_day",
     "is_sem_break",
     "is_tally_date",
+    "is_tally_date_positive",
     "is_store_closed",
 ]
 
@@ -108,15 +109,61 @@ def daterange(start, end):
         yield start + timedelta(days=n)
 
 
-def load_tally_dates(sales_csv):
+def load_tally_dates(sales_csv, positive_only=False):
+    """Remediation S3. `positive_only=False` (default) reproduces the
+    existing 608-date zero-inclusive definition of "a physical tally
+    happened" - unchanged, nothing that reads is_tally_date moves.
+    `positive_only=True` gives the narrower 411-date "a sale was actually
+    recorded" set, stored separately as is_tally_date_positive so either
+    denominator is available and neither silently stands in for the
+    other. Both come from the same zero-inclusive file - the positive
+    set is not a second data source, just a filter on this one."""
     df = pd.read_csv(sales_csv)
+    if positive_only:
+        df = df[df["Total Quantity"] > 0]
     parsed = pd.to_datetime(df["Date"], format="%Y-%m-%d", errors="raise")
     return set(parsed.dt.date)
+
+
+def load_closure_log(con):
+    """Remediation D3. Latest Closure_Log row per closure_date wins (an
+    append-only log of toggle actions, not a snapshot), so a later
+    reopen correctly overrides an earlier closure. Returns {date: 0/1}.
+    Table may not exist yet on a database built before this migration -
+    that is a real error (create_schema.py first), not something to
+    silently skip."""
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='Closure_Log'").fetchone():
+        raise RuntimeError("Closure_Log does not exist - run create_schema.py first "
+                           "(remediation D3 added this table).")
+    rows = con.execute("""
+        SELECT cl.closure_date, cl.is_closed
+        FROM Closure_Log cl
+        WHERE cl.closure_id = (
+            SELECT MAX(cl2.closure_id) FROM Closure_Log cl2
+            WHERE cl2.closure_date = cl.closure_date
+        )
+    """).fetchall()
+    return {date.fromisoformat(d): int(closed) for d, closed in rows}
+
+
+def load_event_dates(con):
+    """Remediation D3 (extended). Event_Log rows are a permanent flag,
+    same semantics backend/app.py's add_event() already applies at write
+    time (is_event_day never gets un-set) - this just makes that
+    survive a Dim_Date rebuild, which nothing previously did despite
+    create_schema.py's own comment claiming it."""
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='Event_Log'").fetchone():
+        raise RuntimeError("Event_Log does not exist - run create_schema.py first.")
+    rows = con.execute("SELECT DISTINCT event_date FROM Event_Log").fetchall()
+    return {date.fromisoformat(d) for (d,) in rows}
 
 
 def main():
     term_windows = derive_term_windows(CSV_NAME, END_DATE)
     tally_dates = load_tally_dates(SALES_WITH_ZEROS_CSV)
+    tally_dates_positive = load_tally_dates(SALES_WITH_ZEROS_CSV, positive_only=True)
 
     # ----- Step 1: one row per day, flags 0, semester fields empty -----
     rows = {}
@@ -132,6 +179,7 @@ def main():
             "is_event_day": 0,
             "is_sem_break": 0,
             "is_tally_date": 0,
+            "is_tally_date_positive": 0,
             "is_store_closed": 0,
         }
         date_id += 1
@@ -151,10 +199,13 @@ def main():
                     continue  # outside the 2023-01-01..2026-12-31 window
                 rows[d][flag] = 1
 
-    # ----- Step 3: is_tally_date from the zero-inclusive sales data -----
+    # ----- Step 3: is_tally_date(_positive) from the zero-inclusive sales data -----
     for d in tally_dates:
         if d in rows:
             rows[d]["is_tally_date"] = 1
+    for d in tally_dates_positive:
+        if d in rows:
+            rows[d]["is_tally_date_positive"] = 1
 
     # ----- Step 4: semester_id + semester_week from the derived term windows -----
     for term_id, start, end in term_windows:
@@ -166,6 +217,19 @@ def main():
     # ----- Step 5: insert into SQLite -----
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
+
+    # ----- Step 4.5 (remediation D3): re-apply Closure_Log + Event_Log -----
+    # Dim_Date is about to be dropped and rebuilt from scratch (below), which
+    # is exactly what previously erased every staff-set closure and (though
+    # nobody had noticed, since Event_Log has always been empty so far) every
+    # logged event too. Both logs are read back onto the fresh `rows` dict
+    # here, before the INSERT, the same way is_tally_date already is.
+    for d, is_closed in load_closure_log(conn).items():
+        if d in rows:
+            rows[d]["is_store_closed"] = is_closed
+    for d in load_event_dates(conn):
+        if d in rows:
+            rows[d]["is_event_day"] = 1
     # Fact_Sales now has rows referencing Dim_Date.date_id (it didn't when
     # this script was first written). date_id assignment here is fully
     # deterministic - sequential from the same START_DATE - so the
@@ -179,11 +243,11 @@ def main():
         INSERT INTO Dim_Date (
             date_id, calendar_date, semester_id, semester_week,
             is_enrollment_period, is_exam_week, is_event_day,
-            is_sem_break, is_tally_date, is_store_closed
+            is_sem_break, is_tally_date, is_tally_date_positive, is_store_closed
         ) VALUES (
             :date_id, :calendar_date, :semester_id, :semester_week,
             :is_enrollment_period, :is_exam_week, :is_event_day,
-            :is_sem_break, :is_tally_date, :is_store_closed
+            :is_sem_break, :is_tally_date, :is_tally_date_positive, :is_store_closed
         )
         """,
         list(rows.values()),

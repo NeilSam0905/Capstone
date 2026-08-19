@@ -31,7 +31,8 @@ original drop-blank-cells behaviour, since a gap there really does mean
 
 Output: USTore_sales_long_with_zeros.csv (same 4 columns as the
 original: Date, Item, Total Quantity, Supplier), reading directly from
-the original source workbooks in drive-download-20260724T120738Z-1-001/.
+the original source workbooks in rawdata/ (renamed from
+drive-download-20260724T120738Z-1-001/ for convenience - same files).
 
 Date is written as ISO 8601 (YYYY-MM-DD). The source workbooks use a
 mix of DD/MM/YYYY, MM/DD/YYYY and real Excel date cells in their column
@@ -48,7 +49,7 @@ from collections import defaultdict
 
 import openpyxl
 
-SRC_DIR = "drive-download-20260724T120738Z-1-001"
+SRC_DIR = "rawdata"
 FILES = [
     f"{SRC_DIR}/2024 5 MAY DSR & TBS.xlsx",
     f"{SRC_DIR}/USTore TBS AUG-DEC 2024.xlsx",

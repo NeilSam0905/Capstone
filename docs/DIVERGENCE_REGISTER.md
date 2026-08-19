@@ -8,6 +8,11 @@ Rows 1–17 are carried over from there; **1, 16 and 17 are corrected** and **18
 with the evidence named. Corrections are marked ⚠ and the superseded text is kept, struck through,
 so nothing silently changes meaning between versions.
 
+**2026-08-19 update (`REMEDIATION_MASTER_v2.md`):** row **6** rewritten (the service-level
+replacement it named is itself unreachable — see #22); row **16** corrected a second time (marked
+⚠⚠ — the closure flag is sound, the 15-date count was measuring something else); rows **22–23** are
+new.
+
 | # | Chapter 3 says | System does | Where to explain |
 |---|---|---|---|
 | 1 ⚠ | Data scope 2023–2026 (§1.4.1, §3.1.1, Table 2) | Sales 2024-05-02 → **2026-07-31** (~~2026-06-30~~); inventory 2024-11-01 → 2026-04-01; 2023 = 6 undated batch aggregates, 1 of 34 labels matching a current SKU | Ch4 data description |
@@ -15,7 +20,7 @@ so nothing silently changes meaning between versions.
 | 3 | Sufficiency tiers by observation count (§3.3.2, §3.3.4) | Counted on distinct non-zero sale dates — consequence of #2 | Ch4 method note |
 | 4 | `is_suspension_day` (Figure 5) | `is_store_closed` — matches all prose and the DDL | Ch4 footnote |
 | 5 | `fsn_class ∈ {F,S,N}` (§3.2, Figure 5) | Added `is_hvl` boolean; HVL is a modifier on F per §3.3.1 | Ch4 schema note |
-| 6 | MAPE ≤20% primary acceptance criterion (8 locations) | Unreachable — perfect-forecast floor ~89% daily / ~60% monthly. Report service level ≥95% + MASE <1.0 | Ch4 — **the headline result** |
+| 6 ⚠ | MAPE ≤20% primary acceptance criterion (8 locations) | Unreachable — perfect-forecast floor ~89% daily / ~60% monthly. ~~Report service level ≥95% + MASE <1.0~~ **That replacement is ALSO unreachable — see #22 — by 0.10pp before any modelling choice is made. Report a service/holding-cost frontier with a recommended operating point at the knee (q≈0.80–0.85), not a second threshold.** | Ch4 — **the headline result** |
 | 7 | Forecast units on tally dates | 30-day aggregate demand per SKU (what ROP/EOQ and the billing cycle need) | Ch4 method |
 | 8 | `semester_week` as a Prophet regressor (§1.2, §3.3.2) | Dropped, or cyclically re-encoded — continuous form extrapolates badly across resets | Ch4 model spec |
 | 9 | Prophet outperforms ARIMA on seasonal series (§2.1.4) | Rolling median beat all 8 methods (MAE 2.24, MASE 0.61); XGBoost 7th | Ch4 benchmark |
@@ -25,12 +30,14 @@ so nothing silently changes meaning between versions.
 | 13 | — | `semester_week` week-1 origin: enrollment vs first class day (Block 1.4) | Ch4 method note |
 | 14 | Holding cost includes opportunity cost of capital tied up in stock (§3.1.1) | University doesn't own consignment stock — reframe `H` or present EOQ as order-batching | Ch4 EOQ discussion |
 | 15 | — | Nearest-month allocation weights, some ±20 months stale; 312 of 2,852 splits used an equal split with no stock backing | Ch4 imputation limitations |
-| 16 ⚠ | Closure flags feed the depletion denominator | **15** tally dates fall on flagged closures (~~two: 2025-06-12, 2025-11-30~~) — pending Block 5 | Ch4 data quality |
+| 16 ⚠⚠ | Closure flags feed the depletion denominator | ~~15 tally dates fall on flagged closures (two: 2025-06-12, 2025-11-30) — pending Block 5~~ **Corrected (remediation S3): `is_store_closed` is broadly sound, not backwards. 13 of the 15 flagged-closed tally dates sold NOTHING (0 units) — exactly what a genuine closure looks like. The 15-date count is mostly an artifact of `is_tally_date`'s zero-inclusive definition (a closed day gets `is_tally_date=1` merely because zero-fill wrote a row for it), not evidence against the flag. The real residue is just 2 dates that genuinely traded on a flagged closure — 2025-06-12, 2025-11-30 — 143 units, 0.16% of volume. Do not split the flag; take those 2 dates to USTore.** | Ch4 data quality |
 | 17 ⚠ | Benchmark tier counts | ~~`PROJECT_LOG` says 89 SKUs in the ≥60 tier; tier counts elsewhere are 87/56/162 = 305. Reconcile before publishing either~~ **Not a conflict: three different populations. Closed — see below.** | Ch4 method note |
 | **18** | — | `SUM(quantity_sold)` 88,481 → **89,232**: May 2024 re-sourced DSR→TBS (−296), July 2026 added (+1,047) | Ch4 data description |
 | **19** | — | 71 of 519 products carry a price suffix; 12 have a de-priced twin. `Lanyard @180` is the largest SKU at 7,201 units | Ch4 data quality |
 | **20** | — | CSV line-ending split made the repo non-reproducible across platforms; `USTore_Build_Plan.pdf` was corrupted on every Windows checkout | Ch4 reproducibility note |
 | **21** | §3.3.4's error-threshold acceptance criterion | Not merely unreachable on this data — **degenerate**. The optimum of the criterion is a forecast of zero: the MASE-minimising method prices 0 of 266 SKUs | Ch4 results **and** limitations |
+| **22** | §1.2's promised "EOQ-based optimization model ... subject to a cycle service level constraint" (never delivered as a constraint, only as a fixed target) | #21's replacement (service level ≥95%) checked against the data and found ALSO unreachable, for three separable reasons: (a) a defect in the benchmark's own risk-period formula, now fixed — remediation D1; (b) a hard arithmetic ceiling of 0.9490 — 584 folds / 103 SKUs have flat-zero training slices, 5.1% of demand structurally unservable before any model runs; (c) normal quantiles under-size the buffer on an 81%-zero series. The service/holding-cost frontier this produces (`tools/service_frontier.py`) **is** the constrained optimisation §1.2 already promised | Ch4 — **delivers §1.2's own promise** |
+| **23** | Store Closure/Suspension toggle updates `Dim_Date.is_store_closed` directly (§3.1.1) | Writes to a new `Closure_Log` table (mirrors `Event_Log`'s own pattern) and updates `Dim_Date` immediately; `populate_dim_date.py` reads `Closure_Log` back after a rebuild. Remediation D3: a bare `Dim_Date` write did not survive `populate_dim_date.py`'s DELETE+re-INSERT, silently erasing every staff-set closure on the next rebuild. Applies the manuscript's own `Event_Log` durability pattern to closures for the identical reason — found while fixing this, `Event_Log`'s own flag had the same unexercised gap (never noticed because `Event_Log` has stayed empty) and is fixed the same way | Ch4 — interface durability |
 
 ---
 
