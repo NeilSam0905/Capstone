@@ -4,10 +4,22 @@ CSVs, report any unmapped item names, and populate Dim_Product.
 
 Does NOT do proportional allocation and does NOT touch Fact_Sales.
 """
+import re
 import sqlite3
 import sys
 
 import pandas as pd
+
+# Remediation S12. Distinct from tools/audit_price_suffix_skus.py's
+# PRICE_SUFFIX_RE (r"\s*@.*$"), which strips the suffix to recover the
+# base name and throws the number away - this one needs the number
+# itself, as a fallback price. "Lanyard @180" -> 180.
+PRICE_SUFFIX_RE = re.compile(r"@(\d+)")
+
+
+def price_from_suffix(item_name):
+    m = PRICE_SUFFIX_RE.search(item_name)
+    return float(m.group(1)) if m else None
 
 MAPPING_CSV = "data/vocab_mapping_FINAL_v5.csv"
 SUPPLIER_MAPPING_CSV = "data/supplier_mapping.csv"
@@ -122,13 +134,32 @@ def build_dim_product(sales_mapped, inventory_mapped):
         set(sales_mapped["canonical_item_name"]) | set(inventory_mapped["canonical_item_name"])
     )
 
+    # Remediation S12. unit_price_php previously had exactly one source -
+    # the inventory sheets - and inherited that source's coverage gap
+    # wholesale (239 of 519 products, 82.3% of units, unpriced; 48 of 58
+    # Fast SKUs). 64 of the 71 price-suffixed products ("Lanyard @180")
+    # carry the price in the name itself. price_source records which of
+    # the two supplied the value, so they're never silently conflated -
+    # a handful of items where the two disagree (name-coined price vs.
+    # current inventory price, most likely price drift over time) stay
+    # visible rather than being overwritten one way or the other.
+    price_source_counts = {"inventory": 0, "name_suffix": 0, None: 0}
     rows = []
     for item in all_items:
+        price = inv_price.get(item)
+        if price is not None:
+            source = "inventory"
+        else:
+            price = price_from_suffix(item)
+            source = "name_suffix" if price is not None else None
+        price_source_counts[source] += 1
+
         rows.append(
             {
                 "item_name": item,
                 "category": inv_cat.get(item),
-                "unit_price_php": inv_price.get(item),
+                "unit_price_php": price,
+                "price_source": source,
                 "supplier_name": sales_supplier.get(item),
                 "payment_status": sales_status.get(item),
                 "lead_time_days": None,
@@ -137,6 +168,9 @@ def build_dim_product(sales_mapped, inventory_mapped):
                 "is_active": 1,
             }
         )
+    print(f"[price] source: inventory={price_source_counts['inventory']}, "
+          f"name_suffix={price_source_counts['name_suffix']}, "
+          f"unpriced={price_source_counts[None]}")
     return pd.DataFrame(rows)
 
 

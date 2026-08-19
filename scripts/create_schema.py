@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS Dim_Product (
     item_name       TEXT    NOT NULL,
     category        TEXT,
     unit_price_php  REAL,
+    -- Remediation S12: unit_price_php had exactly one source (inventory
+    -- sheets) and inherited that source's coverage gap wholesale. This
+    -- records which of the two sources (or neither) supplied the value,
+    -- so a name-suffix fallback price is never silently indistinguishable
+    -- from a confirmed inventory price.
+    price_source    TEXT    CHECK (price_source IN ('inventory', 'name_suffix')
+                                   OR price_source IS NULL),
     -- supplier_name is the NORMALISED name from supplier_mapping.csv (42 raw
     -- strings -> 19 suppliers). The "(CONSIGNMENT)"/"(PAID)" suffix the raw
     -- strings carried is split out into payment_status, which §3.2's supplier
@@ -75,7 +82,11 @@ CREATE TABLE IF NOT EXISTS Dim_Date (
     is_exam_week         INTEGER DEFAULT 0,
     is_event_day         INTEGER DEFAULT 0,
     is_sem_break         INTEGER DEFAULT 0,
-    is_tally_date        INTEGER DEFAULT 0,
+    is_tally_date        INTEGER DEFAULT 0,   -- 608 dates: zero-inclusive, "a tally happened"
+    -- Remediation S3: 411 dates, "a sale was actually recorded" - a narrower
+    -- question than is_tally_date. Neither stands in for the other; state
+    -- which one a denominator means. See populate_dim_date.py's docstring.
+    is_tally_date_positive INTEGER DEFAULT 0,
     is_store_closed      INTEGER DEFAULT 0   -- Figure 5 labels this is_suspension_day; same idea
 );
 """)
@@ -132,6 +143,33 @@ CREATE TABLE IF NOT EXISTS Event_Log (
     event_description TEXT,
     created_by        TEXT,
     date_logged       TEXT
+);
+""")
+
+
+# ----- OPERATIONAL TABLE: Closure_Log (sits outside the star) ------
+# Remediation D3. Durable record of the Digital Tallying Interface's
+# closure toggle, so a populate_dim_date.py rebuild can restore
+# is_store_closed the same way it already restores is_event_day from
+# Event_Log - previously the toggle wrote Dim_Date directly and a
+# rebuild silently erased it (§3.1.1 describes the toggle updating
+# Dim_Date directly; this table is a deliberate divergence, recorded in
+# DIVERGENCE_REGISTER.md, applying the manuscript's own Event_Log
+# pattern to closures for the same durability reason).
+#
+# is_closed is here because closures are toggled BOTH ways ("mark
+# closed" / "mark open"), unlike events, which are never un-flagged - an
+# append-only log needs a value to distinguish the two, or a reopen
+# can't be told apart from a closure that was never logged. Latest row
+# per closure_date (by closure_id) wins on read-back.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Closure_Log (
+    closure_id    INTEGER PRIMARY KEY,
+    closure_date  TEXT    NOT NULL,
+    is_closed     INTEGER NOT NULL,   -- 1 = closed, 0 = reopened
+    reason        TEXT,
+    created_by    TEXT,
+    date_logged   TEXT
 );
 """)
 

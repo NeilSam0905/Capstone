@@ -5,6 +5,16 @@ still open, and what Phase 6 (Power BI) needs from here. Written as a handoff sn
 manuscript section — see `CHANGES_tyrone.md` and `BUILD_PLAN_RECONCILIATION.md` for the fuller
 history this builds on.
 
+> **2026-08-19 correction (remediation C3).** This file is a snapshot from 2026-08-05 and three
+> claims in it went stale within days: Phase 5 (the Flask backend) **shipped 2026-08-10**, not
+> "not started"; the Power BI embed route **landed 2026-08-08/09**, so Phase 6 was never really
+> "the next task" by the time anyone read this; and §2's Phase 4 work **was committed the same day**
+> it was written (`git log` — same-day commit on `tyrone`), not left uncommitted. Left as historical
+> record below rather than rewritten in place — see `CHANGES_tyrone.md` for what actually shipped
+> when. **Also now stale, found while fixing the above:** §2's "79 priced SKUs / 158 rows" reflects
+> the demand basis *before* remediation S1 (`REMEDIATION_MASTER_v2.md`) — `step5_prescriptive.py`'s
+> new default (`--demand-basis trailing`) prices 208 SKUs / 416 rows as of today.
+
 ---
 
 ## 1. Phase status
@@ -13,10 +23,10 @@ history this builds on.
 |---|---|---|
 | 0–1 | Setup, schema, ETL | Done |
 | 2 | FSN classification | Done — 58 F / 228 S / 233 N, 6 HVL |
-| 3 | Prophet forecasting | **Blocked on cmdstan** (B5). Superseded in practice by the 8-method benchmark; prescriptive math runs on `rolling_mean_30`, not Prophet |
-| 4 | ROP / Safety Stock / EOQ | **Real per-SKU estimates now seeded** (this session) — see §2. Still provisional, still pending the USTore site visit (Block 5) |
-| 5 | Flask tallying interface | **Not started.** `Event_Log` is 0 rows |
-| 6 | Power BI dashboard | **Not started — the next task.** See §4 |
+| 3 | Prophet forecasting | **Blocked on cmdstan** (B5). Superseded in practice by the 10-method benchmark; prescriptive math runs on a trailing-365d observed basis (remediation S1), not a forecast |
+| 4 | ROP / Safety Stock / EOQ | Real per-SKU estimates seeded 2026-08-05, demand basis corrected 2026-08-19 (S1: 208 SKUs, not 79) — see §2 for the original numbers. Still provisional, still pending the USTore site visit (Block 5) |
+| 5 | Flask tallying interface | **Done — shipped 2026-08-10.** See `backend/` and `UST Prototype Design/` |
+| 6 | Power BI dashboard | **Embed route done** (2026-08-08/09); the `.pbix` report itself is not built. See §4 |
 | 7 | Chapter 4 write-up | In progress alongside the above |
 
 ---

@@ -66,16 +66,31 @@ Formulas (unchanged)
 
 Z by FSN class: F = 1.65 (95% service), S = 1.04 (85%). N excluded.
 
-Demand input
-------------
-D is the annualised 30-day forecast, same rolling-mean default and
-caveat as before (--demand-method rolling_median_30 prices ~0 SKUs on
-intermittent series - see the git history for that finding). Every row
-records which method fed it and is flagged provisional.
+Demand input (remediation S1)
+-------------------------------
+D used to come from a specific forecasting method's 30-day point
+forecast, annualised x365/30 - which meant a method that forecasts zero
+(e.g. rolling_median_30 on this intermittent catalogue) priced nothing,
+and even the working default (rolling_mean_30) only reached 79 of 266
+eligible F+S SKUs. EOQ is batching economics, insensitive to short-run
+forecast error - the coupling to a specific forecast was never load-
+bearing. `--demand-basis` controls this:
+
+    trailing (default) - D is the SKU's own observed trailing-365-day
+        total, no forecast method involved. Reaches 208 of 266 SKUs.
+    forecast - the original behaviour: D from --demand-method's 30-day
+        point forecast, annualised. Reaches 79 (rolling_mean_30) or
+        fewer. Kept for exact reproducibility of prior runs.
+
+Every row records which basis/method actually fed D (demand_method
+column: "trailing_365d" or the forecast method name) and is flagged
+provisional either way. The choice of default is implemented but not
+unilaterally decided - see REMEDIATION_MASTER_v2.md S1 for the team
+ratification this is pending.
 
 Run (from the repo root):
     python scripts/step5a_set_lead_times.py     # first, if not already run
-    python scripts/step5_prescriptive.py [--demand-method rolling_mean_30]
+    python scripts/step5_prescriptive.py [--demand-basis trailing|forecast] [--demand-method rolling_mean_30]
 ------------------------------------------------------------------
 """
 import argparse
@@ -228,7 +243,18 @@ def main():
                     choices=sorted(DEMAND_METHODS),
                     help="rolling_median_30 leads on MASE but forecasts zero "
                          "for intermittent SKUs and prices nothing - see the "
-                         "module docstring")
+                         "module docstring. Only used when --demand-basis=forecast.")
+    ap.add_argument("--demand-basis", default="trailing", choices=["forecast", "trailing"],
+                    help="Remediation S1. 'forecast' (the old default): D comes from "
+                         "--demand-method's 30-day point forecast annualised x365/30 - "
+                         "a method that forecasts zero prices nothing, which is why only "
+                         "79 of 266 F+S SKUs got priced. 'trailing' (new default): D is "
+                         "the SKU's own observed trailing-365-day total, sourced directly, "
+                         "no forecast method involved - prices 208 of 266. EOQ is batching "
+                         "economics and is insensitive to short-run forecast error, so "
+                         "coupling it to a specific forecast was never load-bearing; see "
+                         "REMEDIATION_MASTER_v2.md S1. Ratify the default with the team - "
+                         "'forecast' reproduces the old behaviour exactly.")
     ap.add_argument("--db", default=DB_NAME)
     args = ap.parse_args()
 
@@ -240,6 +266,8 @@ def main():
 
     series, products, idx = load_series(con)
     fit_predict = DEMAND_METHODS[args.demand_method]
+    demand_label = args.demand_method if args.demand_basis == "forecast" else "trailing_365d"
+    print(f"Demand basis: {args.demand_basis} ({demand_label})")
 
     print(f"Holding cost H = {H_PHP_PER_UNIT_YEAR:.4f} PHP/unit/year "
           f"(0.25 x {INVENTORY_VALUE_MID:,.0f} / {UNITS_ON_HAND_ESTIMATE:,.0f})")
@@ -261,16 +289,23 @@ def main():
         if s is None or s.sum() <= 0:
             continue
 
-        forecast_30d = float(np.sum(fit_predict(s, HORIZON)))
-        if forecast_30d <= 0:
-            continue
+        if args.demand_basis == "forecast":
+            forecast_30d = float(np.sum(fit_predict(s, HORIZON)))
+            if forecast_30d <= 0:
+                continue
+            add = forecast_30d / HORIZON                       # average daily demand
+            annual = forecast_30d * (DAYS_PER_YEAR / HORIZON)  # D
+        else:  # trailing: the SKU's own observed history, no forecast method involved
+            trailing = s[-int(DAYS_PER_YEAR):]
+            annual = float(trailing.sum())                     # D
+            if annual <= 0:
+                continue
+            add = annual / DAYS_PER_YEAR                        # average daily demand
 
         if pd.isna(row["lead_time_days"]):
             missing_lead_time.append(row["item_name"])
             continue
 
-        add = forecast_30d / HORIZON                       # average daily demand
-        annual = forecast_30d * (DAYS_PER_YEAR / HORIZON)  # D
         sale_days = int((s > 0).sum())
         sigma_obs = float(np.std(s, ddof=1)) if s.size > 1 else 0.0
 
@@ -326,7 +361,7 @@ def main():
                 total_cost(annual, S, H_PHP_PER_UNIT_YEAR, q),
                 total_cost(annual, S, H_PHP_PER_UNIT_YEAR, 0.5 * q),
                 total_cost(annual, S, H_PHP_PER_UNIT_YEAR, 2.0 * q),
-                args.demand_method, 1, now,
+                demand_label, 1, now,
             ))
 
     con.executemany("""
@@ -339,7 +374,7 @@ def main():
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, out)
 
-    n_params = seed_dim_parameters(con, args.demand_method)
+    n_params = seed_dim_parameters(con, demand_label)
     con.commit()
 
     # ---- coverage diagnostic (unchanged from before) ----------------

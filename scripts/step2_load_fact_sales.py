@@ -87,6 +87,19 @@ DOS_WINDOW_DAYS = 28     # trailing window for the days_of_supply rate
 REASON_INVALID_QTY = "invalid_or_missing_quantity"
 REASON_ITEM_IS_SUPPLIER = "item_name_is_supplier_name"
 REASON_ITEM_NO_MATCH = "item_no_match_in_dim_product"
+
+
+def clear_historical_fact_sales(con):
+    """Remediation D2. This script only ever reloads HISTORICAL tally
+    data - every row it inserts is tally_date_flag=1 (see the INSERT
+    further down). A bare `DELETE FROM Fact_Sales` also erased every row
+    the Digital Tallying Interface had written (tally_date_flag=0) since
+    the last rebuild, which defeats the whole point of an accumulating
+    live interface. Scoping the delete to what this script actually
+    owns fixes that. Pulled out as its own function so it's testable
+    without needing the full CSV + Dim_Product/Dim_Date fixture main()
+    requires - see tests/test_step2_load_fact_sales.py."""
+    con.execute("DELETE FROM Fact_Sales WHERE tally_date_flag = 1")
 REASON_DATE_NO_MATCH = "date_no_match_in_dim_date"
 
 
@@ -179,7 +192,7 @@ def main():
     con.execute("PRAGMA foreign_keys = ON;")
     create_exception_table(con)
 
-    con.execute("DELETE FROM Fact_Sales")
+    clear_historical_fact_sales(con)
     con.execute("DELETE FROM Exception_Log")
 
     product_id_by_name = dict(

@@ -330,8 +330,19 @@ def get_date_flags(iso_date):
 def set_closure(iso_date):
     if not validation.ISO_DATE_RE.match(iso_date):
         return jsonify({"ok": False, "errors": {"calendar_date": "Date must be YYYY-MM-DD."}}), 400
-    closed = 1 if (request.get_json(silent=True) or {}).get("closed") else 0
+    payload = request.get_json(silent=True) or {}
+    closed = 1 if payload.get("closed") else 0
+    reason = (payload.get("reason") or "").strip() or None
+
     c = con()
+    # Remediation D3. Log the toggle in Closure_Log (durable across a
+    # populate_dim_date.py rebuild, which reads it back - see that
+    # script) AND update Dim_Date directly (so the change is visible
+    # immediately, same dual-write shape as add_event() below).
+    c.execute("""
+        INSERT INTO Closure_Log (closure_date, is_closed, reason, created_by, date_logged)
+        VALUES (?, ?, ?, 'local', ?)
+    """, (iso_date, closed, reason, datetime.now().isoformat(timespec="seconds")))
     c.execute("UPDATE Dim_Date SET is_store_closed = ? WHERE calendar_date = ?", (closed, iso_date))
     c.commit()
     return jsonify({"ok": True})

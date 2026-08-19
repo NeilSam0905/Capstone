@@ -1,4 +1,4 @@
-"""Put the repo root, and scripts/, on sys.path for the test suite.
+"""Put the repo root, scripts/, and tools/ on sys.path for the test suite.
 
 Without this, a bare `pytest tests/` fails at collection with
 "No module named 'forecasting'": pytest inserts the *test* directory into
@@ -8,10 +8,12 @@ adds the working directory, which is why the difference is easy to miss.
 
 The Part C verification checklist runs the bare form, so it needs to work.
 
-scripts/ is added separately: the pipeline scripts (step5_prescriptive.py
-etc.) live there now, not at the repo root, but tests still do a bare
-`import step5_prescriptive` - this keeps that working without having to
-turn scripts/ into a package or rewrite every such import.
+scripts/ and tools/ are added separately: pipeline scripts
+(step5_prescriptive.py etc.) and analysis tools (service_frontier.py
+etc.) live there, not at the repo root, but tests still do a bare
+`import step5_prescriptive` / `import service_frontier` - this keeps
+that working without turning either directory into a package or
+rewriting every such import.
 """
 import os
 import sys
@@ -19,3 +21,4 @@ import sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
