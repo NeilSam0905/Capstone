@@ -18,14 +18,33 @@ export default function Forecast({ filters }) {
   const { data: forecastMeta } = useData(getForecast, []);
   const [selectedId, setSelectedId] = useState(null);
 
-  const withHistory = useMemo(
-    () => products.filter(p => p.total_units > 0).sort((a, b) => b.total_units - a.total_units),
-    [products]
+  // Only SKUs step4_prophet_forecast.py actually produced a forecast for
+  // (the Fast tier) belong in this dropdown - every other SKU would just
+  // open onto the "no forecast" pending state, which is pointless to pick
+  // from a list of hundreds. Falls back to every SKU with sales history if
+  // the pipeline hasn't been run at all yet, so the pending state still has
+  // something to show.
+  const forecastableIds = useMemo(
+    () => forecastMeta?.data?.products ? new Set(forecastMeta.data.products.map(p => p.product_id)) : null,
+    [forecastMeta]
   );
+  const withHistory = useMemo(() => {
+    const withSales = products.filter(p => p.total_units > 0);
+    const filtered = forecastableIds ? withSales.filter(p => forecastableIds.has(p.product_id)) : withSales;
+    return filtered.sort((a, b) => b.total_units - a.total_units);
+  }, [products, forecastableIds]);
   const product = withHistory.find(p => p.product_id === selectedId) ?? withHistory[0] ?? null;
 
   if (loading) return <Loading label="Loading products…" />;
-  if (!product) return <div className="empty">No products match this filter.</div>;
+  if (!product) {
+    return (
+      <div className="empty">
+        {forecastableIds
+          ? "No forecasted products match this filter."
+          : "No products match this filter."}
+      </div>
+    );
+  }
 
   return (
     <div className="stack">
