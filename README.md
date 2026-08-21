@@ -441,15 +441,31 @@ contract the backend implements.
 
 ## Problems that still need fixing
 
-- **`Overview.jsx`'s "Items Below / Near ROP" KPI is stale.** It still
-  shows "Needs lead time & cost inputs" — true when that screen was
-  built, false now that `Dim_Parameters`/`Result_Prescriptive` are
-  populated. Only `Reorder.jsx` was updated to show real reorder data
-  this pass (an explicit, scoped decision); `Overview.jsx` needs the same
-  treatment but wasn't touched.
-- **No PDF export on the Batch Sales Report.** `BACKEND_TODO.md` flags
-  this as a Phase 3 item; the buttons are still disabled
-  (`TODO: backend`, server-rendered PDF not implemented).
+- ~~`Overview.jsx`'s "Items Below / Near ROP" KPI is stale~~ **Fixed.** It
+  now computes the same reorder-now count `Reorder.jsx` does (stock ≤
+  reorder point, both real), with a KPI/banner/advisory copy pass across
+  the whole screen so nothing there still implies reorder data doesn't
+  exist.
+- **No PDF export on the Batch Sales Report.** Still not implemented —
+  `weasyprint`/`reportlab` have native dependencies that are fragile on
+  Windows, so this was deliberately deferred rather than attempted
+  mid-session. The buttons are disabled with an accurate
+  "not yet implemented" message (previously said "Phase 3 backend",
+  which was stale — Phase 3 is the backend, and it's here).
+- ~~`ustore.db` at the repo root predates `Result_Prescriptive` /
+  `Closure_Log` / the Wave 1 schema changes~~ **Fixed.** It had never
+  actually been rebuilt since the original ETL work — `backend/db.py`'s
+  unconditional `CREATE INDEX ... ON Result_Prescriptive` meant every API
+  call 500'd. Rebuilt from scratch via the full current pipeline
+  (`create_schema` → `populate_dim_date` → `step1` →
+  `proportional_allocation` → `step2` → `step3` → `step5a` → `step5`,
+  `step4`/Prophet still skipped, see below); every README-documented
+  invariant reproduced exactly (84,399 `Fact_Sales` rows, 89,232 units,
+  F=58/S=228/N=233, 416 `Result_Prescriptive` rows, all step5 gates
+  passing). If `ustore.db` is ever regenerated from an older checkout, run
+  the full pipeline again rather than assuming an existing file is current
+  — a stale-but-present file fails differently (and less visibly) than a
+  missing one.
 - **No auth on the backend.** `Event_Log.created_by` is hardcoded
   `'local'`. Fine for a single-machine capstone demo, not for anything
   beyond that.
@@ -461,7 +477,10 @@ contract the backend implements.
   but no `.pbix` has been authored or published yet. Two of its five views
   (Stock Status, Demand Forecast) are additionally blocked on data
   decisions — see `docs/STATUS_AND_NEXT_STEPS.md` §4 for the per-view
-  breakdown and what's blocking each one.
+  breakdown and what's blocking each one, and
+  `docs/POWERBI_DASHBOARD_PLAN.md` for the concrete chart-by-chart build
+  spec (fields, filters, colour, which 3 of the 5 views are buildable
+  today).
 - **Inventory coverage is still low** (~14–17% of products have any stock
   count), which limits both the Stock Status view and the Reorder
   screen's "on hand" column to a minority of SKUs — Block 3/B10, unresolved.

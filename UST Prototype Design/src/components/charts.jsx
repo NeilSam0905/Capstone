@@ -163,6 +163,80 @@ export function FSNStat({ label, count, pct, tone }) {
   );
 }
 
+/* ---------- Forecast chart with confidence band ---------- */
+export function ForecastChart({ data, height = 260 }) {
+  if (!data || data.length < 2) {
+    return <div className="empty">Not enough forecast points to plot.</div>;
+  }
+  const W = 720, H = height, padL = 58, padR = 16, padT = 16, padB = 28;
+  const allVals = data.flatMap(d => [d.yhat, d.yhat_lower, d.yhat_upper].filter(v => v != null));
+  const rawMax = Math.max(...allVals), rawMin = Math.min(0, Math.min(...allVals));
+  const range = rawMax - rawMin || 1;
+  const tickCount = 4;
+  const rawStep = range / tickCount;
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const norm = rawStep / mag;
+  const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+  const min = Math.max(0, Math.floor(rawMin / step) * step);
+  const max = Math.ceil(rawMax / step) * step || 1;
+
+  const x = i => padL + (i / (data.length - 1)) * (W - padL - padR);
+  const y = v => padT + (1 - (v - min) / (max - min || 1)) * (H - padT - padB);
+
+  // Confidence band (polygon from yhat_upper forward, yhat_lower backward)
+  const bandPath = data.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(d.yhat_upper ?? d.yhat).toFixed(1)}`)
+    .join(' ')
+    + ' ' + [...data].reverse().map((d, i) => `L${x(data.length - 1 - i).toFixed(1)},${y(d.yhat_lower ?? d.yhat).toFixed(1)}`)
+    .join(' ') + ' Z';
+
+  // Main forecast line
+  const forecastLine = data.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(d.yhat).toFixed(1)}`).join(' ');
+
+  const ticks = Math.max(1, Math.round((max - min) / step));
+  const labelEvery = Math.ceil(data.length / 10);
+
+  // Format date labels: 'Aug 21' style
+  const fmtDate = d => {
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const parts = d.split('-');
+    if (parts.length >= 3) return `${months[+parts[1]-1]} ${+parts[2]}`;
+    return d;
+  };
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+      <defs>
+        <linearGradient id="fcg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.15" />
+          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.03" />
+        </linearGradient>
+      </defs>
+      {Array.from({ length: ticks + 1 }).map((_, i) => {
+        const v = min + (i / ticks) * (max - min);
+        const yy = y(v);
+        return (
+          <g key={i}>
+            <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="var(--line)" strokeWidth="1" />
+            <text x={padL - 8} y={yy + 3.5} textAnchor="end" fontSize="10" fill="var(--muted)">{num(v)}</text>
+          </g>
+        );
+      })}
+      {/* Confidence band */}
+      <path d={bandPath} fill="url(#fcg)" />
+      {/* Forecast line */}
+      <path d={forecastLine} fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      {/* Data points */}
+      {data.map((d, i) => (
+        <circle key={i} cx={x(i)} cy={y(d.yhat)} r="3" fill="var(--card)" stroke="var(--accent)" strokeWidth="2" />
+      ))}
+      {/* X-axis labels */}
+      {data.map((d, i) => (i % labelEvery === 0
+        ? <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="10.5" fill="var(--muted)">{fmtDate(d.forecast_date)}</text>
+        : null))}
+    </svg>
+  );
+}
+
 /* ---------- Stacked proportion bar (FSN split) ---------- */
 export function StackBar({ parts }) {
   const total = parts.reduce((s, p) => s + p.value, 0) || 1;

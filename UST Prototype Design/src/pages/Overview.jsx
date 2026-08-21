@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
-import { getProducts, getMonthlyUnits, getMeta, getStockPosition } from '../services/dataService';
+import { getProducts, getMonthlyUnits, getMeta, getStockPosition, getReorderAlerts, getAdvisories } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
 import Pending, { Loading, PendingValue } from '../components/Pending';
 import { LineChart, Donut, HBars, FSNStat, StackBar } from '../components/charts';
+import Icon from '../components/Icon';
 import { num, shortMonth } from '../lib/format';
 
 export default function Overview({ filters }) {
@@ -11,6 +12,16 @@ export default function Overview({ filters }) {
   const { data: monthly } = useData(() => getMonthlyUnits(filters), [filters], []);
   const { data: meta } = useData(getMeta, []);
   const { data: stock } = useData(() => getStockPosition(filters), [filters]);
+  const { data: alerts } = useData(getReorderAlerts, []);
+  const { data: advisories } = useData(getAdvisories, []);
+
+  // Compute reorder-now count by joining alerts to stock position
+  const stockById = new Map((stock?.items ?? []).map(p => [p.product_id, p.current_stock]));
+  const alertItems = (alerts?.available ? alerts.data.items : []).map(a => ({
+    ...a,
+    current_stock: stockById.get(a.product_id) ?? null,
+  }));
+  const reorderNow = alertItems.filter(a => a.current_stock != null && a.current_stock <= a.reorder_point);
 
   const totals = useMemo(() => {
     const units = products.reduce((s, p) => s + p.total_units, 0);
@@ -60,8 +71,10 @@ export default function Overview({ filters }) {
         />
         <KPICard
           label="Items Below / Near ROP"
-          value={<PendingValue />}
-          sub="Needs lead time & cost inputs"
+          value={alerts?.available ? num(reorderNow.length) : <PendingValue />}
+          sub={alerts?.available
+            ? `${reorderNow.length} item${reorderNow.length !== 1 ? 's' : ''} at or below reorder point`
+            : alerts?.reason ?? 'Reorder data not yet available'}
           icon="alert"
         />
       </div>
@@ -123,14 +136,86 @@ export default function Overview({ filters }) {
         </div>
       </div>
 
-      {/* Advisories — prescriptive output, not computed yet */}
+      {/* Advisories — calendar-contextual, driven by real data */}
       <div>
         <div className="card-h"><span className="section-h">Upcoming Event Advisories</span></div>
-        <Pending
-          title="Calendar-contextual advisories are not generated yet"
-          reason="Advisories combine a forecast with a reorder point. Neither exists in the database yet, and writing plausible recommendations here would misrepresent the pipeline's state."
-        />
+        <AdvisoriesPanel advisories={advisories} />
       </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- advisories */
+
+const SEVERITY_STYLE = {
+  high: { borderLeft: '4px solid var(--warn)', background: 'var(--warn-bg)' },
+  medium: { borderLeft: '4px solid var(--accent)', background: 'var(--card)' },
+  low: { borderLeft: '4px solid var(--line)', background: 'var(--card)' },
+};
+
+const TYPE_ICON = {
+  enrollment: 'calPlus',
+  exam_week: 'file',
+  event: 'bell',
+  forecast_alert: 'trend',
+  info: 'clock',
+};
+
+function AdvisoriesPanel({ advisories }) {
+  if (!advisories) return <Loading label="Loading advisories…" />;
+
+  const items = advisories.advisories ?? [];
+
+  if (items.length === 0) {
+    return (
+      <div className="card card__pad">
+        <div className="hint">No upcoming calendar signals or events to advise on.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {!advisories.has_forecast && (
+        <div className="notice notice--warn">
+          <b>Limited advisories:</b> The demand forecast has not been generated yet
+          (<span className="mono">step4_prophet_forecast.py</span>).
+          Advisories below are based on calendar signals only — run the forecast pipeline
+          to enable demand-driven recommendations.
+        </div>
+      )}
+      {items.map((advisory, i) => (
+        <div
+          key={i}
+          className="card card__pad"
+          style={{ ...SEVERITY_STYLE[advisory.severity], display: 'flex', gap: 14, alignItems: 'flex-start' }}
+        >
+          <span style={{ flexShrink: 0, marginTop: 2, color: advisory.severity === 'high' ? 'var(--warn)' : 'var(--muted)' }}>
+            <Icon name={TYPE_ICON[advisory.type] || 'bell'} size={18} />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--text)', marginBottom: 3 }}>
+              {advisory.title}
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.5 }}>
+              {advisory.description}
+            </div>
+            {advisory.date_range && (
+              <div className="hint" style={{ marginTop: 6 }}>
+                {advisory.date_range[0] === advisory.date_range[1]
+                  ? advisory.date_range[0]
+                  : `${advisory.date_range[0]} → ${advisory.date_range[1]}`}
+              </div>
+            )}
+          </div>
+          <span
+            className={`tag tag--${advisory.severity === 'high' ? 'warn' : advisory.severity === 'medium' ? 'gold' : 'info'}`}
+            style={{ flexShrink: 0 }}
+          >
+            {advisory.severity}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

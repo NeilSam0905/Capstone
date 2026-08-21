@@ -96,7 +96,8 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 
-DB_PATH = "ustore.db"
+import os
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ustore.db")
 HORIZON_DAYS = 30
 MCMC_SAMPLES = 1000
 MAPE_PASS_THRESHOLD = 20.0
