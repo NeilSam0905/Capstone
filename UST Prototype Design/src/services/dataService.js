@@ -20,11 +20,19 @@
 const API_BASE = '/api';
 
 async function request(method, path, body) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    throw new Error(
+      'Cannot reach the backend. Make sure the Flask server is running on :5000 '
+      + '(cd backend && python app.py).'
+    );
+  }
   // Validation failures come back as 400 with a { ok:false, errors } body,
   // which callers already handle - only a response with no JSON body at
   // all (network error, backend down) should throw.
@@ -100,7 +108,9 @@ export const getFsnSensitivity = () => get('/fsn/sensitivity');
 
 export const getForecast = () => get('/forecast');
 export const getForecastMetrics = () => get('/forecast');
+export const getProductForecast = productId => get(`/forecast/${productId}`);
 export const getReorderAlerts = () => get('/reorder');
+export const getAdvisories = () => get('/advisories');
 
 /** Stock position IS available for the items inventory covers — real
  *  counts and step2's days_of_supply. It carries no ROP, so it cannot say

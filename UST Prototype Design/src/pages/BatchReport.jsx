@@ -39,11 +39,13 @@ export default function BatchReport() {
           </div>
         </div>
         <div className="btn-row">
-          {/* TODO: backend — export/print are Phase 3 (server-rendered PDF) */}
-          <button className="btn btn--ghost" disabled title="PDF export arrives with the Phase 3 backend">
+          {/* Server-rendered PDF is not implemented: it needs a native PDF
+             dependency (weasyprint/reportlab) that's fragile on Windows.
+             Deferred rather than half-built — see backend/README.md. */}
+          <button className="btn btn--ghost" disabled title="PDF export not yet implemented">
             <Icon name="printer" size={14} /> Print Preview
           </button>
-          <button className="btn btn--ink" disabled title="PDF export arrives with the Phase 3 backend">
+          <button className="btn btn--ink" disabled title="PDF export not yet implemented">
             <Icon name="download" size={14} /> Export as PDF
           </button>
         </div>
@@ -61,7 +63,7 @@ export default function BatchReport() {
           <div style={{ textAlign: 'right' }}>
             <div className="hint">Period</div>
             <div style={{ fontWeight: 800, fontSize: 14 }}>{selected ? longMonth(selected) : '—'}</div>
-            {meta && <div className="hint" style={{ marginTop: 3 }}>Fixtures generated: {meta.generated_at}</div>}
+            {meta && <div className="hint" style={{ marginTop: 3 }}>As of: {meta.generated_at}</div>}
           </div>
         </div>
       </div>
@@ -121,9 +123,8 @@ export default function BatchReport() {
           <div className="card card__pad">
             <div className="card-h" style={{ marginBottom: 0, alignItems: 'flex-start' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {/* TODO: backend — Phase 3 serves this straight from the star schema */}
                 <div className="hint" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                  <Icon name="file" size={12} /> Source: local fixtures generated from the SQLite star schema
+                  <Icon name="file" size={12} /> Source: {meta?.source ?? 'ustore.db'} (live API)
                 </div>
                 <div className="hint">Period: {selected ? longMonth(selected) : '—'}</div>
                 <div className="hint">Prepared for: UST Purchasing Office / Finance Department</div>

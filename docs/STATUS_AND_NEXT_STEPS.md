@@ -101,6 +101,10 @@ Carried forward from `CHANGES_tyrone.md` §8, with status updated where this ses
 
 ## 4. Next task: Phase 6 — Power BI dashboard
 
+> The chart-by-chart build spec (exact fields, filters, colour tokens, SQLite-connection
+> options) that turns the table below into an actual `.pbix` is in
+> `docs/POWERBI_DASHBOARD_PLAN.md`.
+
 Per `USTore_Build_Plan.pdf` (Phase 6) and the build plan's own principle: **Power BI does not run
 Prophet, EOQ, or any other model — everything is computed in Python and written to `ustore.db`
 result tables first.** The dashboard is a read-only presentation layer over:

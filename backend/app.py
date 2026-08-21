@@ -471,25 +471,223 @@ def add_event():
 
 # -------------------------------------------------------------- forecast
 
+def _has_forecast_table(c):
+    tables = {r[0] for r in c.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    return "Result_Forecast" in tables and c.execute(
+        "SELECT COUNT(*) FROM Result_Forecast").fetchone()[0] > 0
+
+
 _FORECAST_PENDING = {
     "available": False,
     "reason": "step4_prophet_forecast.py has not been re-run (needs cmdstan); "
-              "Result_Forecast does not exist in the database.",
+               "Result_Forecast does not exist in the database.",
     "data": None,
 }
 
 
 @app.get("/api/forecast")
 def get_forecast_general():
-    # dataService.js's getForecast()/getForecastMetrics() call this with no
-    # product id - the answer is the same for every SKU until Result_Forecast
-    # exists at all, so there's nothing per-product to look up yet.
-    return jsonify(_FORECAST_PENDING)
+    c = con()
+    if not _has_forecast_table(c):
+        return jsonify(_FORECAST_PENDING)
+    # Return a summary: list of product_ids that have forecasts
+    products_with_forecast = dbmod.rows(c, """
+        SELECT DISTINCT rf.product_id, p.item_name, p.fsn_class, p.is_hvl,
+               rf.model_type, rf.is_heuristic, rf.snapshot_date
+        FROM Result_Forecast rf
+        JOIN Dim_Product p ON p.product_id = rf.product_id
+        GROUP BY rf.product_id
+    """)
+    return jsonify({
+        "available": True,
+        "reason": None,
+        "data": {
+            "product_count": len(products_with_forecast),
+            "products": products_with_forecast,
+        },
+    })
 
 
 @app.get("/api/forecast/<int:product_id>")
 def get_forecast(product_id):
-    return jsonify(_FORECAST_PENDING)
+    c = con()
+    if not _has_forecast_table(c):
+        return jsonify(_FORECAST_PENDING)
+
+    forecast_rows = dbmod.rows(c, """
+        SELECT forecast_date, yhat, yhat_lower, yhat_upper,
+               model_type, is_heuristic, snapshot_date
+        FROM Result_Forecast
+        WHERE product_id = ?
+        ORDER BY forecast_date
+    """, (product_id,))
+
+    if not forecast_rows:
+        return jsonify({
+            "available": False,
+            "reason": f"No forecast exists for product {product_id}.",
+            "data": None,
+        })
+
+    # Metrics from Result_Forecast_Metrics
+    tables = {r[0] for r in c.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    metrics = []
+    if "Result_Forecast_Metrics" in tables:
+        metrics = dbmod.rows(c, """
+            SELECT tier, validation_method, period_scope, n_obs,
+                   mae, rmse, mape, naive_mae, naive_rmse, naive_mape,
+                   beats_naive_mae, meets_mape_threshold, snapshot_date
+            FROM Result_Forecast_Metrics
+            WHERE product_id = ?
+        """, (product_id,))
+
+    product = dbmod.one(c,
+        "SELECT item_name, fsn_class, is_hvl FROM Dim_Product WHERE product_id = ?",
+        (product_id,))
+
+    return jsonify({
+        "available": True,
+        "reason": None,
+        "data": {
+            "product_id": product_id,
+            "item_name": product["item_name"] if product else None,
+            "fsn_class": product["fsn_class"] if product else None,
+            "is_hvl": product["is_hvl"] if product else 0,
+            "model_type": forecast_rows[0]["model_type"],
+            "is_heuristic": bool(forecast_rows[0]["is_heuristic"]),
+            "snapshot_date": forecast_rows[0]["snapshot_date"],
+            "forecast": forecast_rows,
+            "metrics": metrics,
+        },
+    })
+
+
+# ------------------------------------------------------------ advisories
+
+@app.get("/api/advisories")
+def get_advisories():
+    """Calendar-contextual advisories: combine demand forecast (if any) with
+    upcoming calendar events to produce actionable stocking recommendations.
+    Returns an honest pending shape when the forecast hasn't been generated."""
+    c = con()
+    has_forecast = _has_forecast_table(c)
+
+    # Upcoming events from Event_Log
+    upcoming_events = dbmod.rows(c, """
+        SELECT e.event_date, e.event_name, e.event_description,
+               d.is_enrollment_period, d.is_exam_week, d.is_sem_break,
+               d.semester_id, d.semester_week
+        FROM Event_Log e
+        LEFT JOIN Dim_Date d ON d.calendar_date = e.event_date
+        WHERE e.event_date >= date('now')
+        ORDER BY e.event_date
+        LIMIT 10
+    """)
+
+    # Upcoming calendar periods (enrollment, exams) from Dim_Date
+    upcoming_periods = dbmod.rows(c, """
+        SELECT calendar_date, semester_id, semester_week,
+               is_enrollment_period, is_exam_week, is_event_day, is_sem_break
+        FROM Dim_Date
+        WHERE calendar_date >= date('now')
+          AND (is_enrollment_period = 1 OR is_exam_week = 1 OR is_event_day = 1)
+        ORDER BY calendar_date
+        LIMIT 30
+    """)
+
+    advisories = []
+
+    # Build advisories from calendar signals
+    period_types = {}
+    for row in upcoming_periods:
+        if row["is_enrollment_period"]:
+            period_types.setdefault("enrollment", []).append(row["calendar_date"])
+        if row["is_exam_week"]:
+            period_types.setdefault("exam_week", []).append(row["calendar_date"])
+
+    if "enrollment" in period_types:
+        dates = period_types["enrollment"]
+        advisories.append({
+            "type": "enrollment",
+            "severity": "high",
+            "title": "Enrollment Period Approaching",
+            "description": f"Enrollment runs {dates[0]} to {dates[-1]}. "
+                           "Historically the highest-volume sales window — "
+                           "ensure Fast-moving items (uniforms, IDs, school supplies) are stocked.",
+            "date_range": [dates[0], dates[-1]],
+            "has_forecast": has_forecast,
+        })
+
+    if "exam_week" in period_types:
+        dates = period_types["exam_week"]
+        advisories.append({
+            "type": "exam_week",
+            "severity": "medium",
+            "title": "Exam Week Upcoming",
+            "description": f"Exams scheduled {dates[0]} to {dates[-1]}. "
+                           "Expect reduced foot traffic; delay non-urgent restocking.",
+            "date_range": [dates[0], dates[-1]],
+            "has_forecast": has_forecast,
+        })
+
+    for event in upcoming_events:
+        advisories.append({
+            "type": "event",
+            "severity": "medium",
+            "title": event["event_name"],
+            "description": event["event_description"] or
+                           f"Event on {event['event_date']}. Check stock for high-demand items.",
+            "date_range": [event["event_date"], event["event_date"]],
+            "has_forecast": has_forecast,
+        })
+
+    # If forecast exists, add top fast-movers that may need restocking
+    if has_forecast:
+        # Get fast-moving items with low projected supply
+        fast_items = dbmod.rows(c, """
+            SELECT p.item_name, p.product_id,
+                   SUM(rf.yhat) AS total_forecast_30d
+            FROM Result_Forecast rf
+            JOIN Dim_Product p ON p.product_id = rf.product_id
+            WHERE p.fsn_class = 'F'
+            GROUP BY rf.product_id
+            ORDER BY total_forecast_30d DESC
+            LIMIT 5
+        """)
+        if fast_items:
+            names = ", ".join(i["item_name"] for i in fast_items[:3])
+            advisories.insert(0, {
+                "type": "forecast_alert",
+                "severity": "high",
+                "title": "Top Forecasted Demand — Next 30 Days",
+                "description": f"Highest projected demand: {names}. "
+                               "Review stock levels against the forecast on the Demand Forecast page.",
+                "date_range": None,
+                "has_forecast": True,
+                "top_items": fast_items,
+            })
+
+    if not advisories:
+        advisories.append({
+            "type": "info",
+            "severity": "low",
+            "title": "No upcoming calendar signals",
+            "description": "No enrollment, exam weeks, or flagged events are coming up. "
+                           "Advisories appear here when calendar signals exist."
+                           + ("" if has_forecast
+                              else " The demand forecast has not been generated yet — "
+                                   "run step4_prophet_forecast.py to enable forecast-based advisories."),
+            "date_range": None,
+            "has_forecast": has_forecast,
+        })
+
+    return jsonify({
+        "available": True,
+        "has_forecast": has_forecast,
+        "advisories": advisories,
+    })
 
 
 if __name__ == "__main__":

@@ -1,18 +1,16 @@
-# BACKEND_TODO — what Phase 3 has to build
+# BACKEND_TODO — the API contract Phase 3 implements
 
-Phase 1 wired this frontend to a mock data layer. Every screen reads through
-`src/services/dataService.js`; **no screen touches data directly**. Phase 3
-replaces the body of each function in that one file with an HTTP call. If you
-find yourself editing a page component to get the backend in, something has
-gone wrong — the seam is in the service.
+**Status: done.** `../backend` (Flask + SQLite) implements everything below
+against the real `ustore.db`; `dataService.js` calls it directly. Kept as the
+endpoint-contract reference `backend/README.md` points to — not a live TODO
+list any more. The three throwaway items originally named here
+(`src/services/fixtures/*.json`, `src/services/tallyStore.js`, the
+`LATENCY_MS` shim) have all been deleted; every screen reads and writes the
+live API with no client-side fallback state.
 
-Three things are throwaway and must be replaced, not extended:
-
-1. `src/services/fixtures/*.json` — generated snapshots, not a database.
-2. `src/services/tallyStore.js` — localStorage. Per-browser, unauthenticated,
-   trivially editable. **Nothing written through it is a record of anything.**
-3. The `LATENCY_MS` shim in `dataService.js` — a fake delay so loading states
-   are exercised. Delete it when real requests provide the latency.
+Original framing kept below for context: this documents what Phase 1's mock
+data layer (`src/services/dataService.js`, one function per concern, no
+screen touching data directly) needed on the other side of that seam.
 
 ---
 

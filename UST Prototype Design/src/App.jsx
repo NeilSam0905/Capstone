@@ -8,6 +8,9 @@ import BatchReport from './pages/BatchReport';
 import TallyInterface from './pages/TallyInterface';
 import PowerBIDashboard from './pages/PowerBIDashboard';
 import Icon from './components/Icon';
+import ErrorBanner from './components/ErrorBanner';
+import useData from './hooks/useData';
+import { getMeta } from './services/dataService';
 import brandMark from './assets/ustore-mark.png';
 
 // Shell markup and class names come from the redesign prototype
@@ -41,8 +44,17 @@ export default function App() {
   const [view, setView] = useState('tally');
   const [page, setPage] = useState('overview');
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
-
   if (view === 'tally') return <TallyInterface setView={setView} />;
+
+  // Dashboard-shell connectivity probe. If the backend is down, this is
+  // what tells the user why every widget below is stuck loading — without
+  // it, a failed fetch just leaves every screen spinning with no reason
+  // given (dataService.js's request() throws a specific message for this).
+  return <Dashboard page={page} setPage={setPage} filters={filters} setFilters={setFilters} setView={setView} />;
+}
+
+function Dashboard({ page, setPage, filters, setFilters, setView }) {
+  const { error: connectionError } = useData(getMeta, []);
 
   const PageComponent = {
     overview:       Overview,
@@ -88,6 +100,7 @@ export default function App() {
       <div className="main">
         <FilterBar filters={filters} setFilters={setFilters} pageTitle={PAGE_TITLES[page]} />
         <div className="scroll">
+          {connectionError && <ErrorBanner error={connectionError} />}
           <PageComponent filters={filters} />
         </div>
       </div>

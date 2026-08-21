@@ -6,6 +6,7 @@ import {
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import DataTable from '../components/DataTable';
+import ErrorBanner from '../components/ErrorBanner';
 import Icon from '../components/Icon';
 import { num } from '../lib/format';
 import brandMark from '../assets/ustore-mark.png';
@@ -27,7 +28,7 @@ export default function TallyInterface({ setView }) {
 
   const { data: products } = useData(getSellableProducts, [], []);
   const { data: recent, loading: recentLoading } = useData(() => getRecentEntries(25), [reloadKey], []);
-  const { data: meta } = useData(getMeta, []);
+  const { data: meta, loading: metaLoading, error: connectionError } = useData(getMeta, []);
 
   return (
     <div className="tally-wrap">
@@ -45,11 +46,12 @@ export default function TallyInterface({ setView }) {
       </header>
 
       <div className="tally-body">
+        {connectionError && <ErrorBanner error={connectionError} />}
         <EntryForm products={products} onSaved={bump} />
         <CalendarControls onSaved={bump} reloadKey={reloadKey} />
         <RecentEntries entries={recent} loading={recentLoading} />
         <ByDate reloadKey={reloadKey} />
-        <PipelineFooter meta={meta} />
+        <PipelineFooter meta={meta} loading={metaLoading} />
       </div>
     </div>
   );
@@ -311,16 +313,27 @@ function ByDate({ reloadKey }) {
   );
 }
 
-function PipelineFooter({ meta }) {
+function PipelineFooter({ meta, loading }) {
+  // Three real states, not two: `meta` is falsy both while the first
+  // request is still in flight AND after it's failed - collapsing those
+  // into one "disconnected" badge is what flashed a false "disconnected"
+  // on every normal page load before the fetch had even resolved.
+  const status = meta ? 'connected' : loading ? 'connecting…' : 'disconnected';
+  const tone = meta ? 'tag--ok' : loading ? 'tag--warn' : 'tag--crit';
   return (
     <div className="card statusbar">
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Icon name="db" size={13} />
-        {/* TODO: backend — this reports the fixture build, not a live connection */}
-        Data source: <b>local fixtures</b>
-        {meta && <span className="muted">· generated {meta.generated_at} from {num(meta.fact_sales_rows)} Fact_Sales rows</span>}
+        {meta ? (
+          <>
+            Data source: <b>{meta.source}</b>
+            <span className="muted">· {num(meta.fact_sales_rows)} Fact_Sales rows</span>
+          </>
+        ) : (
+          <>Data source: <b>ustore.db</b></>
+        )}
       </span>
-      <span className="tag tag--warn">Entries stay in this browser until the Phase 3 backend exists</span>
+      <span className={`tag ${tone}`}>{status}</span>
     </div>
   );
 }
