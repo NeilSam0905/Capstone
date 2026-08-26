@@ -96,6 +96,16 @@ export const getProductHistory = productId => get(`/products/${productId}/histor
  *  §3.2's batch sales report: internal reporting, not a customer document. */
 export const getBatchReport = month => get(`/reports/batch${qs({ month })}`);
 
+/** URL of the server-rendered PDF for one month ('YYYY-MM').
+ *
+ *  Returns a URL rather than fetching, because the browser has to do the
+ *  navigating: `inline` opens it in the PDF viewer (Print Preview), the
+ *  default sends Content-Disposition: attachment (Export as PDF). Building it
+ *  here keeps API_BASE in this module, per the rule that no screen constructs
+ *  an API path of its own. */
+export const batchReportPdfUrl = (month, { inline = false } = {}) =>
+  `${API_BASE}/reports/batch.pdf?month=${encodeURIComponent(month)}${inline ? '&inline=1' : ''}`;
+
 // ---------------------------------------------------------------- FSN
 
 export const getFsnSensitivity = () => get('/fsn/sensitivity');

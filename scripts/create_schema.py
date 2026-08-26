@@ -219,6 +219,80 @@ CREATE TABLE IF NOT EXISTS Result_Prescriptive (
 """)
 
 
+# ----- OPERATIONAL TABLE: Inventory_Count --------------------------
+# Staff-entered monthly stock counts, written from the Digital Tallying
+# Interface's "Monthly Inventory Count" card. One row per product per
+# month; re-submitting the same pair overwrites it (see the UNIQUE
+# constraint below), because a recount corrects a count, it does not add
+# to it.
+#
+# This does NOT reintroduce Dim_Inventory. §3.2 omits that deliberately -
+# stock on a given DAY stays derived (beginning stock minus cumulative
+# units), which is what would have made it a rapidly-changing dimension.
+# What this table holds is the same thing the inventory workbook holds:
+# a periodic count, at month granularity, of the kind the store already
+# takes by hand. It is the digital counterpart of
+# data/USTore_inventory_excel_long_mapped.csv, whose coverage is the
+# project's biggest data gap (Block 3/B10: only ~17% of Fact_Sales rows
+# have any stock signal, and the workbook stops at 2026-04).
+#
+# Operational, outside the star, like Event_Log and Closure_Log: no ETL
+# step reads it and no pipeline step clears it.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Inventory_Count (
+    count_id      INTEGER PRIMARY KEY,
+    product_id    INTEGER NOT NULL,
+    count_month   TEXT    NOT NULL,   -- 'YYYY-MM'
+    quantity      INTEGER NOT NULL,   -- units on hand at the count
+    note          TEXT,
+    counted_by    TEXT,
+    date_logged   TEXT,
+    UNIQUE (product_id, count_month),
+    FOREIGN KEY (product_id) REFERENCES Dim_Product (product_id)
+);
+""")
+
+# ----- OPERATIONAL TABLE: Pipeline_Run -----------------------------
+# One row per end-to-end pipeline run (create_schema.py ->
+# step5_prescriptive.py), written by backend/pipeline.py when the Tally
+# Interface's "Run Full Pipeline" button is used.
+#
+# Its job is the staleness warning on that screen. Everything the
+# Digital Tallying Interface writes - a tally entry, a flagged event, a
+# store closure - lands in the database immediately, but the ANALYTICS
+# derived from it (fsn_class, Result_Forecast, Result_Prescriptive) are
+# only recomputed when the pipeline runs. Without a record of when that
+# last happened, the dashboard has no way to tell the difference between
+# "these reorder points are current" and "these reorder points predate
+# the last three weeks of tallying".
+#
+# The high-water marks are how "since the last run" is measured without
+# adding a created_at column to Fact_Sales: every table below has a
+# monotonic INTEGER PRIMARY KEY, so anything with a larger id than the
+# mark arrived after the run finished. Fact_Sales rows loaded BY the
+# pipeline are tally_date_flag=1 and manual ones are 0, so the count
+# that matters is "tally_date_flag = 0 AND sale_id > mark".
+#
+# Not part of the star schema and deliberately outside it - like
+# Event_Log and Closure_Log, it is an operational log, and no ETL step
+# reads it. It is also the one table the pipeline never clears.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Pipeline_Run (
+    run_id            INTEGER PRIMARY KEY,
+    started_at        TEXT    NOT NULL,   -- ISO 8601 local time
+    finished_at       TEXT,
+    status            TEXT    NOT NULL,   -- running | done | error | cancelled
+    trigger_source    TEXT,               -- 'frontend' (the Tally Interface button)
+    steps_ok          INTEGER,            -- steps that completed
+    steps_skipped     INTEGER,            -- optional steps that failed (step0 / step4)
+    steps_failed      INTEGER,
+    -- high-water marks at the moment the run finished
+    max_sale_id       INTEGER,
+    max_event_id      INTEGER,
+    max_closure_id    INTEGER
+);
+""")
+
 # Save all changes to the file
 connection.commit()
 

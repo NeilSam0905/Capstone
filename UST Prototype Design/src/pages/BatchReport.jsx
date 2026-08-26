@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getBatchReport, getMonths, getMeta } from '../services/dataService';
+import { getBatchReport, getMonths, getMeta, batchReportPdfUrl } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import Icon from '../components/Icon';
@@ -25,6 +25,19 @@ export default function BatchReport() {
   // reference data for supplier remittance.
   const grandUnits = report.reduce((s, r) => s + r.total_units, 0);
 
+  function downloadPdf() {
+    if (!selected) return;
+    // A temporary anchor rather than assigning location: the response carries
+    // Content-Disposition: attachment, so this downloads without navigating
+    // the app away and losing the current filter state.
+    const a = document.createElement('a');
+    a.href = batchReportPdfUrl(selected);
+    a.download = `USTore_Batch_Sales_Report_${selected}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
   return (
     <div className="stack">
       {/* Controls */}
@@ -39,13 +52,27 @@ export default function BatchReport() {
           </div>
         </div>
         <div className="btn-row">
-          {/* Server-rendered PDF is not implemented: it needs a native PDF
-             dependency (weasyprint/reportlab) that's fragile on Windows.
-             Deferred rather than half-built — see backend/README.md. */}
-          <button className="btn btn--ghost" disabled title="PDF export not yet implemented">
+          {/* Both hit the same server-rendered PDF (backend/batch_pdf.py, fpdf2
+             — pure Python, no native dependency, which is what had blocked
+             this). Preview opens it inline in the browser's PDF viewer;
+             Export sends it as a download. Rendering server-side rather than
+             printing the DOM means the document is identical however it was
+             produced, and carries its own header, page numbers and signature
+             block. */}
+          <button
+            className="btn btn--ghost"
+            disabled={!selected || loading}
+            onClick={() => window.open(batchReportPdfUrl(selected, { inline: true }), '_blank', 'noopener')}
+            title="Open the PDF in a new tab"
+          >
             <Icon name="printer" size={14} /> Print Preview
           </button>
-          <button className="btn btn--ink" disabled title="PDF export not yet implemented">
+          <button
+            className="btn btn--ink"
+            disabled={!selected || loading}
+            onClick={downloadPdf}
+            title="Download the PDF"
+          >
             <Icon name="download" size={14} /> Export as PDF
           </button>
         </div>
