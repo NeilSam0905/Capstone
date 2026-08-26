@@ -439,6 +439,9 @@ function RecentEntries({ entries, loading }) {
     <div className="card card__pad">
       <div className="card-h">
         <span className="section-h">Recent Entries</span>
+        <a className="btn btn--ghost btn--sm" href="/api/tally/export" download>
+          <Icon name="db" size={13} /> Export as CSV
+        </a>
       </div>
       {loading ? <Loading /> : <DataTable columns={columns} data={rows} pageSize={10} minWidth={760} />}
     </div>

@@ -20,6 +20,8 @@ Serves on http://127.0.0.1:5000. The frontend dev server proxies /api to
 this port (see vite.config.js) so no CORS is needed in normal dev use;
 flask-cors is enabled anyway as a fallback for direct access.
 """
+import csv
+import io
 from datetime import date, datetime
 
 from flask import Flask, Response, g, jsonify, request
@@ -646,6 +648,42 @@ def add_entry():
         "is_local": False,
     }
     return jsonify({"ok": True, "entry": entry})
+
+
+@app.get("/api/tally/export")
+def export_tally_csv():
+    """
+    Entries recorded through this tally interface (tally_date_flag = 0),
+    as a CSV in the same shape as the original source workbooks in
+    rawdata/: Date, Item, Total Quantity, Supplier - one row per
+    (date, item, supplier), quantities summed. Restricted to SALE
+    transactions, since that is what "Total Quantity" meant in those
+    workbooks; DAMAGED/PROMO/TRANSFER are a different kind of movement
+    and would misrepresent units actually sold if folded in.
+    """
+    rows = dbmod.rows(con(), """
+        SELECT d.calendar_date AS calendar_date, p.item_name AS item_name,
+               SUM(f.quantity_sold) AS total_quantity,
+               COALESCE(p.supplier_name, ?) AS supplier_name
+        FROM Fact_Sales f
+        JOIN Dim_Date d ON d.date_id = f.date_id
+        JOIN Dim_Product p ON p.product_id = f.product_id
+        WHERE f.tally_date_flag = 0 AND UPPER(f.transaction_type) = 'SALE'
+        GROUP BY d.calendar_date, p.item_name, p.supplier_name
+        ORDER BY d.calendar_date, p.item_name
+    """, (catalog.UNATTRIBUTED,))
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Date", "Item", "Total Quantity", "Supplier"])
+    for r in rows:
+        writer.writerow([r["calendar_date"], r["item_name"], r["total_quantity"], r["supplier_name"]])
+
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=tally_export.csv"},
+    )
 
 
 # ---------------------------------------------------------------- events
