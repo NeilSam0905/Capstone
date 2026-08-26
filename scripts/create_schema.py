@@ -44,10 +44,13 @@ CREATE TABLE IF NOT EXISTS Dim_Product (
     unit_price_php  REAL,
     -- Remediation S12: unit_price_php had exactly one source (inventory
     -- sheets) and inherited that source's coverage gap wholesale. This
-    -- records which of the two sources (or neither) supplied the value,
-    -- so a name-suffix fallback price is never silently indistinguishable
-    -- from a confirmed inventory price.
-    price_source    TEXT    CHECK (price_source IN ('inventory', 'name_suffix')
+    -- records which of the four sources (or none) supplied the value,
+    -- so a fallback price is never silently indistinguishable from a
+    -- confirmed inventory price. may2024_dsr = the May 2024 workbook's daily
+    -- sheets' RETAIL PRICE column; tbs_item_price = every workbook's TBS
+    -- sheets' own ITEM PRICE column (see step1_apply_mapping.py).
+    price_source    TEXT    CHECK (price_source IN
+                                   ('inventory', 'name_suffix', 'may2024_dsr', 'tbs_item_price')
                                    OR price_source IS NULL),
     -- supplier_name is the NORMALISED name from supplier_mapping.csv (42 raw
     -- strings -> 19 suppliers). The "(CONSIGNMENT)"/"(PAID)" suffix the raw
