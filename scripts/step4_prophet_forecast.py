@@ -378,9 +378,14 @@ def _append_forecast(product_id, model, future, model_type, is_heuristic, snapsh
 def main():
     con = sqlite3.connect(DB_PATH)
     create_result_tables(con)
-    con.execute("DELETE FROM Result_Forecast")
-    con.execute("DELETE FROM Result_Forecast_Metrics")
-    con.commit()
+    # The two DELETEs that used to sit here now live with the INSERTs at the
+    # bottom of this function, in one transaction. Clearing the results up
+    # front and only refilling them 1-2 hours later meant that anything which
+    # stopped the run in between - the Tally Interface's Stop button, a
+    # timeout, a crash, a closed laptop - left Result_Forecast empty and the
+    # Demand Forecast screen showing "pending" with no way back except sitting
+    # through another full run. The previous forecasts now survive an
+    # interrupted run and are replaced only once new ones exist.
 
     products, fact, dim_date = load_common(con)
     # Tier sufficiency = distinct SALE-DAYS (quantity_sold > 0), not raw row
@@ -435,6 +440,10 @@ def main():
     forecast_df = pd.DataFrame(forecast_rows)
     metrics_df = pd.DataFrame(metric_rows)
 
+    # Clear + refill in a single transaction: on any failure below, SQLite
+    # rolls back to the previous run's forecasts rather than to nothing.
+    con.execute("DELETE FROM Result_Forecast")
+    con.execute("DELETE FROM Result_Forecast_Metrics")
     con.executemany(
         """INSERT INTO Result_Forecast
            (product_id, forecast_date, yhat, yhat_lower, yhat_upper, model_type, is_heuristic, snapshot_date)

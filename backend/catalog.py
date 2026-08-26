@@ -21,9 +21,10 @@ ALL_CATEGORIES = "All Categories"
 UNATTRIBUTED = "Unattributed"
 
 
-def load_current_stock():
-    """Latest inventory count per canonical item name. The only stock
-    signal this project has; covers a minority of products (Block 3)."""
+def load_csv_stock():
+    """Latest inventory count per canonical item name, from the historical
+    inventory workbook. Covers a minority of products and stops at the
+    workbook's last month (Block 3/B10)."""
     if not INVENTORY_CSV.exists():
         return {}
     latest = {}
@@ -42,6 +43,51 @@ def load_current_stock():
             if month == latest[item]["month"]:
                 latest[item]["qty"] += qty
     return latest
+
+
+def load_counted_stock(con):
+    """Latest staff-entered monthly count per product_id, from the Digital
+    Tallying Interface's inventory card (Inventory_Count)."""
+    if not con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Inventory_Count'"
+    ).fetchone():
+        return {}
+    return {
+        r["product_id"]: {"month": r["count_month"], "qty": float(r["quantity"])}
+        for r in rows(con, """
+            SELECT product_id, count_month, quantity
+              FROM Inventory_Count
+             WHERE (product_id, count_month) IN (
+                   SELECT product_id, MAX(count_month) FROM Inventory_Count GROUP BY product_id)
+        """)
+    }
+
+
+def load_current_stock(con, name_by_id):
+    """The one current-stock number per product, from the two sources this
+    project has: the historical inventory workbook and staff counts typed
+    into the interface.
+
+    **The more recent month wins, and a tie goes to the staff count.** A
+    count someone took this month is better evidence than a workbook row
+    from the same month, and the workbook does not extend past its last
+    export - so once the store is entering counts, they take over naturally
+    without a switch to flip.
+
+    Keyed by product_id on the way out (the CSV side is keyed by canonical
+    item name, which is what it has)."""
+    csv_stock = load_csv_stock()
+    counted = load_counted_stock(con)
+
+    out = {}
+    for pid, name in name_by_id.items():
+        from_csv = csv_stock.get(name)
+        from_staff = counted.get(pid)
+        if from_staff and (not from_csv or from_staff["month"] >= from_csv["month"]):
+            out[pid] = {**from_staff, "source": "counted"}
+        elif from_csv:
+            out[pid] = {**from_csv, "source": "workbook"}
+    return out
 
 
 def compute_stats(con):
@@ -88,7 +134,7 @@ def compute_stats(con):
             dos_date[pid] = r["calendar_date"]
             dos[pid] = r["days_of_supply"]
 
-    stock = load_current_stock()
+    stock = load_current_stock(con, name_by_id)
 
     stats = {}
     for a in agg:
@@ -97,7 +143,7 @@ def compute_stats(con):
         units_by_month = [m["units"] for m in series[pid]]
         sigma = statistics.pstdev(units_by_month) if len(units_by_month) > 1 else 0.0
         mean_month = sum(units_by_month) / len(units_by_month) if units_by_month else 0.0
-        st = stock.get(name_by_id.get(pid))
+        st = stock.get(pid)
         stats[pid] = {
             "product_id": pid,
             "total_units": a["total_units"],
@@ -112,6 +158,7 @@ def compute_stats(con):
             "last_sale": a["last_sale"],
             "current_stock": int(st["qty"]) if st else None,
             "stock_as_of": st["month"] if st else None,
+            "stock_source": st["source"] if st else None,
             "days_of_supply": round(dos[pid], 1) if pid in dos else None,
         }
     return stats, series
@@ -143,6 +190,7 @@ def compute_catalog(con):
             "censored_days": s.get("censored_days", 0),
             "current_stock": s.get("current_stock"),
             "stock_as_of": s.get("stock_as_of"),
+            "stock_source": s.get("stock_source"),
             "days_of_supply": s.get("days_of_supply"),
             "first_sale": s.get("first_sale"),
             "last_sale": s.get("last_sale"),

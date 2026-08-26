@@ -635,6 +635,29 @@ const IDLE_STEPS = [
   optional: label.includes('Forecast') || label.includes('raw tally sheets'),
 }));
 
+/** One failed or skipped step, as a sentence rather than a stack trace.
+ *
+ *  The backend reduces each failure to a plain-language line (see
+ *  pipeline.py's _summarise_error) and keeps the raw stderr in
+ *  `error_detail`. Showing the traceback by default meant the commonest
+ *  outcome of all - step0 finding no rawdata/ folder, which is not a problem
+ *  and does not affect the results - was reported as thirty lines of
+ *  interpreter frames ending in a FileNotFoundError. The frames are still one
+ *  click away for whoever wants them. */
+function StepProblem({ step }) {
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div><b>{step.label}:</b> {step.error}</div>
+      {step.error_detail && (
+        <details style={{ marginTop: 4 }}>
+          <summary className="hint" style={{ cursor: 'pointer' }}>Technical details</summary>
+          <pre className="pipeline-log" style={{ marginTop: 6 }}>{step.error_detail}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function PipelineRunner({ onChanged }) {
   const [pipelineStatus, setPipelineStatus] = useState(null);
   const [starting, setStarting] = useState(false);
@@ -785,17 +808,19 @@ function PipelineRunner({ onChanged }) {
       )}
 
       {failures.length > 0 && (
-        <div className="notice notice--warn" style={{ marginTop: 12, whiteSpace: 'pre-wrap' }}>
-          {failures.map(s => `${s.label}: ${s.error}`).join('\n\n')}
+        <div className="notice notice--warn" style={{ marginTop: 12 }}>
+          <b>The run stopped here.</b>
+          {failures.map(s => <StepProblem key={s.id} step={s} />)}
         </div>
       )}
 
       {skipped.length > 0 && (
         <div className="notice notice--info" style={{ marginTop: 12 }}>
-          <b>Optional step(s) skipped — the run completed without them.</b>
-          <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}>
-            {skipped.map(s => `${s.label}: ${s.error}`).join('\n\n')}
-          </div>
+          <b>
+            {skipped.length === 1 ? 'One optional step was' : `${skipped.length} optional steps were`}
+            {' '}skipped — the run completed without {skipped.length === 1 ? 'it' : 'them'}.
+          </b>
+          {skipped.map(s => <StepProblem key={s.id} step={s} />)}
         </div>
       )}
     </div>

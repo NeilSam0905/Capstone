@@ -1,2 +1,5 @@
 flask==3.1.0
 flask-cors==5.0.0
+# Batch Sales Report PDF export (backend/batch_pdf.py). Pure Python - no
+# system libraries, unlike weasyprint (GTK/Pango/Cairo) or reportlab (C ext).
+fpdf2==2.8.7

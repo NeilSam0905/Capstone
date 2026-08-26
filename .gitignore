@@ -1,4 +1,8 @@
 ustore.db
+# WAL sidecars (backend/db.py opens the database in WAL mode); they exist
+# only while something has it open, and are machine-local like the db itself.
+ustore.db-wal
+ustore.db-shm
 __pycache__/
 *.pyc
 .venv/

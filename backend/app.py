@@ -22,9 +22,10 @@ flask-cors is enabled anyway as a fallback for direct access.
 """
 from datetime import date, datetime
 
-from flask import Flask, g, jsonify, request
+from flask import Flask, Response, g, jsonify, request
 from flask_cors import CORS
 
+import batch_pdf
 import catalog
 import db as dbmod
 import pipeline
@@ -49,6 +50,19 @@ def _close_con(_exc):
 
 def _bool_flag(v):
     return request.args.get(v) in ("1", "true", "True")
+
+
+def _us_date(iso):
+    """'2026-10-09' -> '10/09/2026', for dates baked into prose the frontend
+    renders as-is. Structured date fields stay ISO - the frontend formats
+    those itself (lib/format.js usDate) and anything feeding an API call or an
+    <input type="date"> must remain ISO. This is only for the advisory
+    `description` strings, which are sentences, not data."""
+    try:
+        y, m, d = str(iso).split("-")
+        return f"{m}/{d}/{y}" if len(y) == 4 else str(iso)
+    except (ValueError, AttributeError):
+        return str(iso)
 
 
 # --------------------------------------------------------------- metadata
@@ -98,9 +112,14 @@ def get_meta():
             "forecast": bool(has_forecast),
             "reorder": n_params > 0 and n_reorder > 0,
         },
+        # Only populated when the thing is actually pending. This used to be a
+        # fixed string blaming a missing cmdstan build, rendered even on
+        # databases that had forecasts in them. Both halves were wrong: recent
+        # prophet releases ship their own cmdstan, so a missing forecast means
+        # step4 has not been run (it is the long, opt-out step in the Tally
+        # Interface's pipeline runner), not that it cannot be.
         "pending_reason": {
-            "forecast": "step4_prophet_forecast.py has not been re-run (needs cmdstan); "
-                        "Result_Forecast does not exist in the database.",
+            "forecast": None if has_forecast else FORECAST_PENDING_REASON,
             "reorder": "Dim_Parameters is empty - no lead times, ordering or holding costs "
                        "have been collected yet (Block 5, the USTore site visit)."
                        if not (n_params > 0 and n_reorder > 0) else None,
@@ -184,12 +203,11 @@ def get_monthly_units():
     return jsonify(sorted(by_month.values(), key=lambda a: a["month"]))
 
 
-@app.get("/api/reports/batch")
-def get_batch_report():
-    c = con()
-    month = request.args.get("month")
-    if not month:
-        return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
+def build_batch_report(c, month):
+    """The month's sales grouped by supplier — the shared body of both
+    /api/reports/batch (JSON, for the screen) and /api/reports/batch.pdf
+    (the document Purchasing and Finance actually receive). Neither may
+    compute this differently from the other."""
     cat = catalog.compute_catalog(c)
     product_by_id = {p["product_id"]: p for p in cat}
 
@@ -229,7 +247,44 @@ def get_batch_report():
         entry["items"].sort(key=lambda i: i["quantity"], reverse=True)
         out.append(entry)
     out.sort(key=lambda e: e["subtotal"], reverse=True)
-    return jsonify(out)
+    return out
+
+
+@app.get("/api/reports/batch")
+def get_batch_report():
+    month = request.args.get("month")
+    if not month:
+        return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
+    return jsonify(build_batch_report(con(), month))
+
+
+@app.get("/api/reports/batch.pdf")
+def get_batch_report_pdf():
+    """The batch sales report as a real PDF file.
+
+    Rendered server-side with **fpdf2**, chosen because it is pure Python with
+    no system libraries behind it. This is what previously blocked the feature:
+    weasyprint needs GTK/Pango/Cairo installed separately on Windows, and
+    reportlab pulls a C extension - neither is something a store's machine
+    should have to acquire to print a monthly report. fpdf2 installs from a
+    plain wheel and was already present in this environment.
+
+    `?inline=1` serves it for viewing in the browser (the Print Preview
+    button); the default is a download (Export as PDF).
+    """
+    month = request.args.get("month")
+    if not month or not validation.ISO_MONTH_RE.match(month):
+        return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
+
+    report = build_batch_report(con(), month)
+    pdf_bytes = batch_pdf.render(report, month)
+
+    disposition = "inline" if _bool_flag("inline") else "attachment"
+    filename = f"USTore_Batch_Sales_Report_{month}.pdf"
+    return Response(pdf_bytes, mimetype="application/pdf", headers={
+        "Content-Disposition": f'{disposition}; filename="{filename}"',
+        "Content-Length": str(len(pdf_bytes)),
+    })
 
 
 # -------------------------------------------------------------------- FSN
@@ -240,6 +295,22 @@ def get_fsn_sensitivity():
 
 
 # --------------------------------------------------------------- reorder
+
+# One tally/billing cycle. Matches the 30-day horizon the forecast targets
+# (§3.3.2) and the monthly supplier-remittance cycle the store already runs on,
+# so "enough to last until the next count" means the same thing in both places.
+REVIEW_PERIOD_DAYS = 30
+
+ORDER_QTY_NOTE = (
+    "Suggested quantity brings stock up to the reorder point plus "
+    f"{REVIEW_PERIOD_DAYS} days of demand at the observed rate. It is deliberately "
+    "not EOQ: under the provisional ordering/holding costs (Block 5/B9, still "
+    "estimates), EOQ works out larger than a whole year of demand for nearly "
+    "every SKU, so ordering it would mean buying years of stock. EOQ stays in "
+    "the table below as the theoretical figure, flagged where it exceeds annual "
+    "demand."
+)
+
 
 @app.get("/api/reorder")
 def get_reorder():
@@ -289,8 +360,69 @@ def get_reorder():
             "cost_at_double_eoq": r["cost_at_double_eoq"],
         }
 
+    # ---- what to actually do about it -------------------------------
+    # Joining stock here rather than leaving the frontend to do it: the
+    # order quantity below has to be derived from on-hand, and a screen must
+    # not invent an analytic the backend has not computed.
+    stats, _ = catalog.compute_stats(c)
+
+    for item in by_product.values():
+        st = stats.get(item["product_id"], {})
+        stock = st.get("current_stock")
+        add = item["avg_daily_demand"] or 0.0
+        rop = item["reorder_point"] or 0.0
+
+        item["current_stock"] = stock
+        item["stock_as_of"] = st.get("stock_as_of")
+        item["stock_source"] = st.get("stock_source")
+        item["days_cover_remaining"] = round(stock / add, 1) if (stock is not None and add > 0) else None
+        item["needs_reorder"] = stock is not None and stock <= rop
+        item["approaching_rop"] = stock is not None and rop < stock <= rop * 1.2
+
+        # Order-up-to quantity, NOT EOQ. See ORDER_QTY_NOTE: EOQ under the
+        # current provisional cost inputs comes out larger than a year of
+        # demand for essentially every SKU, so it cannot be handed to staff
+        # as "order this many". This is the textbook (s, S) alternative -
+        # bring stock up to the reorder point plus one review period of
+        # demand - and it uses only the three inputs that are actually
+        # measured here (on-hand, ADUS, lead time), not the two cost
+        # estimates that are still guesses.
+        target = rop + REVIEW_PERIOD_DAYS * add
+        item["order_up_to_level"] = round(target, 1)
+        item["suggested_order_qty"] = (
+            max(0, int(round(target - stock))) if item["needs_reorder"] else 0
+        )
+
+        for scen in item["scenarios"].values():
+            scen["exceeds_annual_demand"] = bool(
+                item["annual_demand"] and scen["eoq"] > item["annual_demand"]
+            )
+
     items = sorted(by_product.values(), key=lambda i: i["item_name"])
-    return jsonify({"available": True, "reason": None, "data": {"items": items}})
+    due = [i for i in items if i["needs_reorder"]]
+    eoq_over = sum(
+        1 for i in items if i["scenarios"].get("low_admin_cost", {}).get("exceeds_annual_demand")
+    )
+
+    return jsonify({
+        "available": True,
+        "reason": None,
+        "data": {
+            "items": items,
+            "summary": {
+                "priced_skus": len(items),
+                "with_stock_count": sum(1 for i in items if i["current_stock"] is not None),
+                "no_stock_count": sum(1 for i in items if i["current_stock"] is None),
+                "reorder_now": len(due),
+                "approaching_rop": sum(1 for i in items if i["approaching_rop"]),
+                "suggested_units_total": sum(i["suggested_order_qty"] for i in due),
+                "suppliers_affected": len({i["supplier_name"] for i in due if i["supplier_name"]}),
+                "review_period_days": REVIEW_PERIOD_DAYS,
+                "order_qty_note": ORDER_QTY_NOTE,
+                "eoq_exceeding_annual_demand": eoq_over,
+            },
+        },
+    })
 
 
 # ---------------------------------------------------------------- stock
@@ -304,6 +436,97 @@ def get_stock():
     items = [p for p in cat if catalog.matches(p, supplier, category) and p["current_stock"] is not None]
     items.sort(key=lambda p: (p["days_of_supply"] is None, p["days_of_supply"] or 0))
     return jsonify({"items": items, "covered": len(items), "total": len(cat)})
+
+
+# ------------------------------------------------------------ inventory
+
+@app.get("/api/inventory")
+def get_inventory_counts():
+    """Staff-entered stock counts for one month (?month=YYYY-MM), newest
+    first, joined to the product name so the table needs no second call.
+
+    Also returns `workbook_month`: the last month the historical inventory
+    workbook covers. The interface shows it so whoever is counting can see
+    where the existing data stops and what they are extending."""
+    month = request.args.get("month") or ""
+    if not validation.ISO_MONTH_RE.match(month):
+        return jsonify({"ok": False, "errors": {"count_month": "Month must be YYYY-MM."}}), 400
+
+    counts = dbmod.rows(con(), """
+        SELECT ic.count_id, ic.product_id, p.item_name, p.supplier_name, p.category,
+               ic.count_month, ic.quantity, ic.note, ic.date_logged
+          FROM Inventory_Count ic
+          JOIN Dim_Product p ON p.product_id = ic.product_id
+         WHERE ic.count_month = ?
+         ORDER BY ic.count_id DESC
+    """, (month,))
+    for r in counts:
+        r["supplier_name"] = r["supplier_name"] or catalog.UNATTRIBUTED
+
+    workbook = catalog.load_csv_stock()
+    return jsonify({
+        "month": month,
+        "counts": counts,
+        "total_units": sum(r["quantity"] for r in counts),
+        "workbook_month": max((v["month"] for v in workbook.values()), default=None),
+    })
+
+
+@app.post("/api/inventory")
+def add_inventory_count():
+    """Record (or correct) one product's stock count for one month.
+
+    Upsert, not append: `Inventory_Count` is UNIQUE on (product_id,
+    count_month), and a recount replaces the earlier figure rather than
+    adding to it. The response says which of the two happened so the
+    interface can tell the user it overwrote something."""
+    payload = request.get_json(silent=True) or {}
+    c = con()
+    errors = validation.validate_inventory_count(c, payload)
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+
+    product_id = int(payload["product_id"])
+    count_month = payload["count_month"]
+    quantity = int(float(payload["quantity"]))
+    note = (payload.get("note") or "").strip() or None
+
+    previous = dbmod.one(c, """
+        SELECT quantity FROM Inventory_Count WHERE product_id = ? AND count_month = ?
+    """, (product_id, count_month))
+
+    c.execute("""
+        INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged)
+        VALUES (?, ?, ?, ?, 'local', ?)
+        ON CONFLICT (product_id, count_month) DO UPDATE SET
+            quantity = excluded.quantity,
+            note = excluded.note,
+            date_logged = excluded.date_logged
+    """, (product_id, count_month, quantity, note, datetime.now().isoformat(timespec="seconds")))
+    c.commit()
+
+    product = dbmod.one(c, "SELECT item_name FROM Dim_Product WHERE product_id = ?", (product_id,))
+    return jsonify({
+        "ok": True,
+        "replaced": previous["quantity"] if previous else None,
+        "count": {
+            "product_id": product_id,
+            "item_name": product["item_name"],
+            "count_month": count_month,
+            "quantity": quantity,
+            "note": note,
+        },
+    })
+
+
+@app.delete("/api/inventory/<int:count_id>")
+def delete_inventory_count(count_id):
+    c = con()
+    if not dbmod.one(c, "SELECT 1 FROM Inventory_Count WHERE count_id = ?", (count_id,)):
+        return jsonify({"ok": False, "error": "No such inventory count."}), 404
+    c.execute("DELETE FROM Inventory_Count WHERE count_id = ?", (count_id,))
+    c.commit()
+    return jsonify({"ok": True})
 
 
 # -------------------------------------------------------------- calendar
@@ -479,10 +702,16 @@ def _has_forecast_table(c):
         "SELECT COUNT(*) FROM Result_Forecast").fetchone()[0] > 0
 
 
+# Wording is aimed at the person using the dashboard, not at whoever wrote the
+# ETL: from the frontend there is exactly one action that fixes this, and it is
+# the Tally Interface's pipeline runner.
+FORECAST_PENDING_REASON = (
+    "The pipeline has not been run yet, please run it from the tally interface and this page will automatically display the results."
+)
+
 _FORECAST_PENDING = {
     "available": False,
-    "reason": "step4_prophet_forecast.py has not been re-run (needs cmdstan); "
-               "Result_Forecast does not exist in the database.",
+    "reason": FORECAST_PENDING_REASON,
     "data": None,
 }
 
@@ -614,7 +843,7 @@ def get_advisories():
             "type": "enrollment",
             "severity": "high",
             "title": "Enrollment Period Approaching",
-            "description": f"Enrollment runs {dates[0]} to {dates[-1]}. "
+            "description": f"Enrollment runs {_us_date(dates[0])} to {_us_date(dates[-1])}. "
                            "Historically the highest-volume sales window — "
                            "ensure Fast-moving items (uniforms, IDs, school supplies) are stocked.",
             "date_range": [dates[0], dates[-1]],
@@ -627,7 +856,7 @@ def get_advisories():
             "type": "exam_week",
             "severity": "medium",
             "title": "Exam Week Upcoming",
-            "description": f"Exams scheduled {dates[0]} to {dates[-1]}. "
+            "description": f"Exams scheduled {_us_date(dates[0])} to {_us_date(dates[-1])}. "
                            "Expect reduced foot traffic; delay non-urgent restocking.",
             "date_range": [dates[0], dates[-1]],
             "has_forecast": has_forecast,
@@ -639,7 +868,7 @@ def get_advisories():
             "severity": "medium",
             "title": event["event_name"],
             "description": event["event_description"] or
-                           f"Event on {event['event_date']}. Check stock for high-demand items.",
+                           f"Event on {_us_date(event['event_date'])}. Check stock for high-demand items.",
             "date_range": [event["event_date"], event["event_date"]],
             "has_forecast": has_forecast,
         })
@@ -679,7 +908,8 @@ def get_advisories():
                            "Advisories appear here when calendar signals exist."
                            + ("" if has_forecast
                               else " The demand forecast has not been generated yet — "
-                                   "run step4_prophet_forecast.py to enable forecast-based advisories."),
+                                   "run the pipeline from the Tally Interface to enable "
+                                   "forecast-based advisories."),
             "date_range": None,
             "has_forecast": has_forecast,
         })
@@ -695,10 +925,22 @@ def get_advisories():
 
 @app.post("/api/pipeline/run")
 def run_pipeline():
-    started = pipeline.start_pipeline()
+    """Body (optional): {"skip": ["step4"]}, or the friendlier
+    {"include_forecast": false} the Tally Interface sends.
+
+    Only step4 can be opted out of (pipeline.SKIPPABLE) - it is the only step
+    that costs hours rather than seconds and the only one whose output no
+    later step reads. Everything else always runs, so a "quick" run still
+    produces a fully rebuilt database, FSN classes and reorder points."""
+    payload = request.get_json(silent=True) or {}
+    skip = set(payload.get("skip") or [])
+    if payload.get("include_forecast") is False:
+        skip.add("step4")
+
+    started = pipeline.start_pipeline(skip)
     if not started:
         return jsonify({"ok": False, "error": "The pipeline is already running."}), 409
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "skipped": sorted(skip & pipeline.SKIPPABLE)})
 
 
 @app.post("/api/pipeline/stop")
@@ -712,6 +954,18 @@ def stop_pipeline():
 @app.get("/api/pipeline/status")
 def pipeline_status():
     return jsonify(pipeline.get_status())
+
+
+@app.get("/api/pipeline/staleness")
+def pipeline_staleness():
+    """Whether the analytics on screen are older than what has been tallied.
+
+    Everything the Digital Tallying Interface writes lands in the database
+    immediately, but fsn_class / Result_Forecast / Result_Prescriptive are
+    only recomputed when the pipeline runs - so a screen can be showing
+    reorder points that predate a week of tally entries with nothing
+    indicating it. See pipeline.get_staleness()."""
+    return jsonify(pipeline.get_staleness(con()))
 
 
 if __name__ == "__main__":

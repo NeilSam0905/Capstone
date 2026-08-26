@@ -105,8 +105,10 @@ project's own benchmark finding that no SKU reaches MAPE ≤ 20%. Don't reintrod
   (product, date) entry is a correction or a second observation.
 - **The fixture generator** (`scripts/generate_fixtures.py`) can be retired once
   the API exists, or kept for offline demos.
-- **PDF export** on the Batch Sales Report is disabled in the UI and marked
-  `TODO: backend` — it should be server-rendered.
+- ~~**PDF export** on the Batch Sales Report is disabled in the UI~~ **Done,
+  and server-rendered as specified** — `GET /api/reports/batch.pdf?month=YYYY-MM`
+  (`backend/batch_pdf.py`, fpdf2). Both buttons are live: Print Preview opens
+  it inline, Export as PDF downloads it.
 - **BIR constraint carries over.** The API must not gain a checkout, a payment
   field, a customer total or a receipt endpoint. Unit prices are reference data
   for internal supplier remittance only.

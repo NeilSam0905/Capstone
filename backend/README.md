@@ -39,8 +39,10 @@ cd "UST Prototype Design" && npm run dev
   point of sale, that's a bug.
 - **No auth.** `Event_Log.created_by` is hardcoded `'local'`, matching the frontend's prior mock
   behaviour.
-- **No PDF export.** The batch sales report returns JSON; server-rendered PDF export is a
-  follow-up, not implemented here.
+- **PDF export is implemented.** `GET /api/reports/batch.pdf?month=YYYY-MM` renders the batch
+  sales report with `fpdf2` (`batch_pdf.py`) — pure Python, no system libraries, which is why it
+  is fpdf2 and not weasyprint or reportlab. `&inline=1` serves it for viewing instead of
+  downloading. It shares `build_batch_report()` with the JSON endpoint, so the two cannot drift.
 
 ## Endpoints
 
