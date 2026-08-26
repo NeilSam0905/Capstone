@@ -5,7 +5,7 @@ import KPICard from '../components/KPICard';
 import Pending, { Loading, PendingValue } from '../components/Pending';
 import { LineChart, Donut, HBars, FSNStat, StackBar } from '../components/charts';
 import Icon from '../components/Icon';
-import { num, shortMonth } from '../lib/format';
+import { num, shortMonth, usDate } from '../lib/format';
 
 export default function Overview({ filters }) {
   const { data: products, loading } = useData(() => getProducts(filters), [filters], []);
@@ -60,7 +60,7 @@ export default function Overview({ filters }) {
           accent
           label="Total Units Sold"
           value={num(totals.units)}
-          sub={meta ? `${meta.sales_span[0]} → ${meta.sales_span[1]}` : ''}
+          sub={meta ? `${usDate(meta.sales_span[0])} → ${usDate(meta.sales_span[1])}` : ''}
           icon="box"
         />
         <KPICard
@@ -94,9 +94,6 @@ export default function Overview({ filters }) {
             </div>
           </>
         ) : <span className="hint">Loading…</span>}
-        <span className="hint" style={{ marginLeft: 'auto' }}>
-          Reorder status needs a reorder point — see Reorder Alerts
-        </span>
       </div>
 
       {/* Trend + category mix */}
@@ -179,8 +176,7 @@ function AdvisoriesPanel({ advisories }) {
       {!advisories.has_forecast && (
         <div className="notice notice--warn">
           <b>Limited advisories:</b> The demand forecast has not been generated yet
-          (<span className="mono">step4_prophet_forecast.py</span>).
-          Advisories below are based on calendar signals only — run the forecast pipeline
+          Advisories below are based on calendar signals only, Please run the forecast pipeline
           to enable demand-driven recommendations.
         </div>
       )}
@@ -203,8 +199,8 @@ function AdvisoriesPanel({ advisories }) {
             {advisory.date_range && (
               <div className="hint" style={{ marginTop: 6 }}>
                 {advisory.date_range[0] === advisory.date_range[1]
-                  ? advisory.date_range[0]
-                  : `${advisory.date_range[0]} → ${advisory.date_range[1]}`}
+                  ? usDate(advisory.date_range[0])
+                  : `${usDate(advisory.date_range[0])} → ${usDate(advisory.date_range[1])}`}
               </div>
             )}
           </div>

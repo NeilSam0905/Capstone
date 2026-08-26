@@ -3,7 +3,7 @@ import { getProducts, getForecast, getProductForecast, getProductHistory } from 
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
 import { LineChart, ForecastChart } from '../components/charts';
-import { num, shortMonth, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, shortMonth, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
 
 /**
  * Demand Forecast.
@@ -100,25 +100,17 @@ function ForecastPanel({ productId, forecastMeta }) {
   if (!forecastMeta?.available || !forecast?.available) {
     return (
       <>
-        <Pending title="No forecast has been generated for this SKU" reason={forecast?.reason ?? forecastMeta?.reason}>
-          <div className="pending__body">
-            When <span className="mono">step4_prophet_forecast.py</span> runs, this card shows the 30-day
-            forecast with its confidence band and the naive baseline comparison. The pipeline has not been
-            run yet — run it from the terminal, and this screen will automatically display the results.
-          </div>
-        </Pending>
-
-        <div className="grid-2">
-          <Pending title="Accuracy metrics pending" reason={forecast?.reason ?? forecastMeta?.reason} />
-          <div className="card card__pad">
-            <div className="card-h"><span className="section-h">Why this is blank</span></div>
-            <div style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.55 }}>
-              MAPE, RMSE and MAE must come from the model run recorded in <span className="mono">Result_Forecast_Metrics</span>,
-              not from the frontend. Any number shown here that the pipeline did not produce would end up quoted in
-              Chapter 4.
-            </div>
-          </div>
-        </div>
+        {/* Both cards take their explanation from the API's `reason` (see
+            app.py's FORECAST_PENDING_REASON) rather than a string hardcoded
+            here, so the wording is changed in one place. */}
+        <Pending
+          title="No forecast has been generated for this SKU"
+          reason={forecast?.reason ?? forecastMeta?.reason}
+        />
+        <Pending
+          title="Accuracy metrics pending"
+          reason={forecast?.reason ?? forecastMeta?.reason}
+        />
       </>
     );
   }
@@ -135,7 +127,7 @@ function ForecastPanel({ productId, forecastMeta }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="tag tag--gold">{fd.model_type}</span>
             {fd.is_heuristic && <span className="tag tag--warn">Heuristic (rolling average)</span>}
-            <span className="hint">Generated {fd.snapshot_date}</span>
+            <span className="hint">Generated {usDate(fd.snapshot_date)}</span>
           </div>
         </div>
         <ForecastChart data={fd.forecast} />

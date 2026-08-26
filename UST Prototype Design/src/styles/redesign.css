@@ -520,6 +520,44 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
   background: var(--info); border-color: var(--info);
   animation: pipeline-pulse 1s ease-in-out infinite;
 }
+/* Scrolling list of flagged closure dates (Tally Interface). Capped height so
+   a growing list scrolls inside its own box instead of stretching the card. */
+.date-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+  max-height: 168px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+}
+.date-list li {
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+.date-list li + li { border-top: 1px solid var(--line-soft); }
+
+/* Live stdout tail of the step currently running. Fixed height + scroll so a
+   step that prints a line per SKU (step3/step4) can't push the whole page
+   around while it runs. */
+.pipeline-log {
+  margin: 0;
+  max-height: 190px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--text-2);
+}
+
 @keyframes pipeline-pulse {
   0%, 100% { opacity: 1; } 50% { opacity: .35; }
 }
