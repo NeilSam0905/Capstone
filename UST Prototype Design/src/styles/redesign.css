@@ -488,6 +488,42 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .report-items::-webkit-scrollbar { width: 9px; }
 .report-items::-webkit-scrollbar-thumb { background: #D8D4C9; border-radius: 6px; border: 2px solid var(--card); }
 
+/* Pipeline runner (Tally screen) */
+.progress {
+  height: 8px; border-radius: 100px; background: var(--line-soft);
+  overflow: hidden; border: 1px solid var(--line);
+}
+.progress__fill {
+  height: 100%; background: var(--accent); border-radius: 100px;
+  transition: width .3s ease;
+}
+.pipeline-steps {
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden;
+}
+.pipeline-step {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; font-size: 12.5px; color: var(--text-2);
+  background: var(--card); border-bottom: 1px solid var(--line-soft);
+}
+.pipeline-step:last-child { border-bottom: none; }
+.pipeline-step__label { flex: 1; }
+.pipeline-step__dot {
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+  background: var(--line); border: 1px solid var(--muted);
+}
+.pipeline-step__dot--done    { background: var(--ok);   border-color: var(--ok); }
+.pipeline-step__dot--error   { background: var(--crit); border-color: var(--crit); }
+.pipeline-step__dot--skipped { background: var(--warn-bg); border-color: var(--warn); }
+.pipeline-step__dot--cancelled { background: var(--warn-bg); border-color: var(--warn); }
+.pipeline-step__dot--running {
+  background: var(--info); border-color: var(--info);
+  animation: pipeline-pulse 1s ease-in-out infinite;
+}
+@keyframes pipeline-pulse {
+  0%, 100% { opacity: 1; } 50% { opacity: .35; }
+}
+
 /* Power BI embed — fills the analytics route, keeps a usable height on
    short viewports. The report has its own internal scrolling, so the frame
    is sized to the viewport rather than to the report's content. */

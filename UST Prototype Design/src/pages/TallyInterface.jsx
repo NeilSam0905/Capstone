@@ -1,7 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   addEntry, addEvent, setStoreClosed, getSellableProducts, getRecentEntries,
   getEntriesByDate, getEventLog, getClosedDates, getMeta, TRANSACTION_TYPES,
+  runPipeline, stopPipeline, getPipelineStatus,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
@@ -52,6 +53,7 @@ export default function TallyInterface({ setView }) {
         <RecentEntries entries={recent} loading={recentLoading} />
         <ByDate reloadKey={reloadKey} />
         <PipelineFooter meta={meta} loading={metaLoading} />
+        <PipelineRunner onFinished={bump} />
       </div>
     </div>
   );
@@ -334,6 +336,158 @@ function PipelineFooter({ meta, loading }) {
         )}
       </span>
       <span className={`tag ${tone}`}>{status}</span>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------- pipeline */
+
+const STEP_TAG = {
+  done:      { cls: 'tag--ok',   label: 'done' },
+  error:     { cls: 'tag--crit', label: 'failed' },
+  skipped:   { cls: 'tag--warn', label: 'skipped' },
+  running:   { cls: 'tag--info', label: 'running' },
+  cancelled: { cls: 'tag--warn', label: 'stopped' },
+  pending:   { cls: '',          label: 'pending' },
+};
+
+/** create_schema.py -> step5_prescriptive.py, run and polled from the backend
+ *  (see backend/pipeline.py). Always renders its progress bar / step list —
+ *  even before the first successful poll — using this idle placeholder, so
+ *  the card never silently goes blank if a request fails; every fetch below
+ *  is caught and surfaced as `pipelineError` instead of failing silently. */
+const IDLE_STEPS = [
+  'Build database schema', 'Populate calendar dimension', 'Convert raw tally sheets',
+  'Apply vocabulary + supplier mapping', 'Allocate price-grouped rows to SKUs',
+  'Load Fact_Sales', 'Classify Fast / Slow / Non-moving', 'Forecast demand (Prophet)',
+  'Set supplier lead times', 'Compute ROP / EOQ / safety stock',
+].map((label, i) => ({
+  id: `idle-${i}`, label, status: 'pending',
+  optional: label.includes('Forecast') || label.includes('raw tally sheets'),
+}));
+
+function PipelineRunner({ onFinished }) {
+  const [pipelineStatus, setPipelineStatus] = useState(null);
+  const [starting, setStarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [pipelineError, setPipelineError] = useState(null);
+  const timerRef = useRef(null);
+
+  const poll = useCallback(async function pollOnce() {
+    try {
+      const s = await getPipelineStatus();
+      setPipelineStatus(s);
+      if (s.status === 'running') {
+        timerRef.current = setTimeout(pollOnce, 1200);
+        return;
+      }
+      setPipelineError(null);
+      if (s.status === 'done') onFinished?.();
+    } catch (err) {
+      setPipelineError(err.message || 'Lost connection to the backend while polling pipeline status.');
+    }
+  }, [onFinished]);
+
+  // Pick up an already-running pipeline (e.g. kicked off from another tab).
+  useEffect(() => {
+    getPipelineStatus()
+      .then(s => { setPipelineStatus(s); if (s.status === 'running') poll(); })
+      .catch(err => setPipelineError(err.message || 'Could not reach the backend.'));
+    return () => clearTimeout(timerRef.current);
+  }, [poll]);
+
+  async function start() {
+    setPipelineError(null);
+    setStarting(true);
+    try {
+      const res = await runPipeline();
+      if (!res.ok) { setPipelineError(res.error || 'Could not start the pipeline.'); return; }
+      poll();
+    } catch (err) {
+      setPipelineError(err.message || 'Could not reach the backend.');
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function stop() {
+    setStopping(true);
+    try {
+      const res = await stopPipeline();
+      if (!res.ok) { setPipelineError(res.error || 'Could not stop the pipeline.'); return; }
+      poll();
+    } catch (err) {
+      setPipelineError(err.message || 'Could not reach the backend.');
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  const running = pipelineStatus?.status === 'running';
+  const steps = pipelineStatus?.steps?.length ? pipelineStatus.steps : IDLE_STEPS;
+  const total = steps.length;
+  const settled = steps.filter(s => ['done', 'skipped', 'error', 'cancelled'].includes(s.status)).length;
+  const current = steps.find(s => s.status === 'running');
+  const pct = total ? Math.round((settled / total) * 100) : 0;
+  const failures = steps.filter(s => s.status === 'error' && s.error);
+
+  return (
+    <div className="card card__pad">
+      <div className="card-h">
+        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <Icon name="zap" size={14} /> Full Pipeline Run
+        </span>
+      </div>
+
+      <div className="btn-row">
+        <button className="btn btn--ink" onClick={start} disabled={running || starting}>
+          {running ? 'Running…' : 'Run Full Pipeline'}
+        </button>
+        <button className="btn btn--crit" onClick={stop} disabled={!running || stopping}>
+          {stopping ? 'Stopping…' : 'Stop'}
+        </button>
+        {pipelineError && <span className="field__err">{pipelineError}</span>}
+        {!running && !pipelineError && pipelineStatus?.status === 'done' && (
+          <span className="ok-text" style={{ fontSize: 12.5 }}>
+            <Icon name="check" size={14} /> Pipeline completed — data refreshed.
+          </span>
+        )}
+        {!running && !pipelineError && pipelineStatus?.status === 'error' && (
+          <span style={{ color: 'var(--crit)', fontWeight: 700, fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="xCircle" size={14} /> Stopped on an error — see below.
+          </span>
+        )}
+        {!running && !pipelineError && pipelineStatus?.status === 'cancelled' && (
+          <span className="hint" style={{ fontWeight: 700 }}>Run stopped by request.</span>
+        )}
+      </div>
+
+      <div className="progress" style={{ marginTop: 14 }}>
+        <div className="progress__fill" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="hint" style={{ margin: '8px 0 14px' }}>
+        {settled}/{total} steps{current ? ` · running: ${current.label}` : ''}
+      </div>
+
+      <div className="pipeline-steps">
+        {steps.map(s => (
+          <div key={s.id} className="pipeline-step">
+            <span className={`pipeline-step__dot pipeline-step__dot--${s.status}`} />
+            <span className="pipeline-step__label">
+              {s.label}{s.optional ? <span className="muted"> (optional)</span> : null}
+            </span>
+            {s.status !== 'pending' && (
+              <span className={`tag ${STEP_TAG[s.status].cls}`}>{STEP_TAG[s.status].label}</span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {failures.length > 0 && (
+        <div className="notice notice--warn" style={{ marginTop: 12, whiteSpace: 'pre-wrap' }}>
+          {failures.map(s => `${s.label}: ${s.error}`).join('\n\n')}
+        </div>
+      )}
     </div>
   );
 }

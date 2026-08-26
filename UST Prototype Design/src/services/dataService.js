@@ -191,3 +191,16 @@ export const getClosedDates = () => get('/calendar/closed');
 /** No-op now that persistence is server-side; kept so anything still
  *  importing it (nothing in this app does) doesn't break. */
 export const resetLocalState = () => {};
+
+// --------------------------------------------------------------- pipeline
+
+/** Kicks off create_schema.py -> step5_prescriptive.py as a background job.
+ *  Returns { ok:false, error } (HTTP 409) if a run is already in progress. */
+export const runPipeline = () => post('/pipeline/run');
+
+/** Terminates the step currently running and halts the rest of the run.
+ *  Returns { ok:false, error } (HTTP 409) if nothing is in progress. */
+export const stopPipeline = () => post('/pipeline/stop');
+
+/** Poll this while a run is in flight — { status, steps:[{id,label,status,...}] }. */
+export const getPipelineStatus = () => get('/pipeline/status');

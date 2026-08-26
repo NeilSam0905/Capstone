@@ -27,6 +27,7 @@ from flask_cors import CORS
 
 import catalog
 import db as dbmod
+import pipeline
 import validation
 
 app = Flask(__name__)
@@ -688,6 +689,29 @@ def get_advisories():
         "has_forecast": has_forecast,
         "advisories": advisories,
     })
+
+
+# --------------------------------------------------------------- pipeline
+
+@app.post("/api/pipeline/run")
+def run_pipeline():
+    started = pipeline.start_pipeline()
+    if not started:
+        return jsonify({"ok": False, "error": "The pipeline is already running."}), 409
+    return jsonify({"ok": True})
+
+
+@app.post("/api/pipeline/stop")
+def stop_pipeline():
+    stopped = pipeline.stop_pipeline()
+    if not stopped:
+        return jsonify({"ok": False, "error": "No pipeline run is in progress."}), 409
+    return jsonify({"ok": True})
+
+
+@app.get("/api/pipeline/status")
+def pipeline_status():
+    return jsonify(pipeline.get_status())
 
 
 if __name__ == "__main__":
