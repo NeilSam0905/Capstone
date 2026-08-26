@@ -2,14 +2,15 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   addEntry, addEvent, setStoreClosed, getSellableProducts, getRecentEntries,
   getEntriesByDate, getEventLog, getClosedDates, getMeta, TRANSACTION_TYPES,
-  runPipeline, stopPipeline, getPipelineStatus,
+  runPipeline, stopPipeline, getPipelineStatus, getPipelineStaleness,
+  getInventoryCounts, saveInventoryCount, deleteInventoryCount,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import DataTable from '../components/DataTable';
 import ErrorBanner from '../components/ErrorBanner';
 import Icon from '../components/Icon';
-import { num } from '../lib/format';
+import { num, usDate, usDateTime, longMonth } from '../lib/format';
 import brandMark from '../assets/ustore-mark.png';
 
 const TYPE_TONE = { SALE: 'ok', DAMAGED: 'crit', PROMO: 'info', TRANSFER: 'hvl' };
@@ -30,6 +31,10 @@ export default function TallyInterface({ setView }) {
   const { data: products } = useData(getSellableProducts, [], []);
   const { data: recent, loading: recentLoading } = useData(() => getRecentEntries(25), [reloadKey], []);
   const { data: meta, loading: metaLoading, error: connectionError } = useData(getMeta, []);
+  // Re-read on every `bump()`: saving an entry, an event or a closure is
+  // exactly what makes the analytics stale, and a finished pipeline run is
+  // what clears it. Both already call bump().
+  const { data: staleness } = useData(getPipelineStaleness, [reloadKey]);
 
   return (
     <div className="tally-wrap">
@@ -38,7 +43,7 @@ export default function TallyInterface({ setView }) {
           <img src={brandMark} alt="USTore" className="brand-mark" />
           <div>
             <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: '-.01em' }}>USTore Digital Tally Interface</div>
-            <div className="tally-head__sub">Internal Inventory Counting Tool — Non-Transactional</div>
+            <div className="tally-head__sub">Internal Inventory Tally Tool </div>
           </div>
         </div>
         <button className="btn btn--gold" onClick={() => setView('dashboard')}>
@@ -48,12 +53,14 @@ export default function TallyInterface({ setView }) {
 
       <div className="tally-body">
         {connectionError && <ErrorBanner error={connectionError} />}
+        <StalenessBanner staleness={staleness} />
         <EntryForm products={products} onSaved={bump} />
+        <InventoryCount products={products} onSaved={bump} />
         <CalendarControls onSaved={bump} reloadKey={reloadKey} />
         <RecentEntries entries={recent} loading={recentLoading} />
         <ByDate reloadKey={reloadKey} />
         <PipelineFooter meta={meta} loading={metaLoading} />
-        <PipelineRunner onFinished={bump} />
+        <PipelineRunner onChanged={bump} />
       </div>
     </div>
   );
@@ -138,9 +145,162 @@ function EntryForm({ products, onSaved }) {
             Recorded {saved.quantity_sold} × {saved.item_name} ({saved.transaction_type})
           </span>
         ) : (
-          <span className="hint">Unit counts only — this tool records what left the shelf, never a payment.</span>
+          <span className="hint"></span>
         )}
       </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------- inventory */
+
+const thisMonth = () => new Date().toISOString().slice(0, 7);
+
+/** Monthly stock count, entered by whoever does the count.
+ *
+ *  This is the digital counterpart of the inventory workbook the store already
+ *  keeps by hand, and it fills the project's largest data gap: only ~17% of
+ *  Fact_Sales rows have any stock signal behind them, and the workbook stops
+ *  at its last export month. Counts recorded here take over from the workbook
+ *  as soon as they are more recent (see catalog.py's load_current_stock), so
+ *  the Stock Status and Reorder screens start showing a real on-hand figure
+ *  for items the workbook never covered.
+ *
+ *  A count is per product per month and REPLACES any earlier figure for that
+ *  pair — a recount corrects a count, it does not add to one. The card says so
+ *  when it overwrites something rather than silently changing a number.
+ *
+ *  Zero is a valid, and important, count: it is the store recording that it is
+ *  out of an item. */
+function InventoryCount({ products, onSaved }) {
+  const [month, setMonth] = useState(thisMonth());
+  const [form, setForm] = useState({ product_id: '', quantity: '', note: '' });
+  const [errors, setErrors] = useState({});
+  const [saved, setSaved] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const { data, loading } = useData(() => getInventoryCounts(month), [month, reloadKey], null);
+  const counts = data?.counts ?? [];
+
+  const set = (key, value) => {
+    setForm(f => ({ ...f, [key]: value }));
+    setErrors(e => ({ ...e, [key]: undefined }));
+    setSaved(null);
+  };
+
+  async function submit() {
+    const result = await saveInventoryCount({ ...form, count_month: month });
+    if (!result.ok) { setErrors(result.errors || {}); setSaved(null); return; }
+    setErrors({});
+    setSaved(result);
+    setForm({ product_id: '', quantity: '', note: '' });
+    setReloadKey(k => k + 1);
+    onSaved?.();
+  }
+
+  async function remove(countId) {
+    await deleteInventoryCount(countId);
+    setSaved(null);
+    setReloadKey(k => k + 1);
+    onSaved?.();
+  }
+
+  const columns = [
+    { key: 'item_name', label: 'Item', strong: true, truncate: true, width: '38%' },
+    { key: 'supplier_name', label: 'Supplier', truncate: true, width: '26%' },
+    { key: 'quantity', label: 'On hand', num: true, strong: true, width: '12%' },
+    { key: 'date_logged', label: 'Counted', width: '16%', render: usDateTime },
+    {
+      key: 'count_id', label: '', width: '8%',
+      render: id => (
+        <button className="btn btn--ghost btn--sm" onClick={() => remove(id)} title="Remove this count">
+          Remove
+        </button>
+      ),
+    },
+  ];
+  const rows = counts.map(c => ({ ...c, rowKey: `ic${c.count_id}` }));
+
+  return (
+    <div className="card card__pad">
+      <div className="card-h">
+        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <Icon name="db" size={14} /> Monthly Inventory Count
+        </span>
+        {data?.workbook_month && (
+          <span className="hint">
+            Latest Inventory Data: {longMonth(data.workbook_month)}
+          </span>
+        )}
+      </div>
+
+      <div className="hint" style={{ marginBottom: 14 }}>
+        Units on hand at the time of counting, per item, for the month selected. Recounting an item
+        replaces its figure for that month rather than adding to it. <b>Zero is a valid count</b> — it
+        records that the item is out of stock.
+      </div>
+
+      <div className="form-grid">
+        <Field label="Count Month" error={errors.count_month}>
+          <input type="month" value={month} max={thisMonth()}
+                 className={errors.count_month ? 'is-err' : ''}
+                 onChange={e => { setMonth(e.target.value); setSaved(null); }} />
+        </Field>
+
+        <Field label="Units on Hand" error={errors.quantity}>
+          <input type="number" min="0" step="1" value={form.quantity} placeholder="Enter units counted"
+                 className={errors.quantity ? 'is-err' : ''}
+                 onChange={e => set('quantity', e.target.value)} />
+        </Field>
+
+        <div className="col-2">
+          <Field label="Item" error={errors.product_id}>
+            <select value={form.product_id}
+                    className={errors.product_id ? 'is-err' : ''}
+                    onChange={e => set('product_id', e.target.value)}>
+              <option value="">— Select an item —</option>
+              {products.map(p => (
+                <option key={p.product_id} value={p.product_id}>
+                  {p.item_name}{p.category !== 'Uncategorised' ? ` (${p.category})` : ''}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+
+        <div className="col-2">
+          <Field label="Note (optional)">
+            <input type="text" value={form.note} placeholder="e.g. damaged units excluded"
+                   onChange={e => set('note', e.target.value)} />
+          </Field>
+        </div>
+      </div>
+
+      <div className="btn-row" style={{ marginTop: 18 }}>
+        <button className="btn btn--ink" onClick={submit}>Save Count</button>
+        {saved && (
+          <span className="ok-text" style={{ fontSize: 12.5 }}>
+            <Icon name="check" size={14} />
+            {saved.replaced != null
+              ? `Updated ${saved.count.item_name}: ${num(saved.replaced)} → ${num(saved.count.quantity)} units`
+              : `Recorded ${num(saved.count.quantity)} × ${saved.count.item_name}`}
+            {' '}for {longMonth(saved.count.count_month)}
+          </span>
+        )}
+      </div>
+
+      <div className="card-h" style={{ marginTop: 20 }}>
+        <span className="section-h">Counted in {longMonth(month)}</span>
+        <span className="hint">
+          {counts.length === 0 ? 'nothing counted yet' :
+            `${num(counts.length)} item${counts.length === 1 ? '' : 's'} · ${num(data.total_units)} units`}
+        </span>
+      </div>
+      {loading
+        ? <Loading />
+        : counts.length === 0
+          ? <div className="empty">No stock counts recorded for {longMonth(month)}.</div>
+          : <DataTable columns={columns} data={rows} pageSize={10} minWidth={760} />}
     </div>
   );
 }
@@ -168,7 +328,7 @@ function CalendarControls({ onSaved, reloadKey }) {
     const result = await addEvent(event);
     if (!result.ok) { setErrors(result.errors); return; }
     setErrors({});
-    setNote(`Event "${result.event.event_name}" flagged on ${result.event.calendar_date}.`);
+    setNote(`Event "${result.event.event_name}" flagged on ${usDate(result.event.calendar_date)}.`);
     setEvent({ calendar_date: event.calendar_date, event_name: '', event_description: '' });
     onSaved();
   }
@@ -182,9 +342,6 @@ function CalendarControls({ onSaved, reloadKey }) {
               <Icon name="calOff" size={14} /> Store Closure / Suspension
             </span>
           </div>
-          <div className="hint" style={{ marginBottom: 14 }}>
-            Sets <span className="mono">is_store_closed</span> for a date. Separate from event flagging.
-          </div>
 
           <Field label="Date" error={errors.calendar_date}>
             <input type="date" value={closureDate}
@@ -196,10 +353,22 @@ function CalendarControls({ onSaved, reloadKey }) {
             <button className="btn btn--ghost btn--sm" onClick={() => toggleClosed(false)}>Mark open</button>
           </div>
 
-          <div className="hint" style={{ marginTop: 14 }}>
-            {closed.length === 0
-              ? 'No dates flagged closed in this session.'
-              : <>Flagged closed: <b style={{ color: 'var(--text-2)' }}>{closed.join(', ')}</b></>}
+          {/* A scrolling list rather than one comma-joined line: this is every
+              date in Dim_Date flagged is_store_closed across 2023-2026, which
+              is currently 43 dates and grows with each closure logged. As
+              running prose it wrapped into an unreadable paragraph that pushed
+              the rest of the card off screen. */}
+          <div style={{ marginTop: 14 }}>
+            <div className="hint" style={{ marginBottom: 6 }}>
+              {closed.length === 0
+                ? 'No dates are flagged closed.'
+                : <>Flagged closed <span className="muted">({closed.length})</span></>}
+            </div>
+            {closed.length > 0 && (
+              <ul className="date-list">
+                {closed.map(d => <li key={d}>{usDate(d)}</li>)}
+              </ul>
+            )}
           </div>
         </div>
 
@@ -208,9 +377,6 @@ function CalendarControls({ onSaved, reloadKey }) {
             <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
               <Icon name="calPlus" size={14} /> Flag an Event
             </span>
-          </div>
-          <div className="hint" style={{ marginBottom: 14 }}>
-            Adds an <span className="mono">Event_Log</span> row and marks <span className="mono">is_event_day</span>.
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -236,7 +402,7 @@ function CalendarControls({ onSaved, reloadKey }) {
           <div className="hint" style={{ marginTop: 14 }}>
             {events.length === 0 ? 'No events flagged yet.' : events.slice(0, 3).map(e => (
               <div key={e.local_id ?? e.event_id}>
-                <b style={{ color: 'var(--text-2)' }}>{e.calendar_date}</b> — {e.event_name}
+                <b style={{ color: 'var(--text-2)' }}>{usDate(e.calendar_date)}</b> — {e.event_name}
               </div>
             ))}
           </div>
@@ -257,7 +423,7 @@ const TYPE_CELL = v => <span className={`tag tag--${TYPE_TONE[v] || 'info'}`}>{v
 
 function RecentEntries({ entries, loading }) {
   const columns = [
-    { key: 'calendar_date', label: 'Date', width: '14%' },
+    { key: 'calendar_date', label: 'Date', width: '14%', render: usDate },
     { key: 'item_name',     label: 'Item', strong: true, truncate: true, width: '30%' },
     { key: 'quantity_sold', label: 'Qty', num: true, strong: true, width: '8%' },
     { key: 'supplier_name', label: 'Supplier', truncate: true, width: '24%' },
@@ -273,7 +439,6 @@ function RecentEntries({ entries, loading }) {
     <div className="card card__pad">
       <div className="card-h">
         <span className="section-h">Recent Entries</span>
-        <span className="hint">newest first · &ldquo;this session&rdquo; rows are local only</span>
       </div>
       {loading ? <Loading /> : <DataTable columns={columns} data={rows} pageSize={10} minWidth={760} />}
     </div>
@@ -340,7 +505,104 @@ function PipelineFooter({ meta, loading }) {
   );
 }
 
+/* ------------------------------------------------------------- staleness */
+
+/** "The numbers on the dashboard are older than what you have typed in."
+ *
+ *  Everything this screen writes - a tally entry, a flagged event, a store
+ *  closure - is in ustore.db the instant it is saved, and the Recent Entries
+ *  table below reflects it immediately. The ANALYTICS do not: fsn_class,
+ *  Result_Forecast and Result_Prescriptive are only recomputed by a pipeline
+ *  run, so without this banner the Reorder Alerts screen will happily show
+ *  reorder points computed before a fortnight of tallying, with nothing on
+ *  screen saying so.
+ *
+ *  Deliberately only shown when there is something concrete to point at
+ *  (`stale` is false when the pending counts are all zero), so it does not
+ *  become a permanent decoration people learn to ignore. */
+function StalenessBanner({ staleness }) {
+  if (!staleness || !staleness.stale) return null;
+
+  const { pending = {}, never_run: neverRun, running, interrupted, last_run: lastRun } = staleness;
+  const parts = [
+    [pending.tally_entries, 'tally entry', 'tally entries'],
+    [pending.events, 'flagged event', 'flagged events'],
+    [pending.closures, 'closure change', 'closure changes'],
+  ]
+    .filter(([n]) => n > 0)
+    .map(([n, one, many]) => `${num(n)} ${n === 1 ? one : many}`);
+
+  const what = parts.length ? parts.join(', ').replace(/, ([^,]*)$/, ' and $1') : 'new records';
+
+  // A run that was stopped or failed part-way is its own kind of stale: no new
+  // data is waiting, but the tables are half-rebuilt (step3 may have rewritten
+  // fsn_class with step5 never reaching Result_Prescriptive). Say that rather
+  // than reporting a pending count of nothing.
+  if (interrupted && !running) {
+    return (
+      <div className="notice notice--warn" style={{ display: 'flex', gap: 10 }}>
+        <Icon name="alert" size={16} />
+        <div>
+          <b>
+            The last pipeline run {interrupted === 'cancelled' ? 'was stopped' : 'failed'} part-way —
+            re-run it.
+          </b>
+          <div style={{ marginTop: 4 }}>
+            Some steps completed and some did not, so FSN classes, forecasts and reorder points may not
+            agree with each other or with the sales data. Run <b>Full Pipeline Run</b> at the bottom of
+            this page to bring them back into step.
+            {parts.length > 0 && <> There {parts.length === 1 ? 'is' : 'are'} also {what} waiting to be
+            folded in.</>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`notice ${running ? 'notice--info' : 'notice--warn'}`} style={{ display: 'flex', gap: 10 }}>
+      <Icon name={running ? 'clock' : 'alert'} size={16} />
+      <div>
+        <b>
+          {running
+            ? 'Pipeline running — the analytics below are still the previous run’s.'
+            : 'Analytics are out of date — re-run the pipeline.'}
+        </b>
+        <div style={{ marginTop: 4 }}>
+          {neverRun ? (
+            <>
+              {what} {parts.length === 1 && pending.tally_entries === 1 ? 'is' : 'are'} in the database, but no
+              pipeline run has been recorded for it yet. FSN classes, forecasts and reorder points on the
+              dashboard were not computed from this data.
+            </>
+          ) : (
+            <>
+              {what} recorded since the last completed run
+              {lastRun?.finished_at ? <> on <span className="mono">{usDateTime(lastRun.finished_at)}</span></> : null}.
+              FSN classes, forecasts and reorder points do not include {parts.length > 1 ? 'them' : 'it'} yet.
+            </>
+          )}
+        </div>
+        {!running && (
+          <div style={{ marginTop: 4 }}>
+            Run <b>Full Pipeline Run</b> at the bottom of this page to refresh them.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------- pipeline */
+
+/** 12.4 -> "12s", 754 -> "12m 34s". step4 fits a Prophet model per Fast SKU
+ *  and runs for tens of minutes, so a bare seconds count stops being readable
+ *  well before the step is over. */
+function dur(seconds) {
+  if (seconds == null) return null;
+  const s = Math.round(seconds);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
 
 const STEP_TAG = {
   done:      { cls: 'tag--ok',   label: 'done' },
@@ -349,6 +611,7 @@ const STEP_TAG = {
   running:   { cls: 'tag--info', label: 'running' },
   cancelled: { cls: 'tag--warn', label: 'stopped' },
   pending:   { cls: '',          label: 'pending' },
+  deselected: { cls: '',         label: 'not run' },
 };
 
 /** create_schema.py -> step5_prescriptive.py, run and polled from the backend
@@ -357,16 +620,22 @@ const STEP_TAG = {
  *  the card never silently goes blank if a request fails; every fetch below
  *  is caught and surfaced as `pipelineError` instead of failing silently. */
 const IDLE_STEPS = [
-  'Build database schema', 'Populate calendar dimension', 'Convert raw tally sheets',
-  'Apply vocabulary + supplier mapping', 'Allocate price-grouped rows to SKUs',
-  'Load Fact_Sales', 'Classify Fast / Slow / Non-moving', 'Forecast demand (Prophet)',
-  'Set supplier lead times', 'Compute ROP / EOQ / safety stock',
-].map((label, i) => ({
-  id: `idle-${i}`, label, status: 'pending',
+  ['Build database schema', 'seconds'],
+  ['Populate calendar dimension', 'seconds'],
+  ['Convert raw tally sheets', '~1 min'],
+  ['Apply vocabulary + supplier mapping', '~10 s'],
+  ['Allocate price-grouped rows to SKUs', '~10 s'],
+  ['Load Fact_Sales', '~30 s'],
+  ['Classify Fast / Slow / Non-moving', '~1 min'],
+  ['Forecast demand (Prophet)', '1-2 hours'],
+  ['Set supplier lead times', '~5 s'],
+  ['Compute ROP / EOQ / safety stock', '~10 s'],
+].map(([label, estimate], i) => ({
+  id: `idle-${i}`, label, estimate, status: 'pending',
   optional: label.includes('Forecast') || label.includes('raw tally sheets'),
 }));
 
-function PipelineRunner({ onFinished }) {
+function PipelineRunner({ onChanged }) {
   const [pipelineStatus, setPipelineStatus] = useState(null);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -382,11 +651,13 @@ function PipelineRunner({ onFinished }) {
         return;
       }
       setPipelineError(null);
-      if (s.status === 'done') onFinished?.();
+      // Refresh the page's other reads (Recent Entries, and the staleness
+      // banner, which a completed run is exactly what clears).
+      if (s.status === 'done') onChanged?.();
     } catch (err) {
       setPipelineError(err.message || 'Lost connection to the backend while polling pipeline status.');
     }
-  }, [onFinished]);
+  }, [onChanged]);
 
   // Pick up an already-running pipeline (e.g. kicked off from another tab).
   useEffect(() => {
@@ -396,12 +667,13 @@ function PipelineRunner({ onFinished }) {
     return () => clearTimeout(timerRef.current);
   }, [poll]);
 
-  async function start() {
+  async function start(includeForecast) {
     setPipelineError(null);
     setStarting(true);
     try {
-      const res = await runPipeline();
+      const res = await runPipeline({ includeForecast });
       if (!res.ok) { setPipelineError(res.error || 'Could not start the pipeline.'); return; }
+      onChanged?.();  // so the staleness banner switches to its "running" wording
       poll();
     } catch (err) {
       setPipelineError(err.message || 'Could not reach the backend.');
@@ -425,11 +697,20 @@ function PipelineRunner({ onFinished }) {
 
   const running = pipelineStatus?.status === 'running';
   const steps = pipelineStatus?.steps?.length ? pipelineStatus.steps : IDLE_STEPS;
-  const total = steps.length;
-  const settled = steps.filter(s => ['done', 'skipped', 'error', 'cancelled'].includes(s.status)).length;
+  // Deselected steps are excluded from the denominator as well as the
+  // numerator, so a forecast-less run reads 9/9 rather than stalling at 9/10.
+  const scheduled = steps.filter(s => s.status !== 'deselected');
+  const total = scheduled.length;
+  const settled = scheduled.filter(s => ['done', 'skipped', 'error', 'cancelled'].includes(s.status)).length;
   const current = steps.find(s => s.status === 'running');
   const pct = total ? Math.round((settled / total) * 100) : 0;
   const failures = steps.filter(s => s.status === 'error' && s.error);
+  const skipped = steps.filter(s => s.status === 'skipped' && s.error);
+  // The backend streams each step's stdout line by line (backend/pipeline.py
+  // runs the scripts with `python -u`), so this is a live tail, not a
+  // post-mortem dump. It matters most on step3/step4, which print a line per
+  // SKU and are otherwise many silent minutes of an unmoving progress bar.
+  const tailStep = current || [...steps].reverse().find(s => s.output);
 
   return (
     <div className="card card__pad">
@@ -439,9 +720,18 @@ function PipelineRunner({ onFinished }) {
         </span>
       </div>
 
+      <div className="hint" style={{ marginBottom: 12 }}>
+        Rebuilds <span className="mono">ustore.db</span> from the CSVs in <span className="mono">data/</span> and
+        recomputes FSN classes, lead times and reorder points. Tally entries, events and closures recorded on
+        this screen are preserved and folded back in.
+      </div>
+
       <div className="btn-row">
-        <button className="btn btn--ink" onClick={start} disabled={running || starting}>
-          {running ? 'Running…' : 'Run Full Pipeline'}
+        <button className="btn btn--ink" onClick={() => start(false)} disabled={running || starting}>
+          {running ? 'Running…' : 'Run Pipeline (no forecast)'}
+        </button>
+        <button className="btn" onClick={() => start(true)} disabled={running || starting}>
+          {running ? 'Running…' : 'Run Full Pipeline + Forecast'}
         </button>
         <button className="btn btn--crit" onClick={stop} disabled={!running || stopping}>
           {stopping ? 'Stopping…' : 'Stop'}
@@ -466,7 +756,8 @@ function PipelineRunner({ onFinished }) {
         <div className="progress__fill" style={{ width: `${pct}%` }} />
       </div>
       <div className="hint" style={{ margin: '8px 0 14px' }}>
-        {settled}/{total} steps{current ? ` · running: ${current.label}` : ''}
+        {settled}/{total} steps
+        {current ? ` · running: ${current.label}${current.duration_s != null ? ` (${dur(current.duration_s)})` : ''}` : ''}
       </div>
 
       <div className="pipeline-steps">
@@ -476,6 +767,9 @@ function PipelineRunner({ onFinished }) {
             <span className="pipeline-step__label">
               {s.label}{s.optional ? <span className="muted"> (optional)</span> : null}
             </span>
+            {s.duration_s != null
+              ? <span className="hint mono">{dur(s.duration_s)}</span>
+              : s.estimate && <span className="hint">{s.estimate}</span>}
             {s.status !== 'pending' && (
               <span className={`tag ${STEP_TAG[s.status].cls}`}>{STEP_TAG[s.status].label}</span>
             )}
@@ -483,9 +777,25 @@ function PipelineRunner({ onFinished }) {
         ))}
       </div>
 
+      {tailStep?.output && (
+        <div style={{ marginTop: 12 }}>
+          <div className="hint" style={{ marginBottom: 6 }}>Output — <b>{tailStep.label}</b></div>
+          <pre className="pipeline-log">{tailStep.output}</pre>
+        </div>
+      )}
+
       {failures.length > 0 && (
         <div className="notice notice--warn" style={{ marginTop: 12, whiteSpace: 'pre-wrap' }}>
           {failures.map(s => `${s.label}: ${s.error}`).join('\n\n')}
+        </div>
+      )}
+
+      {skipped.length > 0 && (
+        <div className="notice notice--info" style={{ marginTop: 12 }}>
+          <b>Optional step(s) skipped — the run completed without them.</b>
+          <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}>
+            {skipped.map(s => `${s.label}: ${s.error}`).join('\n\n')}
+          </div>
         </div>
       )}
     </div>

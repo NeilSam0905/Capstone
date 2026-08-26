@@ -13,8 +13,8 @@ Nothing here invents a number. Anything the pipeline has not produced is
 absent from the fixtures and flagged in meta.json's `available` block, so
 the UI can render a "pending" state driven by data rather than by a
 hardcoded string. In particular there are NO forecasts and NO ROP/EOQ:
-step4_prophet_forecast.py needs cmdstan and has not been re-run, and
-Dim_Parameters is empty.
+step4_prophet_forecast.py had not been run when these fixtures were
+generated, and Dim_Parameters is empty.
 """
 import json
 import sqlite3
@@ -231,8 +231,7 @@ def main():
             "reorder": n_params > 0,
         },
         "pending_reason": {
-            "forecast": "step4_prophet_forecast.py has not been re-run (needs cmdstan); "
-                        "Result_Forecast does not exist in the database.",
+            "forecast": "The pipeline has not been run yet, please run it from the tally interface and this page will automatically display the results.",
             "reorder": "Dim_Parameters is empty - no lead times, ordering or holding costs "
                        "have been collected yet (Block 5, the USTore site visit).",
         },

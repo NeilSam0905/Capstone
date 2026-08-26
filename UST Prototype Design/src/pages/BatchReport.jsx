@@ -3,7 +3,7 @@ import { getBatchReport, getMonths, getMeta } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import Icon from '../components/Icon';
-import { peso, num, longMonth } from '../lib/format';
+import { peso, num, longMonth, usDate } from '../lib/format';
 
 export default function BatchReport() {
   const { data: months } = useData(getMonths, [], []);
@@ -63,7 +63,7 @@ export default function BatchReport() {
           <div style={{ textAlign: 'right' }}>
             <div className="hint">Period</div>
             <div style={{ fontWeight: 800, fontSize: 14 }}>{selected ? longMonth(selected) : '—'}</div>
-            {meta && <div className="hint" style={{ marginTop: 3 }}>As of: {meta.generated_at}</div>}
+            {meta && <div className="hint" style={{ marginTop: 3 }}>As of: {usDate(meta.generated_at)}</div>}
           </div>
         </div>
       </div>

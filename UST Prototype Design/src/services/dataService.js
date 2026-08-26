@@ -46,6 +46,7 @@ async function request(method, path, body) {
 const get = path => request('GET', path);
 const post = (path, body) => request('POST', path, body);
 const put = (path, body) => request('PUT', path, body);
+const del = path => request('DELETE', path);
 
 function qs(params) {
   const usp = new URLSearchParams();
@@ -192,11 +193,33 @@ export const getClosedDates = () => get('/calendar/closed');
  *  importing it (nothing in this app does) doesn't break. */
 export const resetLocalState = () => {};
 
+// -------------------------------------------------------------- inventory
+
+/** Staff-entered stock counts for one month ('YYYY-MM').
+ *  -> { month, counts:[...], total_units, workbook_month }. */
+export const getInventoryCounts = month => get(`/inventory?month=${encodeURIComponent(month)}`);
+
+/** Record (or correct) one product's units on hand for a month. Upsert:
+ *  re-submitting the same product+month replaces the figure rather than adding
+ *  to it, and the response's `replaced` says what the previous value was.
+ *  Zero is a legitimate count — it means the store is out of that item. */
+export const saveInventoryCount = ({ product_id, count_month, quantity, note }) =>
+  post('/inventory', { product_id, count_month, quantity, note });
+
+/** Remove a count recorded by mistake. */
+export const deleteInventoryCount = countId => del(`/inventory/${countId}`);
+
 // --------------------------------------------------------------- pipeline
 
 /** Kicks off create_schema.py -> step5_prescriptive.py as a background job.
- *  Returns { ok:false, error } (HTTP 409) if a run is already in progress. */
-export const runPipeline = () => post('/pipeline/run');
+ *  Returns { ok:false, error } (HTTP 409) if a run is already in progress.
+ *
+ *  `includeForecast: false` leaves out step4_prophet_forecast.py, which fits a
+ *  full-MCMC Prophet model per Fast SKU and takes 1-2 hours; nothing else in
+ *  the pipeline reads its output, so the rest of the run (rebuilt database,
+ *  FSN classes, reorder points) still finishes in a couple of minutes. */
+export const runPipeline = ({ includeForecast = true } = {}) =>
+  post('/pipeline/run', { include_forecast: includeForecast });
 
 /** Terminates the step currently running and halts the rest of the run.
  *  Returns { ok:false, error } (HTTP 409) if nothing is in progress. */
@@ -204,3 +227,11 @@ export const stopPipeline = () => post('/pipeline/stop');
 
 /** Poll this while a run is in flight — { status, steps:[{id,label,status,...}] }. */
 export const getPipelineStatus = () => get('/pipeline/status');
+
+/** Whether the analytics on screen are older than what has been tallied.
+ *  Tally entries / events / closures are written to ustore.db the moment they
+ *  are saved, but fsn_class, Result_Forecast and Result_Prescriptive are only
+ *  recomputed by a pipeline run — so the Reorder and Classification screens can
+ *  be showing numbers that predate everything typed in since. Shape:
+ *  { stale, never_run, running, last_run:{finished_at,...}, pending:{tally_entries,events,closures}, total_pending }. */
+export const getPipelineStaleness = () => get('/pipeline/staleness');

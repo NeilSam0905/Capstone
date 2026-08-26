@@ -161,7 +161,7 @@ export default function Classification({ filters }) {
       <div className="card card__pad">
         <div className="card-h">
           <span className="section-h">FSN Classification — Full Item List</span>
-          <span className="hint">ADUS = Average Daily Units Sold (classification driver) · {products.length} rows</span>
+          <span className="hint">ADUS = Average Daily Units Sold ({products.length}rows)</span>
         </div>
         <DataTable columns={columns} data={products} pageSize={10} minWidth={1040} />
       </div>
