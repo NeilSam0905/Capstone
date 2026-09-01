@@ -10,7 +10,7 @@ CSV/db paths relative to cwd, not to its own file). Steps run with
 `sys.executable`, so they use whatever interpreter is running this Flask
 process — the same env the rest of the backend already depends on.
 
-step0_convert_sales_with_zeros.py and step4_prophet_forecast.py are marked
+step0_convert_sales_with_zeros.py and step4_forecast_model.py are marked
 optional:
 
 - step0 reads the original TBS tally-sheet workbooks from a local
@@ -21,9 +21,11 @@ optional:
   or openpyxl. So when rawdata/ isn't present, step0 fails and the
   pipeline falls back to that already-committed CSV instead of stopping
   the whole run: step1 onward "just reads the data folder" either way.
-- step4 fits Prophet per Fast SKU. It is by far the longest step (tens of
-  minutes) and historically needed a separate ~20-30 minute cmdstan build,
-  so it is not assumed to be runnable everywhere.
+- step4 forecasts every Fast SKU with a rolling mean. It is kept optional
+  for continuity rather than for cost: it used to fit Prophet per SKU and
+  ran for hours behind a ~20-30 minute cmdstan build, and callers (and the
+  Tally Interface's checkbox) still expect to be able to opt out of it.
+  It now finishes in seconds and needs no toolchain.
 
 If either fails, the run is recorded as "skipped" for that step and the
 pipeline continues — /api/meta already reports forecast availability as
@@ -45,10 +47,12 @@ step that overruns its budget is killed and recorded as timed out (skipped
 if optional, failed if not), and the run moves on or stops deliberately
 instead of leaving the UI on "Running…" indefinitely.
 
-**Whole-tree kills.** Prophet fits by spawning a compiled prophet_model.bin
-per SKU, so the Python child is not the only process to stop. proc.terminate()
-alone would kill the interpreter and orphan whatever Stan binary it had
-running, so Stop (and the timeout path) kill the process *tree*.
+**Whole-tree kills.** proc.terminate() alone kills the interpreter and
+orphans anything it spawned, so Stop (and the timeout path) kill the process
+*tree*. This was written for step4 back when it fit Prophet — Prophet spawns
+a compiled prophet_model.bin per SKU, and terminating only the Python child
+left Stan binaries running. No current step spawns children, but the gap in
+plain terminate() is general and the tree kill stays.
 
 Steps run via Popen rather than subprocess.run so stop_pipeline() can hold
 a handle to the in-flight child process and terminate it — a plain
@@ -78,15 +82,12 @@ TAIL_LINES = 40
 
 # Per-step wall-clock budgets. These are backstops against a hang, not
 # performance targets: the generous ones are for steps whose real runtime is
-# minutes, and step4's is large because fitting ~50 Prophet models genuinely
-# takes tens of minutes on a laptop.
+# minutes. Everything in the pipeline finishes in seconds to ~2 minutes.
 DEFAULT_TIMEOUT_S = 15 * 60
-# step4 fits every Fast SKU's production model with mcmc_samples=1000 - full
-# NUTS sampling, which is what the manuscript specifies for the uncertainty
-# intervals - on top of a MAP fit for validation. Measured on this repo's
-# data that is well over an hour for ~50 SKUs, so the budget is hours, not
-# minutes. Everything else in the pipeline finishes in seconds to ~2 minutes.
-FORECAST_TIMEOUT_S = 4 * 60 * 60
+# step4 used to need a budget measured in hours, because it fit a Prophet
+# model per Fast SKU with mcmc_samples=1000. It is now a rolling mean over
+# the same series - no sampler, no per-SKU refit cost - so the default
+# backstop is already orders of magnitude more than it needs.
 
 # (id, script relative to repo root, label, optional, timeout seconds, rough runtime)
 STEPS = [
@@ -97,18 +98,18 @@ STEPS = [
     ("allocation", "scripts/proportional_allocation.py", "Allocate price-grouped rows to SKUs", False, DEFAULT_TIMEOUT_S, "~10 s"),
     ("step2", "scripts/step2_load_fact_sales.py", "Load Fact_Sales", False, DEFAULT_TIMEOUT_S, "~30 s"),
     ("step3", "scripts/step3_fsn_classification.py", "Classify Fast / Slow / Non-moving", False, DEFAULT_TIMEOUT_S, "~1 min"),
-    ("step4", "scripts/step4_prophet_forecast.py", "Forecast demand (Prophet)", True, FORECAST_TIMEOUT_S, "1-2 hours"),
+    ("step4", "scripts/step4_forecast_model.py", "Forecast demand (rolling mean)", True, DEFAULT_TIMEOUT_S, "~10 s"),
     ("step5a", "scripts/step5a_set_lead_times.py", "Set supplier lead times", False, DEFAULT_TIMEOUT_S, "~5 s"),
     ("step5", "scripts/step5_prescriptive.py", "Compute ROP / EOQ / safety stock", False, DEFAULT_TIMEOUT_S, "~10 s"),
 ]
 
 # Steps a caller is allowed to opt out of. Only step4: it is the one step whose
-# cost is measured in hours rather than seconds, and the one whose output
-# (Result_Forecast) nothing else in the pipeline reads - step5_prescriptive.py
-# derives demand from observed history, not from Result_Forecast. Skipping it
-# turns "refresh the dashboard after a day of tallying" from a two-hour job
-# into a two-minute one, which is the difference between a button people press
-# and a button people avoid.
+# output (Result_Forecast) nothing else in the pipeline reads -
+# step5_prescriptive.py derives demand from observed history, not from
+# Result_Forecast. The original reason to skip it was cost - it was a two-hour
+# Prophet run - which the rolling mean has removed; the opt-out stays because
+# callers and the Tally Interface's checkbox are built around it, and because
+# it is still the only step that is genuinely optional to the rest of the run.
 SKIPPABLE = {"step4"}
 
 _lock = threading.Lock()
@@ -235,8 +236,10 @@ def _summarise_error(step_id, script, stderr, returncode):
 
 def _kill_tree(proc):
     """Kill `proc` and everything it spawned. On Windows terminate() maps to
-    TerminateProcess, which does not touch children — step4 leaves Stan
-    binaries running under it, so taskkill /T is what actually stops the step."""
+    TerminateProcess, which does not touch children, so a step that spawns
+    its own subprocesses would survive it — taskkill /T is what actually
+    stops the step. (This was written for step4's Stan binaries back when it
+    fit Prophet; it stays because the plain terminate() gap is general.)"""
     if proc is None or proc.poll() is not None:
         return
     try:

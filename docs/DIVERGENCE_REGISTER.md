@@ -90,7 +90,7 @@ The three circulating figures each described a different population and each was
 own: `87/56/162 = 305` was pre-canonicalisation and pre-zero-fill on all moving SKUs; the
 `PROJECT_LOG`'s `89` is ≈ the current 92 in the ≥60 tier, also all moving SKUs; the README's
 `38/10/10 = 58` counts Fast SKUs only. 58 is not a subset of a subset — it is the entire population
-`step4_prophet_forecast.py` iterates over, which is why it looked incompatible with the other two.
+`step4_forecast_model.py` iterates over, which is why it looked incompatible with the other two.
 
 The register marked this "fix, don't explain". There was no arithmetic to fix; the fix was to say
 which population each number counts, and that is now asserted rather than asserted-in-prose.

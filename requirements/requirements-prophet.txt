@@ -11,10 +11,12 @@
 # Block 6.2 recorded that Chapter 4's central result was unreproducible
 # from the repo because it required this dependency. It no longer does.
 #
-# step4_prophet_forecast.py is the only file that imports prophet, and it
-# has NOT been re-run since Block 1 or Block 2.2 - its stored forecasts are
-# stale twice over. Re-running it is deferred decision B5 and belongs in
-# its own session.
+# NOTHING IN THE REPO IMPORTS PROPHET ANY MORE. step4 (now
+# step4_forecast_model.py) was the only file that did; it forecasts with a
+# rolling mean and has been re-run, so `Result_Forecast(_Metrics)` is
+# current and needs no part of this file. This requirements file is kept
+# only so the Prophet path can be reinstalled if step4 is ever reverted -
+# it is not needed to run the pipeline, the benchmark, or the tests.
 #
 # Version left unpinned on purpose: nobody has verified one here, and
 # writing a number that has never been run would be worse than leaving it

@@ -16,7 +16,7 @@ POPULATIONS, and each is correct about its own.
     (README)
 
 The first two count every SKU that ever moved. The third counts only
-fsn_class = 'F', which is the population `step4_prophet_forecast.py`
+fsn_class = 'F', which is the population `step4_forecast_model.py`
 actually iterates over. 58 is the size of the F class, so the README
 figure is not a subset-of-a-subset - it is the whole of what step4 sees.
 
@@ -26,7 +26,7 @@ calendar date with quantity_sold > 0. Counting raw Fact_Sales rows
 instead would count zero-fill padding as observations and collapse every
 SKU into the top tier (305 / 0 / 0).
 
-Tier thresholds, matching step4_prophet_forecast.py exactly:
+Tier thresholds, matching step4_forecast_model.py exactly:
     >= 60 sale-days   standard
     30-59 sale-days   simplified
     <  30 sale-days   rolling_average
@@ -127,7 +127,7 @@ def main():
     expect("Fast total (= the F class)", sum(fast_only), EXP_FAST_TOTAL)
 
     print("\nReading: the two rows are not in conflict and never were. The Fast-only")
-    print("row is the one that describes what step4_prophet_forecast.py routes; the")
+    print("row is the one that describes what step4_forecast_model.py routes; the")
     print("all-moving row is the one the 87/56/162 and 89 figures were counting.")
 
     if failures:

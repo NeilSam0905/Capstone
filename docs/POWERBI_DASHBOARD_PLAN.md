@@ -201,14 +201,17 @@ permanently, or invest in closing the coverage gap). Until then, ship the honest
 version above rather than leaving the page blank or, worse, quietly interpolating the missing
 86%.
 
-## 8. View 3 — Demand Forecast *(blocked — no table to point at yet)*
+## 8. View 3 — Demand Forecast *(unblocked — the tables exist)*
 
-**Blocked on B3/B5 and on `step4_prophet_forecast.py` actually running** (needs `cmdstan`, a
-~20-30 min one-time toolchain build — see the repo root README). `Result_Forecast` /
-`Result_Forecast_Metrics` don't exist in the schema yet; there is nothing to build this view
-against today.
+No longer blocked on `cmdstan`. `step4_forecast_model.py` forecasts every Fast SKU with a
+rolling mean, runs in seconds with no toolchain, and has been run: `Result_Forecast` holds
+1,740 rows (58 SKUs x 30 days) and `Result_Forecast_Metrics` holds 144 rows. Two things to
+build against honestly: `yhat` is **flat across the horizon** (the model is a constant per
+SKU, so a forecast line has no slope or seasonality to show), and 5 of the 58 SKUs carry
+`is_heuristic = 1` with null metrics — surface that flag rather than showing a blank
+accuracy cell.
 
-When they do exist, the view is:
+The view is:
 
 | Visual | Fields | Notes |
 |---|---|---|

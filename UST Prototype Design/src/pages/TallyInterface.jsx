@@ -598,9 +598,9 @@ function StalenessBanner({ staleness }) {
 
 /* -------------------------------------------------------------- pipeline */
 
-/** 12.4 -> "12s", 754 -> "12m 34s". step4 fits a Prophet model per Fast SKU
- *  and runs for tens of minutes, so a bare seconds count stops being readable
- *  well before the step is over. */
+/** 12.4 -> "12s", 754 -> "12m 34s". Steps that run past a minute (step0 on a
+ *  full rawdata/ folder, step3 on a large Fact_Sales) need more than a bare
+ *  seconds count to stay readable. */
 function dur(seconds) {
   if (seconds == null) return null;
   const s = Math.round(seconds);
@@ -630,7 +630,7 @@ const IDLE_STEPS = [
   ['Allocate price-grouped rows to SKUs', '~10 s'],
   ['Load Fact_Sales', '~30 s'],
   ['Classify Fast / Slow / Non-moving', '~1 min'],
-  ['Forecast demand (Prophet)', '1-2 hours'],
+  ['Forecast demand (rolling mean)', '~10 s'],
   ['Set supplier lead times', '~5 s'],
   ['Compute ROP / EOQ / safety stock', '~10 s'],
 ].map(([label, estimate], i) => ({

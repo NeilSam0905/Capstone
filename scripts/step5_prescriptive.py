@@ -76,17 +76,40 @@ eligible F+S SKUs. EOQ is batching economics, insensitive to short-run
 forecast error - the coupling to a specific forecast was never load-
 bearing. `--demand-basis` controls this:
 
-    trailing (default) - D is the SKU's own observed trailing-365-day
-        total, no forecast method involved. Reaches 208 of 266 SKUs.
-    forecast - the original behaviour: D from --demand-method's 30-day
-        point forecast, annualised. Reaches 79 (rolling_mean_30) or
-        fewer. Kept for exact reproducibility of prior runs.
+    trailing (DEFAULT, ratified) - D is the SKU's own observed
+        trailing-365-day total, no forecast method involved. Reaches 208
+        of 266 SKUs. This is the default by decision, not by inertia: it
+        prices 2.6x as many SKUs as the alternative and does not make the
+        prescriptive layer hostage to a forecasting-method choice (B3)
+        that is still open.
+    forecast - D from the PIPELINE'S OWN 30-day forecast, annualised
+        x365/30, read out of Result_Forecast.
+
+What changed in `forecast` mode (and why it matters)
+-----------------------------------------------------
+It used to RE-COMPUTE a forecast in-process by calling
+`--demand-method`'s fit_predict over Fact_Sales. That meant this script
+never read Result_Forecast at all, in either mode - so step4's output had
+no consumer anywhere in the pipeline, and `--demand-method` could silently
+disagree with the model step4 had actually published. Two sources of truth
+for "the forecast", one of them invisible on the dashboard.
+
+`forecast` now reads Result_Forecast directly: D = SUM(yhat) over the
+SKU's 30 horizon rows, annualised. Consequences, stated plainly:
+
+  - step4 must have been run. The script exits with a clear message if
+    Result_Forecast is empty, rather than silently falling back.
+  - Coverage is bounded by what step4 forecasts, which is the Fast class
+    ONLY - 58 SKUs. Every S-class SKU is dropped in this mode. That is a
+    real and large coverage loss (208 -> ~58) and is the strongest
+    argument for keeping `trailing` as the default.
+  - `--demand-method` is now IGNORED in forecast mode and warns when
+    passed: the method is whatever step4 published, recorded per row as
+    "result_forecast:<model_type>".
 
 Every row records which basis/method actually fed D (demand_method
-column: "trailing_365d" or the forecast method name) and is flagged
-provisional either way. The choice of default is implemented but not
-unilaterally decided - see REMEDIATION_MASTER_v2.md S1 for the team
-ratification this is pending.
+column: "trailing_365d" or "result_forecast:<model_type>") and is flagged
+provisional either way.
 
 Run (from the repo root):
     python scripts/step5a_set_lead_times.py     # first, if not already run
@@ -143,6 +166,11 @@ MIN_SALE_DAYS_FOR_SIGMA = 10
 
 PROVISIONAL = "PROVISIONAL - pending Block 5 (USTore site visit)"
 
+# VESTIGIAL: none of these callables are invoked any more. `forecast` mode
+# reads Result_Forecast instead of recomputing, and `trailing` mode never used
+# a method at all - so this dict now only supplies argparse's `choices` for the
+# deprecated --demand-method flag, which is kept so existing commands and docs
+# do not break. Delete it and the flag together when nothing references it.
 DEMAND_METHODS = {
     "rolling_median_30": rolling_median_fit_predict(30),
     "rolling_mean_30": rolling_mean_fit_predict(30),
@@ -188,6 +216,27 @@ def load_series(con):
         series[pid] = (g.groupby("calendar_date")["quantity_sold"].sum()
                         .reindex(idx, fill_value=0.0).astype(float).to_numpy())
     return series, products, idx
+
+
+def load_forecast_totals(con):
+    """{product_id: 30-day forecast total} straight out of Result_Forecast,
+    plus the model_type that produced it.
+
+    This is step4's published output - the same numbers the Demand Forecast
+    screen draws - not a forecast recomputed here. Returns ({}, None) when
+    the table is absent or empty so the caller can fail loudly.
+    """
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='Result_Forecast'").fetchone():
+        return {}, None
+    rows = con.execute(
+        "SELECT product_id, SUM(yhat) FROM Result_Forecast GROUP BY product_id").fetchall()
+    models = [r[0] for r in con.execute(
+        "SELECT DISTINCT model_type FROM Result_Forecast").fetchall()]
+    # One model per run in practice; if step4 ever mixes them, name them all
+    # rather than picking one and misreporting the provenance.
+    model_type = "+".join(sorted(m for m in models if m)) or "unknown"
+    return {int(pid): float(total or 0.0) for pid, total in rows}, model_type
 
 
 def seed_dim_parameters(con, demand_method):
@@ -265,9 +314,25 @@ def main():
         return 1
 
     series, products, idx = load_series(con)
-    fit_predict = DEMAND_METHODS[args.demand_method]
-    demand_label = args.demand_method if args.demand_basis == "forecast" else "trailing_365d"
-    print(f"Demand basis: {args.demand_basis} ({demand_label})")
+
+    forecast_totals = {}
+    if args.demand_basis == "forecast":
+        forecast_totals, model_type = load_forecast_totals(con)
+        if not forecast_totals:
+            print("--demand-basis=forecast reads Result_Forecast, which is empty or "
+                  "missing.\nRun scripts/step4_forecast_model.py first, or use "
+                  "--demand-basis=trailing (the default).")
+            return 1
+        demand_label = f"result_forecast:{model_type}"
+        if args.demand_method != ap.get_default("demand_method"):
+            print(f"NOTE: --demand-method={args.demand_method} is ignored in forecast "
+                  f"mode. D now comes from Result_Forecast, published by step4 as "
+                  f"'{model_type}'. See the module docstring.")
+        print(f"Demand basis: forecast, read from Result_Forecast "
+              f"({len(forecast_totals)} SKUs carry one, model_type={model_type})")
+    else:
+        demand_label = "trailing_365d"
+        print(f"Demand basis: trailing (trailing_365d)")
 
     print(f"Holding cost H = {H_PHP_PER_UNIT_YEAR:.4f} PHP/unit/year "
           f"(0.25 x {INVENTORY_VALUE_MID:,.0f} / {UNITS_ON_HAND_ESTIMATE:,.0f})")
@@ -290,7 +355,10 @@ def main():
             continue
 
         if args.demand_basis == "forecast":
-            forecast_30d = float(np.sum(fit_predict(s, HORIZON)))
+            # step4's published 30-day total for this SKU. Absent => step4 does
+            # not forecast it (it covers the Fast class only), so it is not
+            # priced in this mode.
+            forecast_30d = forecast_totals.get(int(pid), 0.0)
             if forecast_30d <= 0:
                 continue
             add = forecast_30d / HORIZON                       # average daily demand

@@ -86,8 +86,9 @@ shape.** Today:
                "forecast": false, "reorder": false }
 ```
 
-- `forecast: false` — `step4_prophet_forecast.py` needs `cmdstan` and has not
-  been re-run; `Result_Forecast` does not exist in the database.
+- `forecast: false` — was true while step4 needed `cmdstan`. It no longer does:
+  `step4_forecast_model.py` forecasts with a rolling mean, and it has been run,
+  so `Result_Forecast` exists and this flag now comes back `true`.
 - `reorder: false` — `Dim_Parameters` is empty. No lead times, ordering cost or
   holding cost have been collected (Block 5, the USTore site visit).
 

@@ -56,9 +56,9 @@ See `UST Prototype Design/BACKEND_TODO.md` for the full contract this implements
 `/api/reorder` now returns real (provisional) ROP / Safety Stock / EOQ from `Result_Prescriptive`,
 grouped per SKU with both ordering-cost scenarios (`low_admin_cost`, `high_goods_value`) nested —
 `Dim_Parameters` and `Result_Prescriptive` were populated this session (see
-`docs/STATUS_AND_NEXT_STEPS.md`). `/api/forecast/:productId` still returns the pending
-shape: Prophet (`step4_prophet_forecast.py`) needs `cmdstan` and has not been re-run, so
-`Result_Forecast` does not exist.
+`docs/STATUS_AND_NEXT_STEPS.md`). `/api/forecast/:productId` returns real data:
+`step4_forecast_model.py` (rolling mean, no `cmdstan`, runs in seconds) has been run and
+`Result_Forecast` holds 1,740 rows across 58 Fast SKUs.
 
 ## Files
 

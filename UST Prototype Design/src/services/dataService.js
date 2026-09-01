@@ -112,7 +112,7 @@ export const getFsnSensitivity = () => get('/fsn/sensitivity');
 
 // ---------------------------- analytics the pipeline has produced (or not) --
 // Do not "fill these in" client-side: forecasts come from
-// step4_prophet_forecast.py and ROP/EOQ from Dim_Parameters +
+// step4_forecast_model.py and ROP/EOQ from Dim_Parameters +
 // step5_prescriptive.py. The backend returns an explicit pending shape
 // ({ available: false, reason, data: null }) rather than a number when the
 // pipeline hasn't produced one.
@@ -224,10 +224,12 @@ export const deleteInventoryCount = countId => del(`/inventory/${countId}`);
 /** Kicks off create_schema.py -> step5_prescriptive.py as a background job.
  *  Returns { ok:false, error } (HTTP 409) if a run is already in progress.
  *
- *  `includeForecast: false` leaves out step4_prophet_forecast.py, which fits a
- *  full-MCMC Prophet model per Fast SKU and takes 1-2 hours; nothing else in
- *  the pipeline reads its output, so the rest of the run (rebuilt database,
- *  FSN classes, reorder points) still finishes in a couple of minutes. */
+ *  `includeForecast: false` leaves out step4_forecast_model.py, which fits a
+ *  rolling mean per Fast SKU. It used to be a full-MCMC Prophet run costing
+ *  1-2 hours, which is where the opt-out comes from; it now finishes in
+ *  seconds. Nothing else in the pipeline reads its output, so the rest of the
+ *  run (rebuilt database, FSN classes, reorder points) is unaffected either
+ *  way. */
 export const runPipeline = ({ includeForecast = true } = {}) =>
   post('/pipeline/run', { include_forecast: includeForecast });
 
