@@ -59,11 +59,12 @@ python scripts/step5_prescriptive.py
 python scripts/verify_data.py        # should print "All data verification checks passed."
 ```
 
-`scripts/step4_prophet_forecast.py` is deliberately not in that list —
-it needs `cmdstan` (a ~20-30 minute one-time toolchain build; see the
-repo root README) and its absence is a documented, handled state: the
+`scripts/step4_forecast_model.py` was left out of that list back when it
+needed `cmdstan` for Prophet. It doesn't any more — it forecasts with a
+rolling mean and finishes in seconds, so you can add it to the sequence
+above. Its absence remains a documented, handled state: skip it and the
 Demand Forecast screen shows a "pending" card rather than a number, and
-`/api/meta`'s `available.forecast` flag is `false` until it's run.
+`/api/meta`'s `available.forecast` flag stays `false` until it's run.
 
 Field names mirror the star schema in `scripts/create_schema.py`
 (`product_id`, `item_name`, `unit_price_php`, `calendar_date`,

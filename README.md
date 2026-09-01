@@ -4,7 +4,7 @@ This branch (`neil`) contains the working data pipeline behind the USTore
 Demand Forecasting & Prescriptive Inventory Management capstone: it turns
 the raw monthly tally-sheet workbooks into a clean star-schema SQLite
 database (`ustore.db`), classifies every product as Fast/Slow/Non-moving,
-and produces Prophet-based 30-day forecasts for the Fast-moving SKUs.
+and produces rolling-mean 30-day forecasts for the Fast-moving SKUs.
 
 The pipeline below (Phases 1–4) is the whole analytics side. A React
 frontend and Flask backend also exist now — see **"Frontend + backend"**
@@ -41,7 +41,7 @@ that touches a CSV (see Block 1 below for what it checks).
 | — | `scripts/proportional_allocation.py` | Splits price-grouped tally rows (a single row covering several SKUs sharing a price point) into per-SKU rows, weighted by each SKU's beginning-of-month stock. Reads step 1's *mapped* CSVs and joins on `canonical_item_name` (see Block 2.2 below); defaults now point at those files, so plain `python scripts/proportional_allocation.py` is correct. Outputs `data/USTore_sales_long_allocated.csv` (+ `data/allocation_audit.csv` documenting every split). Zero-quantity rows survive the split — a grouped row with 0 units on a given day emits 0 for every constituent instead of being dropped. |
 | 2 | `scripts/step2_load_fact_sales.py` | Loads the allocated CSV into `Fact_Sales` (84,399 rows: 68,541 zero-quantity + 15,858 positive; sums to **89,232** units — see Block 0 below for why that's not the older 88,481), routing unresolvable rows to `Exception_Log` instead of dropping them. Item names arrive canonical, so it joins straight to `Dim_Product` and applies no mapping of its own. Derives `cumulative_monthly_units`, `daily_depletion_rate`, `days_of_supply` and `is_censored` — the four rules behind those are settled in the script's docstring and summarised under Blocks 2.4/2.6 below. |
 | 3 | `scripts/step3_fsn_classification.py` | Computes ADUS (Average Daily Units Sold) per SKU, weighting imputed/allocated rows at 0.5, and classifies Fast/Slow/Non-moving at the 80th-percentile ADUS cutoff (currently F=58, S=228, N=233; it was S=230/N=231 before Block 2.2 below). Days flagged `is_censored` are dropped from the ADUS denominator — `EXCLUDE_CENSORED_DAYS = False` reverts that, see Block 2.4 below. Flags High-Velocity-Limited (HVL) items with thin history. Writes `fsn_class`/`is_hvl` back to `Dim_Product`. |
-| 4 | `scripts/step4_prophet_forecast.py` | Fits Prophet per Fast SKU with a data-sufficiency tier, keyed on **distinct sale-days (quantity_sold > 0), not raw row count** — currently 38 standard (60+ sale-days), 10 simplified (30-59), 10 rolling-average (<30, no real model). Validates against a naive baseline, writes 30-day forecasts + metrics to `Result_Forecast` / `Result_Forecast_Metrics`. **Takes 1-2 hours** — each SKU's production model is a full-MCMC fit (`MCMC_SAMPLES = 1000`, per §3.3.2), on top of a MAP fit for validation. Every other step in this table finishes in seconds. |
+| 4 | `scripts/step4_forecast_model.py` | Forecasts **every** Fast SKU with `rolling_mean_30` — literally `forecasting/baselines.py::rolling_mean_fit_predict(30)`, the same callable `model_benchmark.py` scores, so the benchmark's and `SERVICE_LEVEL_FRONTIER.md`'s findings apply to the production model directly. Flat over 30 days, ±1 SD band. Validated on `forecasting/evaluate.py`'s walk-forward harness at the benchmark's exact settings (**horizon 30, 3–12 folds, min_train 60**), so the scoring unit is a **30-day aggregate** — the quantity the pipeline serves — not a daily point. **58 of 58 SKUs scored, 12 folds each**; naive is scored on identical folds. **Takes seconds.** Sale-day tiers (38/10/10) are now descriptive labels only — they select neither model nor harness. Results: 35/58 beat naive (MAE 40.0 vs 104.2), 1/58 meets MAPE ≤20%, and **32/58 forecast zero** because their trailing window is empty — see `docs/ROLLING_MEAN_FORECAST.md` §4, that one is an open decision. Previously fit Prophet per SKU with full-MCMC production fits at 1–2 hours; renamed from `step4_prophet_forecast.py`. |
 | 5a | `scripts/step5a_set_lead_times.py` | Sets `Dim_Product.lead_time_days` per product from a name-keyword classifier (jacket/windbreaker → 28d, embroidered → 18d, shirt/jersey/polo/tee → 14d, else → 18d default). Provisional, pending Block 5 (USTore site visit). |
 | 5 | `scripts/step5_prescriptive.py` | ROP / Safety Stock / EOQ per Fast+Slow SKU, using `step5a`'s real lead time and a holding cost derived from USTore's stated inventory value (arithmetic + every assumption written to `Dim_Parameters`, all flagged provisional). Ordering cost is genuinely ambiguous, so every SKU is priced under **two** scenarios (`low_admin_cost` / `high_goods_value`) rather than one guess — see `docs/STATUS_AND_NEXT_STEPS.md` for the numbers. Writes `Result_Prescriptive`. |
 
@@ -101,7 +101,7 @@ you're revisiting the vocabulary itself).
   installation found" on such a machine — **that error is not a test for
   whether step 4 can run**, because Prophet points at its bundled copy
   rather than at a system install. Verified by running
-  `scripts/step4_prophet_forecast.py` to completion here: exit 0, 1,740
+  step 4 (then `scripts/step4_prophet_forecast.py`) to completion here: exit 0, 1,740
   `Result_Forecast` rows, 139 `Result_Forecast_Metrics` rows, 38 standard
   / 10 simplified / 10 rolling-average, in about 1h50m. The old
   instructions (`install_cxx_toolchain` + `install_cmdstan` with RTools on
@@ -135,9 +135,11 @@ you're revisiting the vocabulary itself).
 - **`semester_week`'s regressor values changed substantially** after the
   Block 1 fix below (512 → 1,453 non-null rows) — a lot of historical
   training data that Prophet fit on previously had `semester_week`
-  silently defaulted to 0. **Phase 3 (`step4_prophet_forecast.py`) has
-  not been re-run since this fix** - the forecasts/metrics currently in
-  `Result_Forecast(_Metrics)` predate it.
+  silently defaulted to 0. Phase 3 (`step4_forecast_model.py`) **has since
+  been re-run**, so `Result_Forecast(_Metrics)` post-dates the fix. Note
+  that `semester_week` is no longer a model input either way: the rolling
+  mean has no regressors, and Dim_Date is now read only to scope the
+  validation metrics.
 
 ## Files intentionally not committed
 
@@ -235,7 +237,7 @@ six-month data shift, with no check that would catch it.
   `proportional_allocation.py` (its silent multi-format ladder that
   returned `None` on failure now raises), `step2_load_fact_sales.py`
   (the DD/MM fallback is gone; a non-ISO date is now an
-  `Exception_Log` row, not a guess). `step4_prophet_forecast.py` reads
+  `Exception_Log` row, not a guess). `step4_forecast_model.py` reads
   only the database and was untouched.
 - **`verify_data.py` extended** from 2 files to every date column in
   all 6 CSVs, plus unit totals for all three sales files. Confirmed it
@@ -463,7 +465,7 @@ wildly different costs:
 | Button | Steps | Time |
 |---|---|---|
 | **Run Pipeline (no forecast)** | everything except step 4 | **~40 s** |
-| **Run Full Pipeline + Forecast** | everything | **1-2 hours** (step 4 alone) |
+| **Run Full Pipeline + Forecast** | everything | **~50 s** (step 4 adds ~10 s) |
 
 Step 4 is the only step that can be opted out of (`pipeline.SKIPPABLE`),
 and it is safe to skip because nothing downstream reads its output —

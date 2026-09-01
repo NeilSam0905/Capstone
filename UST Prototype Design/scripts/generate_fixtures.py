@@ -13,7 +13,7 @@ Nothing here invents a number. Anything the pipeline has not produced is
 absent from the fixtures and flagged in meta.json's `available` block, so
 the UI can render a "pending" state driven by data rather than by a
 hardcoded string. In particular there are NO forecasts and NO ROP/EOQ:
-step4_prophet_forecast.py had not been run when these fixtures were
+step4_forecast_model.py had not been run when these fixtures were
 generated, and Dim_Parameters is empty.
 """
 import json

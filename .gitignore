@@ -12,3 +12,8 @@ venv/
 # raw inventory workbook (~131MB, mostly embedded product photos) - too big for
 # GitHub's 100MB limit; USTore_inventory_excel_long.csv has the usable data
 Copy of USTORE INVENTORY REPORT (1).xlsx
+
+# real client tally-sheet workbooks - sensitive (supplier names, prices, sales
+# volumes) and deliberately not committed. step0 reads them locally; every step
+# after it reads only data/*.csv, which IS committed.
+rawdata/

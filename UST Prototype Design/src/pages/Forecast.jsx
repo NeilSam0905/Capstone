@@ -8,7 +8,7 @@ import { num, shortMonth, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
 /**
  * Demand Forecast.
  *
- * When Result_Forecast exists in the database (step4_prophet_forecast.py has
+ * When Result_Forecast exists in the database (step4_forecast_model.py has
  * run), this screen shows the 30-day forecast with a confidence band and
  * accuracy metrics. When it doesn't, it shows the pending state and the
  * product's real observed monthly history — no fabricated numbers.
@@ -18,7 +18,7 @@ export default function Forecast({ filters }) {
   const { data: forecastMeta } = useData(getForecast, []);
   const [selectedId, setSelectedId] = useState(null);
 
-  // Only SKUs step4_prophet_forecast.py actually produced a forecast for
+  // Only SKUs step4_forecast_model.py actually produced a forecast for
   // (the Fast tier) belong in this dropdown - every other SKU would just
   // open onto the "no forecast" pending state, which is pointless to pick
   // from a list of hundreds. Falls back to every SKU with sales history if
@@ -126,7 +126,7 @@ function ForecastPanel({ productId, forecastMeta }) {
           <span className="section-h">30-Day Demand Forecast — {fd.item_name}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="tag tag--gold">{fd.model_type}</span>
-            {fd.is_heuristic && <span className="tag tag--warn">Heuristic (rolling average)</span>}
+            {fd.is_heuristic && <span className="tag tag--warn">Unvalidated</span>}
             <span className="hint">Generated {usDate(fd.snapshot_date)}</span>
           </div>
         </div>
@@ -138,9 +138,9 @@ function ForecastPanel({ productId, forecastMeta }) {
 
         {fd.is_heuristic && (
           <div className="notice notice--warn" style={{ marginTop: 12 }}>
-            <b>Heuristic forecast:</b> This SKU has too few sale-days for a proper model fit.
-            The line is a 30-day rolling average, not a Prophet model — treat it as a rough
-            estimate, not a statistical forecast.
+            <b>Unvalidated forecast:</b> Every SKU is forecast with the same rolling mean,
+            but this one&rsquo;s history is too short to hold out a test window, so there are
+            no accuracy metrics behind the line — treat it as a rough estimate.
           </div>
         )}
       </div>

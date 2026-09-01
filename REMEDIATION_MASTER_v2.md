@@ -465,7 +465,7 @@ S1 and S12 change figures that C1–C4 and the adviser one-pager quote.
    `pip install --only-binary=:all: prophet==1.4.0`. If it succeeds, B5 is dead and Objective 3 is
    back. If it fails, send me the error. *(O1)*
 4. **Apply the Wave-1 patches** (D1, D2, D3, S12, S10) and re-run the benchmark **once**, not twice.
-5. **Re-run `step4_prophet_forecast.py`** if 3 succeeded, then add Prophet as method 9.
+5. **Re-run `step4_forecast_model.py`** if 3 succeeded, then add Prophet as method 9.
 6. **Start Power BI views 2, 4 and 5.** None of them is blocked. Build the "export result tables to
    CSV" step rather than chasing an ODBC driver. *(O3)*
 
