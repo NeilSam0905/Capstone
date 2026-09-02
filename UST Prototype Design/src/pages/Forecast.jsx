@@ -108,7 +108,7 @@ function ForecastPanel({ productId, forecastMeta }) {
           reason={forecast?.reason ?? forecastMeta?.reason}
         />
         <Pending
-          title="Accuracy metrics pending"
+          title="Reliability check pending"
           reason={forecast?.reason ?? forecastMeta?.reason}
         />
       </>
@@ -138,69 +138,65 @@ function ForecastPanel({ productId, forecastMeta }) {
 
         {fd.is_heuristic && (
           <div className="notice notice--warn" style={{ marginTop: 12 }}>
-            <b>Unvalidated forecast:</b> Every SKU is forecast with the same rolling mean,
-            but this one&rsquo;s history is too short to hold out a test window, so there are
-            no accuracy metrics behind the line — treat it as a rough estimate.
+            Not enough sales history yet to double-check this forecast — treat it as a rough estimate.
           </div>
         )}
       </div>
 
-      {/* Accuracy metrics */}
+      {/* Reliability — plain-language summary, no raw error metrics */}
       <div className="card card__pad">
         <div className="card-h">
-          <span className="section-h">Forecast Accuracy Metrics</span>
-          <span className="hint">from Result_Forecast_Metrics · pipeline output, not computed by the frontend</span>
+          <span className="section-h">How Reliable Is This Forecast?</span>
         </div>
-        {fd.metrics && fd.metrics.length > 0 ? (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="tbl" style={{ minWidth: 800 }}>
-              <thead>
-                <tr>
-                  <th>Tier</th>
-                  <th>Period</th>
-                  <th>Validation</th>
-                  <th className="num">n</th>
-                  <th className="num">MAE</th>
-                  <th className="num">RMSE</th>
-                  <th className="num">MAPE</th>
-                  <th className="num">Naive MAE</th>
-                  <th className="num">Naive RMSE</th>
-                  <th>Beats Naive?</th>
-                </tr>
-              </thead>
-              <tbody>
-                {fd.metrics.map((m, i) => (
-                  <tr key={i}>
-                    <td><span className="tag tag--gold">{m.tier}</span></td>
-                    <td>{m.period_scope}</td>
-                    <td className="hint">{m.validation_method}</td>
-                    <td className="num">{m.n_obs}</td>
-                    <td className="num">{m.mae != null ? m.mae.toFixed(2) : '—'}</td>
-                    <td className="num">{m.rmse != null ? m.rmse.toFixed(2) : '—'}</td>
-                    <td className="num">
-                      {m.mape != null
-                        ? <span style={m.meets_mape_threshold ? { color: 'var(--ok)', fontWeight: 700 } : undefined}>
-                            {m.mape.toFixed(1)}%
-                          </span>
-                        : '—'}
-                    </td>
-                    <td className="num">{m.naive_mae != null ? m.naive_mae.toFixed(2) : '—'}</td>
-                    <td className="num">{m.naive_rmse != null ? m.naive_rmse.toFixed(2) : '—'}</td>
-                    <td>
-                      {m.beats_naive_mae
-                        ? <span className="tag tag--ok">Yes</span>
-                        : <span className="tag tag--crit">No</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="hint">No accuracy metrics recorded for this SKU.</div>
-        )}
+        <ReliabilitySummary metrics={fd.metrics} isHeuristic={fd.is_heuristic} />
       </div>
     </>
+  );
+}
+
+/**
+ * Translates Result_Forecast_Metrics into one plain-language badge and
+ * sentence instead of a raw MAE/RMSE/MAPE table. MAPE is deliberately never
+ * shown here: on this dataset it's undefined whenever a period had zero
+ * actual sales (the common case) and reads as 100%+ even for a working
+ * forecast, so surfacing it to a non-technical reader does more harm than
+ * good (see docs/DEGENERATE_FORECAST.md, docs/SPARSE_DEMAND_EXPERIMENTS.md).
+ */
+function ReliabilitySummary({ metrics, isHeuristic }) {
+  if (isHeuristic) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span className="tag tag--warn">Not enough history yet</span>
+        <span className="hint">This item hasn&rsquo;t sold long enough to check this forecast against real results.</span>
+      </div>
+    );
+  }
+
+  const overall = metrics?.find(m => m.period_scope === 'overall') ?? metrics?.[0];
+  if (!overall || overall.mae == null) {
+    return <div className="hint">No accuracy check recorded for this SKU yet.</div>;
+  }
+
+  const reliable = !!overall.beats_naive_mae;
+  const typicalOff = Math.round(overall.mae);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span className={`tag tag--${reliable ? 'ok' : 'warn'}`}>
+          {reliable ? 'Reliable' : 'Rough estimate'}
+        </span>
+        <span className="hint">
+          {reliable
+            ? 'More accurate than just repeating last month’s number.'
+            : 'No more accurate than repeating last month’s number — use with caution.'}
+        </span>
+      </div>
+      <span className="hint">
+        Checked against {overall.n_obs} past 30-day period{overall.n_obs === 1 ? '' : 's'} of real sales —
+        actual sales were typically about {typicalOff} unit{typicalOff === 1 ? '' : 's'} away from this forecast.
+      </span>
+    </div>
   );
 }
 

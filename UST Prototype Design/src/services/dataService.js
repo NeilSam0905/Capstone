@@ -106,6 +106,13 @@ export const getBatchReport = month => get(`/reports/batch${qs({ month })}`);
 export const batchReportPdfUrl = (month, { inline = false } = {}) =>
   `${API_BASE}/reports/batch.pdf?month=${encodeURIComponent(month)}${inline ? '&inline=1' : ''}`;
 
+/** Same report, as a raw-data-shaped .csv/.xlsx download - same shared body
+ *  as the PDF (backend/batch_export.py), so the numbers can never diverge. */
+export const batchReportCsvUrl = month =>
+  `${API_BASE}/reports/batch.csv?month=${encodeURIComponent(month)}`;
+export const batchReportXlsxUrl = month =>
+  `${API_BASE}/reports/batch.xlsx?month=${encodeURIComponent(month)}`;
+
 // ---------------------------------------------------------------- FSN
 
 export const getFsnSensitivity = () => get('/fsn/sensitivity');

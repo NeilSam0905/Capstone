@@ -59,6 +59,7 @@ from forecasting.baselines import (
     rolling_quantile_fit_predict, seasonal_naive_fit_predict,
 )
 from forecasting.evaluate import evaluate_methods, summarise
+from forecasting.hurdle import logistic_hurdle_fit_predict, weekly_hurdle_fit_predict
 from forecasting.intermittent import (
     croston_fit_predict, sba_fit_predict, tsb_fit_predict,
 )
@@ -116,6 +117,8 @@ def build_methods(quick=False):
         "ets": ets_fit_predict(7, optimise=not quick),
         "ewma_a0.1": ewma_fit_predict(0.1),
         "rolling_q75_30": rolling_quantile_fit_predict(30, 0.75),
+        "weekly_hurdle_12w": weekly_hurdle_fit_predict(12),
+        "logistic_hurdle": logistic_hurdle_fit_predict(),
     }
 
 
