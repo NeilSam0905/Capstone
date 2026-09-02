@@ -146,8 +146,8 @@ def _supplier_block(pdf, entry):
     pdf.set_font("Helvetica", "B", 7.5)
     pdf.cell(COL_ITEM, 6, _txt("  ITEM"), fill=True)
     pdf.cell(COL_QTY, 6, _txt("QUANTITY  "), align="R", fill=True)
-    pdf.cell(COL_PRICE, 6, _txt("UNIT PRICE  "), align="R", fill=True)
-    pdf.cell(COL_TOTAL, 6, _txt("LINE TOTAL  "), align="R", fill=True,
+    pdf.cell(COL_PRICE, 6, _txt("ITEM PRICE  "), align="R", fill=True)
+    pdf.cell(COL_TOTAL, 6, _txt("FOR REMITTANCE  "), align="R", fill=True,
              new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_font("Helvetica", "", 8.5)
@@ -238,19 +238,5 @@ def render(report, month):
                           f"Line items: {sum(len(e['items']) for e in report)}    "
                           f"Prepared for: UST Purchasing Office / Finance Department"),
              new_x="LMARGIN", new_y="NEXT")
-
-    # Signature block: this sheet is the basis of a payment, so it needs
-    # somewhere for the two offices to sign off, the way the paper one does.
-    pdf.ln(10)
-    pdf.set_text_color(*INK)
-    pdf.set_font("Helvetica", "", 8.5)
-    for label in ("Prepared by (USTore)", "Verified by (Purchasing Office)", "Approved by (Finance)"):
-        pdf.cell(63, 5, _txt("_" * 28))
-    pdf.ln(5)
-    for label in ("Prepared by (USTore)", "Verified by (Purchasing Office)", "Approved by (Finance)"):
-        pdf.set_font("Helvetica", "", 7.5)
-        pdf.set_text_color(*GREY)
-        pdf.cell(63, 4, _txt(label))
-    pdf.ln(4)
 
     return bytes(pdf.output())
