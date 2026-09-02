@@ -205,7 +205,7 @@ wildly different costs:
 
 | Button | Steps | Time |
 |---|---|---|
-| **Run Pipeline (no forecast)** | everything except step 4 | **~40 s** |
+| **Run Pipeline (Without Forecast)** | everything except step 4 | **~40 s** |
 | **Run Full Pipeline + Forecast** | everything | **~50 s** (step 4 adds ~10 s) |
 
 Step 4 is the only step that can be opted out of (`pipeline.SKIPPABLE`),

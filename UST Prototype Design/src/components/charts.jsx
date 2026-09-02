@@ -5,7 +5,52 @@
  * value axis can be units as well as pesos.
  */
 
+import { useRef, useState } from 'react';
+
 import { num, DONUT_COLORS } from '../lib/format';
+
+/** Map a pointer event into an SVG's own viewBox coordinates, and back again.
+ *
+ *  `getScreenCTM()` is the only correct way to do this. Deriving the position
+ *  from getBoundingClientRect() assumes the viewBox spans the full element
+ *  width, which is false whenever preserveAspectRatio letterboxes the content
+ *  — with `width="100%"` and a fixed `height`, any container wider than the
+ *  viewBox draws the chart centred with empty margins either side, and a
+ *  rect-based cursor mapping drifts further the wider the container gets.
+ *
+ *  Returns null when the SVG is not laid out yet (getScreenCTM() is null for a
+ *  detached or display:none element).
+ */
+function svgPoint(svg, clientX, clientY) {
+  const ctm = svg?.getScreenCTM?.();
+  if (!ctm) return null;
+  const pt = svg.createSVGPoint();
+  pt.x = clientX;
+  pt.y = clientY;
+  return pt.matrixTransform(ctm.inverse());
+}
+
+/** Inverse of svgPoint: a viewBox x, as pixels from the SVG's left edge. */
+function svgXToLocalPx(svg, vbX) {
+  const ctm = svg?.getScreenCTM?.();
+  if (!ctm) return null;
+  const pt = svg.createSVGPoint();
+  pt.x = vbX;
+  pt.y = 0;
+  return pt.matrixTransform(ctm).x - svg.getBoundingClientRect().left;
+}
+
+/** Shared hover readout. Positioned in the chart's own coordinate space by the
+ *  caller, so it works the same in an SVG viewBox as in a flow layout. */
+function ChartTip({ label, value, sub }) {
+  return (
+    <div className="charttip">
+      <div className="charttip__label">{label}</div>
+      <div className="charttip__value">{value}</div>
+      {sub && <div className="charttip__sub">{sub}</div>}
+    </div>
+  );
+}
 
 /* ---------- Line chart ---------- */
 export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', tickFmt = num }) {
@@ -32,8 +77,30 @@ export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', 
   // keep the x-axis readable when there are many periods
   const labelEvery = Math.ceil(data.length / 14);
 
+  // Hover is tracked as an index, not a pixel: the pointer is mapped back
+  // through the same x() the points were drawn with, so the highlighted point
+  // is always the nearest one rather than whatever happens to be under the
+  // cursor in a rescaled viewBox.
+  // { i, left } — the snapped point index, plus where that point actually is
+  // in pixels, so the tooltip sits exactly over the crosshair no matter how
+  // the viewBox has been scaled or letterboxed.
+  const [hover, setHover] = useState(null);
+  const svgRef = useRef(null);
+
+  function onMove(e) {
+    const local = svgPoint(svgRef.current, e.clientX, e.clientY);
+    if (!local) return;
+    const t = (local.x - padL) / (W - padL - padR);
+    const i = Math.round(t * (data.length - 1));
+    if (i < 0 || i >= data.length) { setHover(null); return; }
+    setHover({ i, left: svgXToLocalPx(svgRef.current, x(i)) });
+  }
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+    <div style={{ position: 'relative' }}>
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
+         style={{ display: 'block' }}
+         onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
       <defs>
         <linearGradient id="lcg" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.22" />
@@ -56,7 +123,21 @@ export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', 
       {xs.map((m, i) => (i % labelEvery === 0
         ? <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="10.5" fill="var(--muted)">{m}</text>
         : null))}
+      {hover && (
+        <g pointerEvents="none">
+          <line x1={x(hover.i)} y1={padT} x2={x(hover.i)} y2={H - padB}
+                stroke="var(--accent)" strokeWidth="1" strokeDasharray="3 3" />
+          <circle cx={x(hover.i)} cy={y(ys[hover.i])} r="5.5"
+                  fill="var(--accent)" stroke="var(--card)" strokeWidth="2" />
+        </g>
+      )}
     </svg>
+    {hover && hover.left != null && (
+      <div className="charttip-wrap" style={{ left: `${hover.left}px` }}>
+        <ChartTip label={xs[hover.i]} value={tickFmt(ys[hover.i])} sub="units" />
+      </div>
+    )}
+    </div>
   );
 }
 
@@ -77,20 +158,85 @@ export function Donut({ data, size = 180 }) {
     const large = frac > 0.5 ? 1 : 0;
     const [x0, y0] = p(a0, R), [x1, y1] = p(a1, R);
     const [x2, y2] = p(a1, r), [x3, y3] = p(a0, r);
-    const dStr = `M${x0},${y0} A${R},${R} 0 ${large} 1 ${x1},${y1} L${x2},${y2} A${r},${r} 0 ${large} 0 ${x3},${y3} Z`;
-    return { dStr, color: DONUT_COLORS[i % DONUT_COLORS.length], ...d, pct: Math.round(frac * 100) };
+
+    // A slice covering the whole circle has IDENTICAL start and end points,
+    // and the SVG spec says an elliptical arc whose endpoints coincide is
+    // "equivalent to omitting the arc segment entirely" - so a lone 100%
+    // category rendered a blank ring with only the legend beside it. Draw it
+    // as two half-circles instead, which has no degenerate case.
+    const dStr = frac >= 0.9999
+      ? [
+          `M${cx},${cy - R}`,
+          `A${R},${R} 0 1 1 ${cx},${cy + R}`,
+          `A${R},${R} 0 1 1 ${cx},${cy - R}`,
+          `M${cx},${cy - r}`,
+          `A${r},${r} 0 1 0 ${cx},${cy + r}`,
+          `A${r},${r} 0 1 0 ${cx},${cy - r}`,
+          'Z',
+        ].join(' ')
+      : `M${x0},${y0} A${R},${R} 0 ${large} 1 ${x1},${y1} L${x2},${y2} A${r},${r} 0 ${large} 0 ${x3},${y3} Z`;
+
+    return {
+      dStr,
+      full: frac >= 0.9999,
+      color: DONUT_COLORS[i % DONUT_COLORS.length],
+      ...d,
+      // Round to 1dp below 1% so a tiny-but-real category is not shown as 0%.
+      pct: frac >= 0.01 ? Math.round(frac * 100) : Math.round(frac * 1000) / 10,
+    };
   });
+  // One hover index drives both the ring and the legend, so pointing at either
+  // highlights the other - the legend is the label for the slice, and reading
+  // a donut means pairing them.
+  const [hover, setHover] = useState(null);
+  const active = hover != null ? arcs[hover] : null;
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
-      <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} style={{ flexShrink: 0 }}>
-        {arcs.map((a, i) => <path key={i} d={a.dStr} fill={a.color} stroke="var(--card)" strokeWidth="2" />)}
-      </svg>
+      <div style={{ position: 'relative', flexShrink: 0 }}>
+        <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
+          {arcs.map((a, i) => (
+            <path
+              key={i}
+              d={a.dStr}
+              fill={a.color}
+              fillRule={a.full ? 'evenodd' : undefined}
+              stroke="var(--card)"
+              strokeWidth={a.full ? 0 : 2}
+              opacity={hover == null || hover === i ? 1 : 0.35}
+              style={{ cursor: 'pointer', transition: 'opacity .12s' }}
+              onMouseEnter={() => setHover(i)}
+              onMouseLeave={() => setHover(null)}
+            />
+          ))}
+        </svg>
+        {/* Centre readout rather than a floating tip: the donut has a hole,
+            and the hole is exactly where the eye already is. */}
+        <div className="donut__centre">
+          <div className="donut__centre-val">{active ? `${active.pct}%` : num(total)}</div>
+          <div className="donut__centre-lbl">{active ? active.name : 'total units'}</div>
+        </div>
+      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 9, minWidth: 130 }}>
         {arcs.map((a, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+          <div
+            key={i}
+            onMouseEnter={() => setHover(i)}
+            onMouseLeave={() => setHover(null)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, fontSize: 12,
+              cursor: 'pointer', borderRadius: 4,
+              background: hover === i ? 'var(--bg)' : 'transparent',
+              opacity: hover == null || hover === i ? 1 : 0.5,
+              padding: '2px 4px', margin: '-2px -4px',
+              transition: 'opacity .12s, background .12s',
+            }}
+          >
             <i style={{ width: 11, height: 11, borderRadius: 3, background: a.color, flexShrink: 0 }} />
             <span style={{ color: 'var(--text-2)', fontWeight: 600, flex: 1 }}>{a.name}</span>
-            <span style={{ color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>{a.pct}%</span>
+            <span style={{ color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>
+              {hover === i ? num(a.value) : `${a.pct}%`}
+            </span>
           </div>
         ))}
       </div>
@@ -102,15 +248,33 @@ export function Donut({ data, size = 180 }) {
 export function HBars({ data, valueFmt = num, color = 'var(--ink)' }) {
   if (!data.length) return <div className="empty">No data.</div>;
   const max = Math.max(...data.map(d => d.value)) || 1;
+  const [hover, setHover] = useState(null);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
       {data.map((d, i) => (
-        <div key={i} style={{ display: 'grid', gridTemplateColumns: '170px 1fr auto', alignItems: 'center', gap: 12 }}>
-          <span title={d.name} style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
-          <div style={{ height: 14, background: 'var(--bg)', borderRadius: 4, overflow: 'hidden' }}>
-            <div style={{ width: `${(d.value / max) * 100}%`, height: '100%', background: d.color || color, borderRadius: 4 }} />
+        <div
+          key={i}
+          onMouseEnter={() => setHover(i)}
+          onMouseLeave={() => setHover(null)}
+          style={{
+            display: 'grid', gridTemplateColumns: '170px 1fr auto', alignItems: 'center', gap: 12,
+            background: hover === i ? 'var(--bg)' : 'transparent',
+            borderRadius: 6, padding: '3px 5px', margin: '-3px -5px',
+            transition: 'background .12s',
+          }}
+        >
+          <span title={d.name} style={{ fontSize: 12, color: hover === i ? 'var(--text)' : 'var(--text-2)', fontWeight: hover === i ? 700 : 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
+          <div style={{ height: 14, background: 'var(--bg)', borderRadius: 4, overflow: 'hidden', outline: hover === i ? '1px solid var(--line)' : 'none' }}>
+            <div style={{
+              width: `${(d.value / max) * 100}%`, height: '100%',
+              background: d.color || color, borderRadius: 4,
+              filter: hover === i ? 'none' : hover == null ? 'none' : 'saturate(.4) opacity(.55)',
+              transition: 'filter .12s',
+            }} />
           </div>
-          <span style={{ fontSize: 11.5, color: 'var(--muted)', fontVariantNumeric: 'tabular-nums', minWidth: 56, textAlign: 'right' }}>{valueFmt(d.value)}</span>
+          <span style={{ fontSize: 11.5, color: hover === i ? 'var(--text)' : 'var(--muted)', fontWeight: hover === i ? 700 : 400, fontVariantNumeric: 'tabular-nums', minWidth: 56, textAlign: 'right' }}>
+            {valueFmt(d.value)}{hover === i && max ? ` · ${Math.round((d.value / max) * 100)}%` : ''}
+          </span>
         </div>
       ))}
     </div>
@@ -149,17 +313,41 @@ export function GroupedBars({ groups, series, height = 190 }) {
 }
 
 /* ---------- FSN stat row ---------- */
-export function FSNStat({ label, count, pct, tone }) {
+/** One FSN band. Pass `onClick` to make it open that band's item list.
+ *
+ *  The call-to-action line is always in the DOM and only fades in on hover, so
+ *  the row never changes height - a CTA that appears on hover and pushes the
+ *  rows below it down makes the thing you were aiming at move away from the
+ *  cursor. */
+export function FSNStat({ label, count, pct, tone, onClick }) {
   const map = { ok: ['var(--ok)', 'var(--ok-bg)'], warn: ['var(--warn)', 'var(--warn-bg)'], crit: ['var(--crit)', 'var(--crit-bg)'] };
   const [c, bg] = map[tone];
+
+  const body = (
+    <>
+      <span className="fsnstat__top">
+        <span>
+          <span className="fsnstat__label" style={{ color: c }}>{label}</span>
+          <span className="fsnstat__count" style={{ color: c }}>{count}</span>
+        </span>
+        <span className="tag" style={{ color: c, background: 'var(--card)', borderColor: c + '55' }}>{pct}%</span>
+      </span>
+      {onClick && (
+        <span className="fsnstat__cta" style={{ color: c }}>
+          Click to see the {label} items &rarr;
+        </span>
+      )}
+    </>
+  );
+
+  if (!onClick) {
+    return <div className="fsnstat" style={{ background: bg }}>{body}</div>;
+  }
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: bg, borderRadius: 'var(--r-sm)', padding: '10px 13px' }}>
-      <div>
-        <div style={{ fontSize: 11.5, fontWeight: 700, color: c }}>{label}</div>
-        <div style={{ fontSize: 24, fontWeight: 800, color: c, lineHeight: 1.1 }}>{count}</div>
-      </div>
-      <span className="tag" style={{ color: c, background: 'var(--card)', borderColor: c + '55' }}>{pct}%</span>
-    </div>
+    <button type="button" className="fsnstat is-clickable" style={{ background: bg }}
+            onClick={onClick} title={`Click to see the ${label} items`}>
+      {body}
+    </button>
   );
 }
 
@@ -203,8 +391,25 @@ export function ForecastChart({ data, height = 260 }) {
     return d;
   };
 
+  const [hover, setHover] = useState(null);
+  const svgRef = useRef(null);
+
+  function onMove(e) {
+    const local = svgPoint(svgRef.current, e.clientX, e.clientY);
+    if (!local) return;
+    const t = (local.x - padL) / (W - padL - padR);
+    const i = Math.round(t * (data.length - 1));
+    if (i < 0 || i >= data.length) { setHover(null); return; }
+    setHover({ i, left: svgXToLocalPx(svgRef.current, x(i)) });
+  }
+
+  const hd = hover ? data[hover.i] : null;
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
+    <div style={{ position: 'relative' }}>
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
+         style={{ display: 'block' }}
+         onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
       <defs>
         <linearGradient id="fcg" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.15" />
@@ -233,7 +438,31 @@ export function ForecastChart({ data, height = 260 }) {
       {data.map((d, i) => (i % labelEvery === 0
         ? <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="10.5" fill="var(--muted)">{fmtDate(d.forecast_date)}</text>
         : null))}
+      {hd && (
+        <g pointerEvents="none">
+          <line x1={x(hover.i)} y1={padT} x2={x(hover.i)} y2={H - padB}
+                stroke="var(--accent)" strokeWidth="1" strokeDasharray="3 3" />
+          {hd.yhat_upper != null && hd.yhat_lower != null && (
+            <line x1={x(hover.i)} y1={y(hd.yhat_upper)} x2={x(hover.i)} y2={y(hd.yhat_lower)}
+                  stroke="var(--accent)" strokeWidth="6" strokeOpacity=".18" strokeLinecap="round" />
+          )}
+          <circle cx={x(hover.i)} cy={y(hd.yhat)} r="5.5"
+                  fill="var(--accent)" stroke="var(--card)" strokeWidth="2" />
+        </g>
+      )}
     </svg>
+    {hd && hover.left != null && (
+      <div className="charttip-wrap" style={{ left: `${hover.left}px` }}>
+        <ChartTip
+          label={fmtDate(hd.forecast_date)}
+          value={num(Math.round(hd.yhat))}
+          sub={hd.yhat_lower != null && hd.yhat_upper != null
+            ? `${num(Math.round(hd.yhat_lower))} – ${num(Math.round(hd.yhat_upper))}`
+            : 'units'}
+        />
+      </div>
+    )}
+    </div>
   );
 }
 
