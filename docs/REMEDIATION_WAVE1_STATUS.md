@@ -1,7 +1,7 @@
 # Remediation Master v2 — Wave 1 status
 
 **Date:** 2026-08-19
-**Source:** `REMEDIATION_MASTER_v2.md` (repo root, untracked — treated as a frozen input document,
+**Source:** `docs/REMEDIATION_MASTER_v2.md` (moved here from the repo root — treated as a frozen input document,
 not edited by this pass). Executed per `[[goofy-kindling-bubble]]` plan, approved without changes.
 
 This is the record the remediation doc itself asks for: what changed, why it's a defensible
