@@ -14,7 +14,8 @@ import { num, shortMonth, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
  * product's real observed monthly history — no fabricated numbers.
  */
 export default function Forecast({ filters }) {
-  const { data: products, loading } = useData(() => getProducts(filters), [filters], []);
+  const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
+    { key: `forecast:products:${filters.supplier}|${filters.category}` });
   const { data: forecastMeta } = useData(getForecast, []);
   const [selectedId, setSelectedId] = useState(null);
 
@@ -91,7 +92,8 @@ export default function Forecast({ filters }) {
 
 function ForecastPanel({ productId, forecastMeta }) {
   const { data: forecast, loading } = useData(
-    () => getProductForecast(productId), [productId]
+    () => getProductForecast(productId), [productId], null,
+    { key: `forecast:${productId}` }
   );
 
   if (loading) return <Loading label="Loading forecast…" />;
@@ -205,7 +207,8 @@ function ForecastPanel({ productId, forecastMeta }) {
 }
 
 function HistoryChart({ productId }) {
-  const { data, loading } = useData(() => getProductHistory(productId), [productId], []);
+  const { data, loading } = useData(() => getProductHistory(productId), [productId], [],
+    { key: `history:${productId}` });
   if (loading) return <Loading />;
   if (!data || data.length === 0) return <div className="empty">No monthly history for this product.</div>;
   return <LineChart data={data.map(d => ({ label: shortMonth(d.month), value: d.units }))} height={240} />;

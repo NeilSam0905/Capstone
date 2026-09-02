@@ -101,7 +101,10 @@ function Dashboard({ page, setPage, filters, setFilters, setView }) {
         <FilterBar filters={filters} setFilters={setFilters} pageTitle={PAGE_TITLES[page]} />
         <div className="scroll">
           {connectionError && <ErrorBanner error={connectionError} />}
-          <PageComponent filters={filters} />
+          {/* setPage is handed to every page so a KPI or a chart can act as a
+              link into the page that explains it — the ROP tile into Reorder
+              Alerts, the FSN card into Classification. */}
+          <PageComponent filters={filters} setPage={setPage} />
         </div>
       </div>
     </div>

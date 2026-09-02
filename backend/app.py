@@ -22,7 +22,9 @@ flask-cors is enabled anyway as a fallback for direct access.
 """
 import csv
 import io
+import re
 from datetime import date, datetime
+from pathlib import Path
 
 from flask import Flask, Response, g, jsonify, request
 from flask_cors import CORS
@@ -35,6 +37,154 @@ import validation
 
 app = Flask(__name__)
 CORS(app)
+
+# Uploaded workbooks are archived here, so a spreadsheet imported through the
+# interface lands in the same folder step0 reads its source workbooks from.
+# Gitignored (real client data), and created on demand rather than assumed -
+# a clean clone has no rawdata/.
+RAWDATA_DIR = Path(__file__).resolve().parent.parent / "rawdata"
+
+# An import is a whole workbook, so the JSON-sized default is far too small,
+# but an unbounded upload is a trivial way to fill the disk. The largest file
+# in rawdata/ today is ~2 MB.
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+
+
+def _safe_name(name):
+    """Filenames are built from user-supplied months/dates, so strip anything
+    that could climb out of RAWDATA_DIR before it reaches the filesystem."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", str(name))
+
+
+def _write_rawdata(filename, payload):
+    """Archive an uploaded file into rawdata/ and return the path, or None if
+    it could not be written. A failed archive must never fail the import: the
+    rows the user wanted loaded are the point, the copy is a side effect."""
+    try:
+        RAWDATA_DIR.mkdir(parents=True, exist_ok=True)
+        path = RAWDATA_DIR / _safe_name(filename)
+        path.write_bytes(payload)
+        return str(path)
+    except OSError as exc:
+        app.logger.warning("could not write %s to rawdata/: %s", filename, exc)
+        return None
+
+
+def _norm_header(s):
+    """'Units On Hand' / 'units_on_hand' / ' UNITS ON HAND ' -> 'unitsonhand'.
+    The store's workbooks are hand-kept and their headers vary in case,
+    spacing and punctuation; matching on letters and digits alone is what
+    lets one importer read all of them."""
+    return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+
+def _read_table(storage):
+    """Read an uploaded .csv/.xlsx into (headers, rows-as-dicts).
+
+    Raises ValueError with a message meant for the user - the interface shows
+    it verbatim, so it has to say what to fix, not what went wrong internally.
+    """
+    name = (storage.filename or "").lower()
+    raw = storage.read()
+    if not raw:
+        raise ValueError("The file is empty.")
+
+    if name.endswith(".xlsx"):
+        from openpyxl import load_workbook
+        try:
+            # read_only + data_only: we want values, not formulas, and these
+            # workbooks can carry thousands of rows of embedded formatting.
+            wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        except Exception as exc:                       # openpyxl raises a zoo
+            raise ValueError(f"Could not read that .xlsx file ({exc}).") from exc
+        ws = wb.active
+        table = [list(r) for r in ws.iter_rows(values_only=True)]
+    elif name.endswith(".csv"):
+        for encoding in ("utf-8-sig", "utf-8", "cp1252"):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            raise ValueError("Could not decode that CSV - save it as UTF-8 and retry.")
+        table = [row for row in csv.reader(io.StringIO(text))]
+    else:
+        raise ValueError("Upload a .csv or .xlsx file.")
+
+    table = [r for r in table if any(str(c).strip() for c in r if c is not None)]
+    if not table:
+        raise ValueError("The file has no rows.")
+
+    headers = [_norm_header(h) for h in table[0]]
+    rows = []
+    for values in table[1:]:
+        row = {}
+        for i, h in enumerate(headers):
+            if h:
+                row[h] = values[i] if i < len(values) else None
+        rows.append(row)
+    return headers, rows
+
+
+def _pick(row, *names):
+    """First non-empty value among several accepted column spellings."""
+    for n in names:
+        v = row.get(_norm_header(n))
+        if v is not None and str(v).strip() != "":
+            return v
+    return None
+
+
+def _as_int(value):
+    """Spreadsheet numbers arrive as 5, 5.0 or '5' depending on the cell.
+    Returns None when the value is not a whole number."""
+    try:
+        f = float(str(value).strip().replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+    return int(f) if f == int(f) else None
+
+
+def _as_iso_date(value):
+    """Accept a real date cell, an ISO string, or nothing. Deliberately does
+    NOT accept DD/MM or MM/DD: the whole pipeline refuses ambiguous dates for
+    the reason set out in the README, and an importer is exactly where a
+    silently-misread date would do the most damage."""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    s = str(value or "").strip()[:10]
+    return s if validation.ISO_DATE_RE.match(s) else None
+
+
+def _product_index(c):
+    """Lowercased item_name -> product_id, for matching a spreadsheet's item
+    column against the controlled vocabulary."""
+    return {r["item_name"].strip().lower(): r["product_id"]
+            for r in dbmod.rows(c, "SELECT product_id, item_name FROM Dim_Product")}
+
+
+def _accepted_upload(storage):
+    """Reject anything that is not a spreadsheet BEFORE it is archived.
+
+    rawdata/ is a pipeline input folder - step0 globs it - so letting an
+    unparseable upload land there would put junk in front of the ETL. The
+    extension check therefore gates the archive, not just the parse."""
+    name = (storage.filename or "").lower()
+    if not (name.endswith(".csv") or name.endswith(".xlsx")):
+        return "Upload a .csv or .xlsx file."
+    return None
+
+
+def _archive_upload(storage):
+    """Keep the file exactly as uploaded, under a timestamped name so two
+    imports of the same workbook do not overwrite each other."""
+    storage.stream.seek(0)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return _write_rawdata(f"import_{stamp}_{storage.filename or 'upload'}",
+                          storage.stream.read())
 
 
 def con():
@@ -159,6 +309,128 @@ def get_products():
         cat = [p for p in cat if p["is_active"] and p["total_units"] >= 0 and p["has_history"]]
         cat.sort(key=lambda p: p["item_name"])
     return jsonify(cat)
+
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+VOCAB_CSV = DATA_DIR / "vocab_mapping_FINAL_v5.csv"
+INVENTORY_SOURCE_CSV = DATA_DIR / "USTore_inventory_excel_long.csv"
+
+
+def _append_csv_row(path, row):
+    """Append one dict to an existing CSV, in that file's own column order.
+
+    Reads the header first and writes strictly against it, so a column added
+    to the file later cannot silently shift values into the wrong field.
+    Returns True on success; a failure here is reported, never swallowed - a
+    half-registered item is worse than a rejected one.
+    """
+    with open(path, newline="", encoding="utf-8") as f:
+        header = next(csv.reader(f))
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        csv.DictWriter(f, fieldnames=header).writerow(
+            {k: row.get(k, "") for k in header})
+    return header
+
+
+def _register_in_source_csvs(name, category, price):
+    """Make a new item survive `step1_apply_mapping.py`, which rebuilds
+    Dim_Product from scratch on every pipeline run.
+
+    TWO files are needed, and the second is the one that is easy to miss:
+
+      1. `vocab_mapping_FINAL_v5.csv` - the controlled vocabulary. Maps a raw
+         name to its canonical form; a new item maps to itself.
+      2. `USTore_inventory_excel_long.csv` - the inventory source. This is
+         what actually decides the roster: step1 builds `all_items` from the
+         canonical names present in the SALES and INVENTORY csvs, NOT from
+         the vocabulary. A vocabulary entry alone would leave the item out of
+         Dim_Product entirely at the next rebuild.
+
+    Quantity is left blank rather than zeroed: the store has not counted this
+    item yet, and writing 0 would assert a stock figure nobody measured. It
+    reads as 0 until the first real count is recorded, which then supersedes
+    it (catalog.load_counted_stock takes precedence over the workbook).
+    """
+    today_iso = date.today().isoformat()
+    _append_csv_row(VOCAB_CSV, {
+        "raw_name": name,
+        "canonical_item_name": name,
+        "merged": "no",
+        "row_count": 0,
+        "source": "tally_interface",
+        "revisit_with_store": "",
+    })
+    _append_csv_row(INVENTORY_SOURCE_CSV, {
+        "Category": category,
+        "Date": today_iso,
+        "Item": name,
+        "Price": price if price is not None else "",
+        "Quantity": "",
+        "Notes": f"Added via the tally interface {today_iso}; not yet counted",
+    })
+
+
+@app.post("/api/products")
+def add_product():
+    """Create one new item, permanently.
+
+    Writes to three places, because anything less does not survive:
+
+      - `Dim_Product`, so the item is usable in this session immediately;
+      - `data/vocab_mapping_FINAL_v5.csv`, the controlled vocabulary;
+      - `data/USTore_inventory_excel_long.csv`, the inventory source, which is
+        what `step1_apply_mapping.py` actually derives the product roster from.
+
+    Writing to the vocabulary is a deliberate, user-directed exception to the
+    rule that it is a hand-maintained file. The two CSV appends happen BEFORE
+    the database insert so that a filesystem failure leaves nothing behind: a
+    row in Dim_Product that no CSV backs would vanish at the next pipeline run
+    and look like data loss.
+    """
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("item_name") or "").strip()
+    category = str(payload.get("category") or "").strip() or "Uncategorised"
+    supplier = str(payload.get("supplier_name") or "").strip() or None
+
+    errors = {}
+    if not name:
+        errors["item_name"] = "Enter an item name."
+    elif len(name) > 200:
+        errors["item_name"] = "Item name is too long."
+
+    c = con()
+    if not errors and c.execute(
+        "SELECT 1 FROM Dim_Product WHERE LOWER(TRIM(item_name)) = ?", (name.lower(),)
+    ).fetchone():
+        errors["item_name"] = "An item with that name already exists."
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+
+    # CSVs first: see the docstring. If these fail the item is never created,
+    # rather than created in a form that the next pipeline run would erase.
+    try:
+        _register_in_source_csvs(name, category, payload.get("unit_price_php"))
+    except (OSError, StopIteration, csv.Error) as exc:
+        app.logger.exception("could not register %r in the source CSVs", name)
+        return jsonify({"ok": False, "errors": {
+            "item_name": f"Could not write to the data files ({exc}). Item not added."
+        }}), 500
+
+    # fsn_class and lead_time_days are left NULL on purpose: step3 classifies
+    # and step5a sets lead times. Guessing either here would put a number in
+    # front of the prescriptive math that no rule produced.
+    cur = c.execute("""
+        INSERT INTO Dim_Product (item_name, category, supplier_name, entry_date, is_active, is_hvl)
+        VALUES (?, ?, ?, ?, 1, 0)
+    """, (name, category, supplier, date.today().isoformat()))
+    c.commit()
+
+    return jsonify({"ok": True, "product": {
+        "product_id": cur.lastrowid,
+        "item_name": name,
+        "category": category,
+        "supplier_name": supplier or catalog.UNATTRIBUTED,
+    }})
 
 
 @app.get("/api/products/<int:product_id>/history")
@@ -474,6 +746,93 @@ def get_inventory_counts():
     })
 
 
+@app.post("/api/inventory/import")
+def import_inventory_counts():
+    """Bulk stock counts from a .csv/.xlsx, archived into rawdata/ as uploaded.
+
+    Expected columns (header spelling is matched loosely - case, spacing and
+    punctuation are ignored):
+
+        Item            required, must match a Dim_Product item_name
+        Units On Hand   required, whole number >= 0  (aliases: Quantity, Stock)
+        Month           optional, YYYY-MM - falls back to the ?month= form field
+        Note            optional
+
+    Upserts exactly like the single-count form: one count per product per
+    month, a re-import corrects rather than accumulates.
+
+    Rows that cannot be used are REPORTED, never silently dropped - the same
+    rule step2 follows with Exception_Log. Valid rows are still applied, so a
+    500-row workbook is not rejected wholesale over two bad lines.
+    """
+    storage = request.files.get("file")
+    if storage is None or not storage.filename:
+        return jsonify({"ok": False, "error": "Choose a .csv or .xlsx file to import."}), 400
+    bad = _accepted_upload(storage)
+    if bad:
+        return jsonify({"ok": False, "error": bad}), 400
+
+    default_month = (request.form.get("month") or "").strip()
+    if default_month and not validation.ISO_MONTH_RE.match(default_month):
+        return jsonify({"ok": False, "error": "Month must be YYYY-MM."}), 400
+
+    saved = _archive_upload(storage)
+    storage.stream.seek(0)
+    try:
+        _, rows = _read_table(storage)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc), "saved_to": saved}), 400
+
+    c = con()
+    products = _product_index(c)
+    today_month = date.today().strftime("%Y-%m")
+    imported = updated = 0
+    rejected = []
+    now = datetime.now().isoformat(timespec="seconds")
+
+    for i, row in enumerate(rows, start=2):        # start=2: row 1 is the header
+        item = _pick(row, "Item", "Item Name", "Product", "Canonical Item Name")
+        qty = _as_int(_pick(row, "Units On Hand", "Quantity", "Units", "Stock", "On Hand"))
+        month = str(_pick(row, "Month", "Count Month") or default_month).strip()[:7]
+        note = _pick(row, "Note", "Remarks")
+
+        if not item:
+            rejected.append({"row": i, "item": "", "reason": "No item name."}); continue
+        pid = products.get(str(item).strip().lower())
+        if pid is None:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Not in the controlled vocabulary."}); continue
+        if qty is None or qty < 0:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Units on hand must be a whole number >= 0."}); continue
+        if not validation.ISO_MONTH_RE.match(month):
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "No usable month (YYYY-MM)."}); continue
+        if month > today_month:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Month is in the future."}); continue
+
+        existed = dbmod.one(c, "SELECT 1 FROM Inventory_Count WHERE product_id = ? AND count_month = ?",
+                            (pid, month))
+        c.execute("""
+            INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged)
+            VALUES (?, ?, ?, ?, 'import', ?)
+            ON CONFLICT (product_id, count_month) DO UPDATE SET
+                quantity = excluded.quantity, note = excluded.note, date_logged = excluded.date_logged
+        """, (pid, month, qty, (str(note).strip() if note else None), now))
+        if existed:
+            updated += 1
+        else:
+            imported += 1
+
+    c.commit()
+    return jsonify({
+        "ok": True, "imported": imported, "updated": updated,
+        "rejected": rejected[:50], "rejected_total": len(rejected),
+        "rows_read": len(rows), "saved_to": saved,
+    })
+
+
 @app.post("/api/inventory")
 def add_inventory_count():
     """Record (or correct) one product's stock count for one month.
@@ -650,40 +1009,86 @@ def add_entry():
     return jsonify({"ok": True, "entry": entry})
 
 
-@app.get("/api/tally/export")
-def export_tally_csv():
-    """
-    Entries recorded through this tally interface (tally_date_flag = 0),
-    as a CSV in the same shape as the original source workbooks in
-    rawdata/: Date, Item, Total Quantity, Supplier - one row per
-    (date, item, supplier), quantities summed. Restricted to SALE
-    transactions, since that is what "Total Quantity" meant in those
-    workbooks; DAMAGED/PROMO/TRANSFER are a different kind of movement
-    and would misrepresent units actually sold if folded in.
-    """
-    rows = dbmod.rows(con(), """
-        SELECT d.calendar_date AS calendar_date, p.item_name AS item_name,
-               SUM(f.quantity_sold) AS total_quantity,
-               COALESCE(p.supplier_name, ?) AS supplier_name
-        FROM Fact_Sales f
-        JOIN Dim_Date d ON d.date_id = f.date_id
-        JOIN Dim_Product p ON p.product_id = f.product_id
-        WHERE f.tally_date_flag = 0 AND UPPER(f.transaction_type) = 'SALE'
-        GROUP BY d.calendar_date, p.item_name, p.supplier_name
-        ORDER BY d.calendar_date, p.item_name
-    """, (catalog.UNATTRIBUTED,))
+@app.post("/api/tally/import")
+def import_tally():
+    """Bulk sales-tally entries from a .csv/.xlsx, archived into rawdata/ as
+    uploaded. Shaped like the source workbooks step0 reads:
 
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["Date", "Item", "Total Quantity", "Supplier"])
-    for r in rows:
-        writer.writerow([r["calendar_date"], r["item_name"], r["total_quantity"], r["supplier_name"]])
+        Date              required, ISO YYYY-MM-DD, not in the future
+        Item              required, must match a Dim_Product item_name
+        Total Quantity    required, whole number > 0  (aliases: Quantity, Qty)
+        Transaction Type  optional, defaults to SALE
 
-    return Response(
-        buf.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": "attachment; filename=tally_export.csv"},
-    )
+    Dates must be ISO. DD/MM and MM/DD are refused rather than guessed - with
+    both accepted, 05/11/2025 is valid under either reading and lands six
+    months apart depending on which won, which is exactly the defect the
+    pipeline was cleaned up to remove (README, "Key design decisions").
+
+    Appends, it does not upsert: two tallies of the same item on the same day
+    are two real movements. Rows that cannot be used are reported, not dropped.
+    """
+    storage = request.files.get("file")
+    if storage is None or not storage.filename:
+        return jsonify({"ok": False, "error": "Choose a .csv or .xlsx file to import."}), 400
+    bad = _accepted_upload(storage)
+    if bad:
+        return jsonify({"ok": False, "error": bad}), 400
+
+    saved = _archive_upload(storage)
+    storage.stream.seek(0)
+    try:
+        _, rows = _read_table(storage)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc), "saved_to": saved}), 400
+
+    c = con()
+    products = _product_index(c)
+    dates = {r["calendar_date"]: r["date_id"]
+             for r in dbmod.rows(c, "SELECT date_id, calendar_date FROM Dim_Date")}
+    today_iso = date.today().isoformat()
+    imported = 0
+    rejected = []
+
+    for i, row in enumerate(rows, start=2):
+        item = _pick(row, "Item", "Item Name", "Product", "Canonical Item Name")
+        qty = _as_int(_pick(row, "Total Quantity", "Quantity", "Qty", "Units", "Quantity Sold"))
+        iso = _as_iso_date(_pick(row, "Date", "Calendar Date", "Sale Date"))
+        ttype = str(_pick(row, "Transaction Type", "Type") or "SALE").strip().upper()
+
+        if not item:
+            rejected.append({"row": i, "item": "", "reason": "No item name."}); continue
+        pid = products.get(str(item).strip().lower())
+        if pid is None:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Not in the controlled vocabulary."}); continue
+        if iso is None:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Date missing or not ISO YYYY-MM-DD."}); continue
+        if iso > today_iso:
+            rejected.append({"row": i, "item": str(item), "reason": "Date is in the future."}); continue
+        if iso not in dates:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Date not in the calendar."}); continue
+        if qty is None or qty <= 0:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Quantity must be a whole number > 0."}); continue
+        if ttype not in validation.TRANSACTION_TYPES:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": f"Unknown transaction type '{ttype}'."}); continue
+
+        c.execute("""
+            INSERT INTO Fact_Sales
+                (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag, transaction_type)
+            VALUES (?, ?, ?, 0, 0, ?)
+        """, (pid, dates[iso], qty, ttype))
+        imported += 1
+
+    c.commit()
+    return jsonify({
+        "ok": True, "imported": imported, "updated": 0,
+        "rejected": rejected[:50], "rejected_total": len(rejected),
+        "rows_read": len(rows), "saved_to": saved,
+    })
 
 
 # ---------------------------------------------------------------- events
@@ -842,6 +1247,37 @@ def get_advisories():
     c = con()
     has_forecast = _has_forecast_table(c)
 
+    def affected_items(fsn=("F",), limit=8):
+        """The SKUs an advisory is actually about, with the numbers that make
+        it checkable: forecast, stock on hand, reorder point.
+
+        An advisory that says "make sure Fast-moving items are stocked" is not
+        actionable until it names them, so every advisory carries its own list
+        and the interface shows it on click. LEFT JOINs throughout - a SKU with
+        no forecast or no stock count still belongs in the list, reported as
+        null rather than dropped."""
+        placeholders = ",".join("?" * len(fsn))
+        rows = dbmod.rows(c, f"""
+            SELECT p.product_id, p.item_name, p.fsn_class, p.category,
+                   COALESCE(p.supplier_name, ?) AS supplier_name,
+                   {"(SELECT SUM(yhat) FROM Result_Forecast rf WHERE rf.product_id = p.product_id)"
+                    if has_forecast else "NULL"} AS forecast_30d,
+                   (SELECT r.reorder_point FROM Result_Prescriptive r
+                     WHERE r.product_id = p.product_id LIMIT 1) AS reorder_point
+              FROM Dim_Product p
+             WHERE p.fsn_class IN ({placeholders})
+             ORDER BY {"forecast_30d DESC," if has_forecast else ""} p.item_name
+             LIMIT ?
+        """, (catalog.UNATTRIBUTED, *fsn, limit))
+        stock = {p["product_id"]: p["current_stock"] for p in catalog.compute_catalog(c)}
+        for r in rows:
+            r["current_stock"] = stock.get(r["product_id"])
+            r["below_rop"] = (
+                r["current_stock"] is not None and r["reorder_point"] is not None
+                and r["current_stock"] <= r["reorder_point"]
+            )
+        return rows
+
     # Upcoming events from Event_Log
     upcoming_events = dbmod.rows(c, """
         SELECT e.event_date, e.event_name, e.event_description,
@@ -886,6 +1322,10 @@ def get_advisories():
                            "ensure Fast-moving items (uniforms, IDs, school supplies) are stocked.",
             "date_range": [dates[0], dates[-1]],
             "has_forecast": has_forecast,
+            "basis": f"{len(dates)} upcoming date(s) in Dim_Date carry is_enrollment_period = 1. "
+                     "The items below are the Fast-moving class (step3's 80th-percentile ADUS "
+                     "cut), which is what an enrollment surge draws on.",
+            "items": affected_items(("F",)),
         })
 
     if "exam_week" in period_types:
@@ -898,6 +1338,9 @@ def get_advisories():
                            "Expect reduced foot traffic; delay non-urgent restocking.",
             "date_range": [dates[0], dates[-1]],
             "has_forecast": has_forecast,
+            "basis": f"{len(dates)} upcoming date(s) in Dim_Date carry is_exam_week = 1. "
+                     "Restocking these Fast movers can wait until after the window.",
+            "items": affected_items(("F",)),
         })
 
     for event in upcoming_events:
@@ -909,6 +1352,10 @@ def get_advisories():
                            f"Event on {_us_date(event['event_date'])}. Check stock for high-demand items.",
             "date_range": [event["event_date"], event["event_date"]],
             "has_forecast": has_forecast,
+            "basis": f"Logged in Event_Log for {_us_date(event['event_date'])}"
+                     + (f", which falls in semester {event['semester_id']} week "
+                        f"{event['semester_week']}." if event["semester_id"] else "."),
+            "items": affected_items(("F",)),
         })
 
     # If forecast exists, add top fast-movers that may need restocking
@@ -934,7 +1381,10 @@ def get_advisories():
                                "Review stock levels against the forecast on the Demand Forecast page.",
                 "date_range": None,
                 "has_forecast": True,
-                "top_items": fast_items,
+                "basis": "Ranked by SUM(yhat) over the 30-day horizon in Result_Forecast, "
+                         "Fast class only. Stock and reorder point come from the latest "
+                         "count and Result_Prescriptive.",
+                "items": affected_items(("F",), limit=5),
             })
 
     if not advisories:
@@ -950,6 +1400,9 @@ def get_advisories():
                                    "forecast-based advisories."),
             "date_range": None,
             "has_forecast": has_forecast,
+            "basis": "No upcoming row in Dim_Date has is_enrollment_period, is_exam_week or "
+                     "is_event_day set, and Event_Log has no future entry.",
+            "items": [],
         })
 
     return jsonify({

@@ -237,6 +237,18 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl tbody tr:hover { background: var(--gold-wash); }
 .tbl tbody tr:last-child td { border-bottom: none; }
 
+/* Pills inside a dense table. The global .tag is sized for a card header; at
+   10px with .08em tracking, "NON-MOVING" is wider than a 10%-of-860px column,
+   and .tbl--fixed's overflow:hidden then clips it mid-character rather than
+   ellipsising it. Tightening the tracking and padding here (not globally) buys
+   the ~12px that makes the longest label fit. */
+.tbl .tag { letter-spacing: .04em; padding: 3px 7px; font-size: 9.5px; }
+
+/* "never counted" is a sentence in a right-aligned numeric column - it never
+   fit, and truncating it to "never cou..." reads as data loss. It is an en
+   dash with a tooltip now, and the table's hint carries the legend. */
+.tbl .nodata { color: var(--muted); cursor: help; }
+
 /* Advisory card */
 .adv { padding: var(--pad); display: flex; flex-direction: column; gap: 0; border-left: 3px solid var(--line); }
 .adv.sev-high { border-left-color: var(--crit); }
@@ -254,7 +266,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .adv__list li::before { content: '›'; color: var(--accent-deep); font-weight: 800; flex-shrink: 0; }
 
 /* ======================= Tally screen ======================= */
-.tally-wrap { flex: 1; overflow-y: auto; background: var(--bg); }
+.tally-wrap { flex: 1; min-height: 0; background: var(--bg); display: flex; flex-direction: column; }
 .tally-head {
   background: var(--ink); color: #fff; padding: 18px 36px;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
@@ -272,7 +284,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .btn--ghost { background: var(--card); color: var(--text-2); border-color: var(--line); }
 .btn--ghost:hover { background: var(--bg); }
 
-.tally-body { max-width: 880px; margin: 0 auto; padding: 28px 24px 48px; display: flex; flex-direction: column; gap: var(--gap); }
+.tally-body { padding: 28px 24px 48px; }
+.tally-body > * { max-width: 880px; margin-left: auto; margin-right: auto; width: 100%; }
+.tally-body { display: flex; flex-direction: column; gap: var(--gap); }
 .field { display: flex; flex-direction: column; gap: 7px; }
 .field label { font-size: 12px; font-weight: 700; color: var(--text-2); }
 .field input, .field select {
@@ -284,11 +298,6 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); }
 .form-grid .col-2 { grid-column: 1 / -1; }
 
-.statusbar {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-  padding: 12px var(--pad); font-size: 12px; color: var(--text-2);
-}
-.statusbar .ok-text { color: var(--ok); font-weight: 700; display: flex; align-items: center; gap: 6px; }
 
 /* utility */
 .muted { color: var(--muted); }
@@ -326,6 +335,11 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* Notice strip (data-quality callouts) */
 .notice { padding: 11px 14px; border-radius: var(--r-sm); font-size: 12.5px; line-height: 1.5; border: 1px solid; }
 .notice--warn { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-line); }
+.notice--ok   { color: var(--ok);   background: var(--ok-bg);   border-color: var(--ok-line); }
+/* Was missing, so `notice--crit` fell through to the bare .notice rule - which
+   declares `border: 1px solid` with no colour and no background, leaving the
+   Non-Moving band's callout unstyled. */
+.notice--crit { color: var(--crit); background: var(--crit-bg); border-color: var(--crit-line); }
 .notice--hvl  { color: var(--hvl);  background: var(--hvl-bg);  border-color: var(--hvl-line); }
 .notice--info { color: var(--info); background: var(--info-bg); border-color: var(--info-line); }
 
@@ -370,10 +384,17 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 /* Tally screen scrolls. It renders outside the .app flex container, so the
    `flex: 1` it was given had no flex parent to resolve against and #root's
    `overflow: hidden` clipped it. */
-.tally-wrap { height: 100%; overflow-y: auto; }
-.tally-wrap::-webkit-scrollbar { width: 9px; }
-.tally-wrap::-webkit-scrollbar-thumb { background: #D8D4C9; border-radius: 6px; border: 2px solid var(--bg); }
-.tally-head { position: sticky; top: 0; z-index: 5; }
+/* The scrollbar belongs to the BODY, not the wrapper. When .tally-wrap owned
+   the scroll, its scrollbar was painted over the right-hand end of the sticky
+   .tally-head - the header stopped short of the viewport edge and the bar sat
+   on top of it. Making the wrapper a non-scrolling flex column and giving the
+   overflow to .tally-body puts the header outside the scroll container, so it
+   spans the full width and the scrollbar starts below it. */
+.tally-wrap { height: 100%; overflow: hidden; }
+.tally-head { flex-shrink: 0; width: 100%; }
+.tally-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.tally-body::-webkit-scrollbar { width: 9px; }
+.tally-body::-webkit-scrollbar-thumb { background: #D8D4C9; border-radius: 6px; border: 2px solid var(--bg); }
 
 /* Topbar wraps instead of letting the filters ride over the title.
    Title block and filter block are both flex items with their own basis, so
@@ -574,3 +595,368 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .pbi__frame { width: 100%; height: 100%; border: 0; display: block; }
 @media (max-width: 1024px) { .pbi { height: calc(100vh - 240px); min-height: 520px; } }
 @media (max-width: 720px)  { .pbi { min-height: 440px; } }
+
+/* ------------------------------------------------------------------ modal */
+/* Used by the Check Current Inventory dialog. The scrim is a flex centring
+   context; the panel caps at 86vh and scrolls internally so a long stock list
+   never pushes the close button off screen. */
+.modal-scrim {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(20, 18, 14, .46);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  animation: modal-in .12s ease-out;
+}
+.modal-panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .22);
+  width: 100%;
+  max-height: 86vh;
+  display: flex; flex-direction: column;
+  outline: none;
+}
+.modal-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px;
+  padding: 16px var(--pad);
+  border-bottom: 1px solid var(--line);
+}
+/* The panel itself never scrolls. It is a flex column: the head is fixed, the
+   body fills the rest, and inside the body only the region marked .modal-grow
+   scrolls. A scrollbar on .modal-body scrolled the filters out of view along
+   with the rows, which is the wrong thing to lose - the filters are how you
+   change what the rows are. */
+.modal-body {
+  padding: var(--pad);
+  display: flex; flex-direction: column;
+  min-height: 0; overflow: hidden;
+}
+.modal-body > * { flex-shrink: 0; }
+
+/* The one region allowed to scroll. DataTable renders .tbl__scroll and its
+   pagination as siblings, so the scroll goes on .tbl__scroll and the pager
+   stays pinned at the bottom where it can still be clicked. */
+.modal-grow { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.modal-grow > .tbl__scroll { flex: 1; min-height: 0; overflow: auto; }
+@keyframes modal-in { from { opacity: 0 } to { opacity: 1 } }
+@media (max-width: 620px) {
+  .modal-scrim { padding: 10px; }
+  .modal-body  { padding: 14px; }
+}
+
+/* Collapsible section inside a card (Recent Entries). The summary keeps the
+   card-h layout so a shut section reads like a header, not like a control. */
+.collapse > summary {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  cursor: pointer; list-style: none;
+  padding: 9px 0; border-top: 1px solid var(--line-soft);
+}
+.collapse > summary::-webkit-details-marker { display: none; }
+.collapse > summary::after {
+  content: '';
+  width: 7px; height: 7px; margin-left: auto;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform .15s ease;
+}
+.collapse[open] > summary::after { transform: rotate(-135deg) translate(-2px, -2px); }
+.collapse > summary:hover .section-h { color: var(--gold-deep); }
+.collapse > summary .hint { margin-left: 0; }
+
+/* Filter row inside the Current Inventory modal. Search grows, the two
+   selects and the checkbox keep their natural width and wrap under it. */
+.modal-filters,
+.filter-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 12px;
+  /* A tinted tray rather than controls floating on the card: it groups the
+     search and the selects into one object, and gives the white inputs
+     something to sit against so their borders read as edges, not as stray
+     lines on the card. */
+  background: var(--bg);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  padding: 8px;
+}
+/* These controls sit outside .field, so they inherited nothing and rendered as
+   raw browser defaults. Match .field input/select exactly rather than inventing
+   a second form look, and reset the platform chrome that a bare <select> and a
+   type=search still bring with them. */
+.modal-filters input,
+.modal-filters select,
+.filter-row input,
+.filter-row select {
+  font-family: inherit; font-size: 12.5px; color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 6px 10px; height: 34px;
+  appearance: none; -webkit-appearance: none;
+  box-shadow: 0 1px 1px rgba(22,20,15,.03);
+  transition: border-color .12s, box-shadow .12s, background .12s;
+}
+.modal-filters input::placeholder,
+.filter-row input::placeholder { color: var(--muted); }
+.modal-filters input:hover,
+.modal-filters select:hover,
+.filter-row input:hover,
+.filter-row select:hover { border-color: #CFCABC; }
+.modal-filters input:focus,
+.modal-filters select:focus,
+.filter-row input:focus,
+.filter-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+
+/* Chevron drawn as a background image: the markup here has no room for the
+   separate .filter__chev span the topbar uses, and appearance:none removes the
+   native arrow along with the native styling. */
+.modal-filters select,
+.filter-row select {
+  padding-right: 26px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238E887A' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+
+.modal-filters input[type="search"],
+.filter-row input[type="search"] {
+  flex: 1 1 220px; min-width: 170px;
+  /* Magnifier drawn as a background image for the same reason as the select
+     chevron: this markup has no wrapper to hang an icon element off. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%238E887A' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: left 10px center;
+  padding-left: 30px;
+}
+.modal-filters input[type="search"]:focus,
+.filter-row input[type="search"]:focus {
+  /* keep the icon visible once the focus ring lands */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%231B1813' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E");
+}
+.modal-filters select,
+.filter-row select { min-width: 132px; }
+/* WebKit's own clear button ignores the font stack and sits badly next to a
+   38px control; the value is clearable from the keyboard either way. */
+.modal-filters input[type="search"]::-webkit-search-cancel-button,
+.filter-row input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+@media (max-width: 620px) {
+  .modal-filters { gap: 6px; }
+  .modal-filters input[type="search"] { flex: 1 1 100%; }
+  .modal-filters select { flex: 1 1 calc(50% - 4px); min-width: 0; }
+}
+.check {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12.5px; color: var(--text-2); font-weight: 600;
+  white-space: nowrap; cursor: pointer;
+}
+.check input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+
+
+/* ------------------------------------------------- interactive charts */
+/* Tooltip rides above the plot, centred on the hovered x. translate(-50%)
+   keeps it centred without measuring its own width; pointer-events:none so it
+   can never sit between the cursor and the chart it describes. */
+.charttip-wrap {
+  position: absolute; top: 4px; transform: translateX(-50%);
+  pointer-events: none; z-index: 2;
+}
+.charttip {
+  background: var(--ink); color: #fff;
+  border-radius: var(--r-xs); padding: 7px 10px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.22);
+  white-space: nowrap; text-align: center;
+}
+.charttip__label { font-size: 10.5px; opacity: .7; font-weight: 600; }
+.charttip__value { font-size: 14px; font-weight: 800; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.charttip__sub   { font-size: 10px; opacity: .6; }
+
+.donut__centre {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  pointer-events: none; text-align: center; padding: 0 22px;
+}
+.donut__centre-val { font-size: 19px; font-weight: 800; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.donut__centre-lbl { font-size: 10px; color: var(--muted); font-weight: 600; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; }
+
+/* ------------------------------------------------------ clickable cards */
+/* A KPI tile or card that navigates. Buttons reset to card styling, then get
+   the affordance: pointer, lift on hover, and a focus ring for keyboard use. */
+.kpi.is-link, .card.is-link {
+  cursor: pointer; text-align: left; font: inherit; color: inherit;
+  width: 100%; display: block;
+  transition: transform .12s, box-shadow .12s, border-color .12s;
+}
+.kpi.is-link:hover, .card.is-link:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--accent-line);
+}
+.kpi.is-link:focus-visible, .card.is-link:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.kpi__link {
+  margin-top: 10px; font-size: 11px; font-weight: 700; color: var(--accent-deep);
+  display: inline-flex; align-items: center; gap: 5px;
+}
+
+/* A whole card that collapses. .collapse was written for a section INSIDE a
+   card, so it draws a divider above its summary; at card level that divider
+   would sit on the card's own top edge. */
+.collapse--card > summary { border-top: none; padding: 0; }
+.collapse--card > summary .section-h { transition: color .12s; }
+
+/* ============================================================ advisories */
+/* Rebuilt onto the design system: one card vocabulary, a severity rail
+   instead of an ad-hoc coloured border, a tinted icon chip, and a meta row
+   that scans left-to-right. No inline colour anywhere in the JSX. */
+.advisories { display: flex; flex-direction: column; gap: 10px; }
+
+.advisory {
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow .14s, border-color .14s;
+}
+/* Severity reads as a rail on the leading edge — present but not shouting,
+   and it never competes with the card border the way a 4px inline border did. */
+.advisory::before {
+  content: ''; position: absolute; inset: 0 auto 0 0; width: 3px;
+  background: var(--line);
+}
+.advisory.is-high::before   { background: var(--warn); }
+.advisory.is-medium::before { background: var(--accent); }
+.advisory.is-low::before    { background: var(--line); }
+.advisory.is-open { box-shadow: var(--shadow-lg); border-color: var(--accent-line); }
+
+.advisory__head {
+  display: flex; align-items: flex-start; gap: 13px;
+  width: 100%; padding: 15px 18px 15px 21px;
+  background: none; border: none; font: inherit; color: inherit;
+  text-align: left;
+}
+button.advisory__head { cursor: pointer; }
+button.advisory__head:hover { background: rgba(0,0,0,.018); }
+button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+
+.advisory__icon {
+  flex-shrink: 0; width: 32px; height: 32px; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg); color: var(--muted);
+}
+.advisory.is-high   .advisory__icon { background: var(--warn-bg); color: var(--warn); }
+.advisory.is-medium .advisory__icon { background: var(--accent-wash); color: var(--accent-deep); }
+
+.advisory__main  { flex: 1; min-width: 0; }
+.advisory__title { font-size: 13.5px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
+.advisory__desc  { font-size: 12.5px; color: var(--text-2); line-height: 1.55; margin-top: 3px; }
+
+/* Meta row: dot-separated, wraps cleanly, never becomes a wall of chips. */
+.advisory__meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
+  margin-top: 8px; font-size: 11px; color: var(--muted); font-weight: 600;
+}
+.advisory__meta > * + *::before { content: '·'; margin-right: 7px; color: var(--line); }
+.advisory__kind {
+  text-transform: uppercase; letter-spacing: .1em; font-size: 10px;
+  color: var(--text-2);
+}
+.advisory__flag { color: var(--crit); font-weight: 700; }
+
+.advisory__right { flex-shrink: 0; display: inline-flex; align-items: center; gap: 10px; padding-top: 2px; }
+.advisory__chev {
+  width: 7px; height: 7px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg); transition: transform .15s ease;
+}
+.advisory__chev.is-open { transform: rotate(-135deg); }
+
+.advisory__body { padding: 0 18px 18px 21px; }
+.advisory__basis {
+  font-size: 12px; color: var(--text-2); line-height: 1.6;
+  background: var(--bg); border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm); padding: 11px 13px; margin: 4px 0 14px;
+}
+.advisory__basis-label {
+  display: block; font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); font-weight: 700; margin-bottom: 4px;
+}
+.advisory__rop-hit { color: var(--crit); font-weight: 700; }
+
+@media (max-width: 620px) {
+  .advisory__head { padding: 13px 14px 13px 17px; gap: 10px; }
+  .advisory__body { padding: 0 14px 14px 17px; }
+  .advisory__right { flex-direction: column; align-items: flex-end; gap: 6px; }
+}
+
+/* The vertical scrollbar inside a modal table needs the same treatment
+   .tbl__scroll already gives the horizontal one, or it renders as the default
+   platform bar against the card. */
+.modal-grow > .tbl__scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+
+/* Plain-language legend replacing the two technical notices the Classification
+   page used to carry. A tag beside a sentence, so the badge in the table below
+   is learned by seeing it explained rather than by reading a paragraph. */
+.explain { display: flex; flex-direction: column; gap: 11px; }
+.explain__row { display: flex; align-items: flex-start; gap: 11px; }
+.explain__row > .tag { flex-shrink: 0; margin-top: 1px; min-width: 78px; justify-content: center; }
+.explain__row p {
+  margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--text-2);
+}
+
+/* ------------------------------------------------------------ FSN bands */
+/* The call-to-action line is always in the DOM at full height and only fades
+   in on hover. Revealing it by adding it to the flow would grow the row and
+   push the next band away from the cursor mid-click. */
+.fsnstat {
+  display: block; width: 100%; text-align: left;
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  padding: 10px 13px; font: inherit;
+  transition: transform .12s, box-shadow .12s, border-color .12s;
+}
+.fsnstat__top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.fsnstat__label { display: block; font-size: 11.5px; font-weight: 700; }
+.fsnstat__count { display: block; font-size: 24px; font-weight: 800; line-height: 1.1; }
+.fsnstat__cta {
+  display: block; margin-top: 5px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .01em;
+  opacity: 0; transition: opacity .12s;
+}
+.fsnstat.is-clickable { cursor: pointer; }
+.fsnstat.is-clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+  border-color: rgba(0, 0, 0, .07);
+}
+.fsnstat.is-clickable:hover .fsnstat__cta,
+.fsnstat.is-clickable:focus-visible .fsnstat__cta { opacity: .85; }
+.fsnstat.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* A header action that reads as a link but is a real button. */
+.linkish {
+  background: none; border: none; padding: 0; font: inherit; cursor: pointer;
+  font-size: 11.5px; font-weight: 700; color: var(--muted);
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: color .12s;
+}
+.linkish:hover { color: var(--accent-deep); }
+.linkish:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* A select that sits inside a card header beside a hint, rather than in a
+   filter tray. Smaller and lighter than .filter-row's controls so it reads as
+   part of the heading rather than as a form. */
+.inline-select {
+  font-family: inherit; font-size: 11.5px; font-weight: 700; color: var(--text-2);
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r-xs); padding: 4px 22px 4px 9px; height: 26px;
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238E887A' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 7px center;
+  transition: border-color .12s, box-shadow .12s;
+}
+.inline-select:hover { border-color: #CFCABC; }
+.inline-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }

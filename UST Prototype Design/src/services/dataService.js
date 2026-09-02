@@ -19,7 +19,41 @@
 
 const API_BASE = '/api';
 
-async function request(method, path, body) {
+/* ------------------------------------------------------------- GET cache
+
+   Every screen refetches on mount, so moving Overview -> Reorder -> Overview
+   used to re-run the same queries three times. Two things fix that here:
+
+   - **Cache**, keyed on the full path (so `?supplier=X` is a different entry
+     from `?supplier=Y`). A repeat GET inside the TTL resolves from memory and
+     never touches the network.
+   - **In-flight de-duplication**, keyed the same way. Two components mounting
+     together and asking for the same path share ONE request rather than
+     racing. Overview alone used to fire six.
+
+   Correctness rule: any mutation clears everything. A single tally entry
+   changes products, monthly units, stock, reorder and advisories at once, so
+   per-endpoint invalidation would be a list to keep in sync and get wrong.
+   Clearing is cheap - the next read just refetches.
+
+   `cacheVersion` lets useData tell whether a snapshot it kept is still from
+   the current generation, without importing anything back from the hook. */
+const CACHE_TTL_MS = 60_000;
+const cache = new Map();      // path -> { at, data }
+const inflight = new Map();   // path -> Promise
+
+let cacheVersion = 0;
+export const getCacheVersion = () => cacheVersion;
+
+/** Drop everything. Called after every write, and available to callers that
+ *  know they have invalidated server state some other way. */
+export function clearApiCache() {
+  cache.clear();
+  inflight.clear();
+  cacheVersion += 1;
+}
+
+async function doFetch(method, path, body) {
   let res;
   try {
     res = await fetch(`${API_BASE}${path}`, {
@@ -41,6 +75,33 @@ async function request(method, path, body) {
   } catch {
     throw new Error(`${method} ${path} returned no JSON (status ${res.status})`);
   }
+}
+
+async function request(method, path, body) {
+  if (method !== 'GET') {
+    const out = await doFetch(method, path, body);
+    clearApiCache();
+    return out;
+  }
+
+  const hit = cache.get(path);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+
+  const pending = inflight.get(path);
+  if (pending) return pending;
+
+  const p = doFetch('GET', path)
+    .then(data => {
+      cache.set(path, { at: Date.now(), data });
+      inflight.delete(path);
+      return data;
+    })
+    .catch(err => {
+      inflight.delete(path);
+      throw err;
+    });
+  inflight.set(path, p);
+  return p;
 }
 
 const get = path => request('GET', path);
@@ -176,11 +237,16 @@ export async function addEntry(entry) {
   });
 }
 
-export async function setStoreClosed(isoDate, closed) {
+/** Mark a date closed or open. `reason` is free text and optional — it is
+ *  stored on Closure_Log.reason, which has always existed in the schema but
+ *  had no way in from the interface until now. Reopening a date carries a
+ *  reason too, since "why did this reopen" is as worth recording as why it
+ *  shut. */
+export async function setStoreClosed(isoDate, closed, reason = '') {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
     return { ok: false, errors: { calendar_date: 'Date must be YYYY-MM-DD.' } };
   }
-  return put(`/calendar/${isoDate}/closure`, { closed: !!closed });
+  return put(`/calendar/${isoDate}/closure`, { closed: !!closed, reason: (reason || '').trim() });
 }
 
 export async function addEvent({ calendar_date, event_name, event_description }) {
@@ -218,6 +284,57 @@ export const saveInventoryCount = ({ product_id, count_month, quantity, note }) 
 
 /** Remove a count recorded by mistake. */
 export const deleteInventoryCount = countId => del(`/inventory/${countId}`);
+
+// ------------------------------------------------------- import / export
+
+/** Upload a .csv/.xlsx of stock counts or sales tallies.
+ *
+ *  Multipart, so these bypass request() — that helper sets a JSON
+ *  Content-Type, and a multipart body must be left alone for the browser to
+ *  attach its own boundary. The server archives the file into `rawdata/`
+ *  exactly as uploaded and returns
+ *  { ok, imported, updated, rejected:[{row,item,reason}], rows_read, saved_to }.
+ *
+ *  Rejected rows are reported rather than dropped, so the caller is expected
+ *  to show them. */
+async function upload(path, file, fields = {}) {
+  const body = new FormData();
+  body.append('file', file);
+  for (const [k, v] of Object.entries(fields)) if (v != null) body.append(k, v);
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { method: 'POST', body });
+  } catch {
+    throw new Error(
+      'Cannot reach the backend. Make sure the Flask server is running on :5000 '
+      + '(cd backend && python app.py).'
+    );
+  }
+  clearApiCache();   // an import changes Fact_Sales / Inventory_Count
+  try {
+    return await res.json();
+  } catch {
+    return { ok: false, error: `Import failed (status ${res.status}).` };
+  }
+}
+
+export const importInventoryCounts = (file, month) =>
+  upload('/inventory/import', file, { month });
+
+export const importTallyEntries = file => upload('/tally/import', file);
+
+// ---------------------------------------------------------------- catalog
+
+/** Create one item so a count can be recorded against something the catalogue
+ *  does not have yet.
+ *
+ *  Caveat the caller must surface: `Dim_Product` is rebuilt from
+ *  `data/vocab_mapping_FINAL_v5.csv` by step1, which starts with
+ *  `DELETE FROM Dim_Product`. An item added here therefore survives only until
+ *  the next full pipeline run. Making it permanent means adding it to that
+ *  hand-maintained mapping file. */
+export const addProduct = ({ item_name, category, supplier_name }) =>
+  post('/products', { item_name, category, supplier_name });
 
 // --------------------------------------------------------------- pipeline
 

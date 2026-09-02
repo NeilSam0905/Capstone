@@ -3,3 +3,8 @@ flask-cors==5.0.0
 # Batch Sales Report PDF export (backend/batch_pdf.py). Pure Python - no
 # system libraries, unlike weasyprint (GTK/Pango/Cairo) or reportlab (C ext).
 fpdf2==2.8.7
+
+# Monthly Inventory Count / Sales Tally exports to .xlsx (app.py _xlsx_bytes).
+# Already a pipeline dependency (step0 reads the source workbooks with it), so
+# this pins it for the backend's own install rather than adding anything new.
+openpyxl==3.1.5
