@@ -52,12 +52,12 @@ export default function Reorder({ filters }) {
       key: 'current_stock', label: 'On Hand', num: true, width: '9%',
       render: v => v == null ? <span className="muted">—</span> : num(v),
     },
-    { key: 'safety_stock', label: 'Safety Stock', num: true, width: '9%', render: v => num(v) },
+    { key: 'safety_stock', label: 'Buffer Stock', num: true, width: '9%', render: v => num(Math.round(v)) },
     {
       key: 'reorder_point', label: 'ROP', num: true, width: '8%',
       render: (v, row) => (
         <span style={row.current_stock != null && row.current_stock <= v ? { color: 'var(--warn)', fontWeight: 700 } : undefined}>
-          {num(v)}
+          {num(Math.round(v))}
         </span>
       ),
     },
@@ -76,8 +76,10 @@ export default function Reorder({ filters }) {
       render: (_v, row) => <Eoq scenario={row.scenarios.high_goods_value} />,
     },
     {
-      key: 'sigma_source', label: 'σ Source', width: '9%',
-      render: v => v === 'cv_fallback' ? <span className="tag tag--warn">CV fallback</span> : <span className="muted">observed</span>,
+      key: 'sigma_source', label: 'Demand Estimate', width: '9%',
+      render: v => v === 'cv_fallback'
+        ? <span className="tag tag--warn" title="Not enough sales history to measure variability directly - estimated from typical variation instead">Estimated</span>
+        : <span className="muted">Measured</span>,
     },
   ];
 
@@ -154,6 +156,8 @@ export default function Reorder({ filters }) {
           </div>
         </div>
       </details>
+
+      <Glossary />
 
       {alerts?.available && (
         <div className="card card__pad">
@@ -296,6 +300,44 @@ function ReorderAdvice({ items, summary }) {
         <span className="report-subtotal__val">{num(summary.suggested_units_total)} units</span>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------- glossary */
+
+const GLOSSARY_TERMS = [
+  { term: 'ROP (Reorder Point)', def: 'The stock level that means "order now." Once on-hand stock drops to or below this number, a new order should be placed.' },
+  { term: 'Buffer Stock', def: 'Extra stock kept on top of expected need, as a cushion against demand being higher than usual or a delivery arriving late. Also called "safety stock."' },
+  { term: 'EOQ (Economic Order Quantity)', def: 'The theoretical "ideal" quantity to order at once that minimizes total ordering + holding cost. Shown for reference — see the note above the table for why it isn\'t the suggested order quantity here.' },
+  { term: 'Lead Time', def: "How many days it takes for a new order to arrive after it's placed, counted from the supplier." },
+  { term: 'ADUS (Average Daily Unit Sales)', def: 'The average number of units sold per day, based on observed sales history.' },
+  { term: 'Days of Supply', def: 'How many more days the current stock is expected to last, at the recent selling rate. Lower means it runs out sooner.' },
+  { term: 'Median Days of Supply', def: "The \"typical\" item's days of supply — take every item's days-of-supply figure, sort them, and pick the middle one. Used instead of an average so one unusual item (e.g. a huge overstock) doesn't skew the picture." },
+  { term: 'Demand Estimate: Measured vs. Estimated', def: 'Whether the demand-variability figure behind Buffer Stock came from enough real sales history ("Measured") or had to be approximated because the item hasn\'t sold enough yet ("Estimated").' },
+  { term: 'On Hand', def: 'The most recently counted stock quantity for this item.' },
+  { term: 'Order Qty', def: "The suggested amount to order right now: enough to bring stock up to the reorder point plus one month's worth of expected demand." },
+];
+
+/** Plain-language reference for the technical column headers on this page.
+ *  Collapsed by default, same treatment as "How these numbers are
+ *  calculated" below it - the glossary is what a term MEANS, the formulas
+ *  card is how it's CALCULATED; kept as two separate sections so neither
+ *  gets long enough to bury the other. */
+function Glossary() {
+  return (
+    <details className="card card__pad">
+      <summary className="section-h" style={{ cursor: 'pointer', listStyle: 'revert' }}>
+        What do these terms mean?
+      </summary>
+      <div className="grid-2" style={{ marginTop: 14, columnGap: 24, rowGap: 14 }}>
+        {GLOSSARY_TERMS.map(({ term, def }) => (
+          <div key={term}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{term}</div>
+            <div className="hint" style={{ marginTop: 2 }}>{def}</div>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
