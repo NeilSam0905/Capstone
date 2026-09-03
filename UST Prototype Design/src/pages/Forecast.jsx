@@ -4,6 +4,7 @@ import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
 import { LineChart, ForecastChart } from '../components/charts';
 import { num, shortMonth, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { ALL_SUPPLIERS } from '../services/dataService';
 
 /**
  * Demand Forecast.
@@ -36,6 +37,10 @@ export default function Forecast({ filters }) {
   }, [products, forecastableIds]);
   const product = withHistory.find(p => p.product_id === selectedId) ?? withHistory[0] ?? null;
 
+  // Which supplier the item on screen belongs to. Only worth stating while the
+  // list spans every supplier — with one selected the topbar already says it.
+  const showSupplier = filters.supplier === ALL_SUPPLIERS;
+
   if (loading) return <Loading label="Loading products…" />;
   if (!product) {
     return (
@@ -59,7 +64,7 @@ export default function Forecast({ filters }) {
             >
               {withHistory.map(p => (
                 <option key={p.product_id} value={p.product_id}>
-                  {p.item_name} ({num(p.total_units)} units)
+                  {p.item_name}{showSupplier ? ` — ${p.supplier_name}` : ''} ({num(p.total_units)} units)
                 </option>
               ))}
             </select>
@@ -68,6 +73,11 @@ export default function Forecast({ filters }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span className={`tag tag--${FSN_TONE[product.fsn_class]}`}>{FSN_LABEL[product.fsn_class]}</span>
             {product.is_hvl === 1 && <span className="tag tag--hvl">HVL</span>}
+            {showSupplier && (
+              <span className="hint" title={product.supplier_name}>
+                Supplier: <b style={{ color: 'var(--text-2)' }}>{product.supplier_name}</b>
+              </span>
+            )}
             <span className="hint">
               ADUS {product.adus.toFixed(3)} · CV {product.cv.toFixed(0)}% · {product.active_tally_dates} tally dates
             </span>

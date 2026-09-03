@@ -130,7 +130,14 @@ export const TRANSACTION_TYPES = ['SALE', 'DAMAGED', 'PROMO', 'TRANSFER'];
 
 export const getMeta = () => get('/meta');
 
-export const getSuppliers = () => get('/suppliers');
+/** `forecastable: true` narrows the list to suppliers that own at least one
+ *  SKU the model actually forecast — the Demand Forecast screen's dropdown.
+ *  It falls back to the full list when the pipeline has produced no forecasts
+ *  at all, matching that screen's own fallback. */
+/** `month` ('YYYY-MM') narrows the list to suppliers with a sale that month —
+ *  the batch report's filter, whose report is a single month. */
+export const getSuppliers = ({ forecastable = false, month } = {}) =>
+  get(`/suppliers${qs({ forecastable: forecastable ? 1 : '', month })}`);
 
 export const getCategories = () => get('/categories');
 
@@ -138,8 +145,20 @@ export const getMonths = () => get('/months');
 
 // ---------------------------------------------------------------- catalog
 
+/** The catalogue, cut by the topbar's three filters.
+ *
+ *  `dateRange` windows the *sales* figures each row carries (total_units,
+ *  adus, avg_monthly, cv, revenue) — it does not window current_stock,
+ *  days_of_supply or fsn_class, which describe the present rather than a
+ *  slice of history. Passing it matters: every product-derived panel reads
+ *  this endpoint, so while it was omitted the date filter moved the trend
+ *  chart alone and left every other figure at its all-time value. */
 export const getProducts = (filters = {}) =>
-  get(`/products${qs({ supplier: filters.supplier, category: filters.category })}`);
+  get(`/products${qs({
+    supplier: filters.supplier,
+    category: filters.category,
+    dateRange: filters.dateRange,
+  })}`);
 
 /** Products that have at least one Fact_Sales row — the tally screen's
  *  item picker, so a user cannot tally against a name with no history. */
@@ -155,7 +174,8 @@ export const getProductHistory = productId => get(`/products/${productId}/histor
 
 /** Per-supplier unit counts and remittance line totals for one month.
  *  §3.2's batch sales report: internal reporting, not a customer document. */
-export const getBatchReport = month => get(`/reports/batch${qs({ month })}`);
+export const getBatchReport = (month, supplier) =>
+  get(`/reports/batch${qs({ month, supplier })}`);
 
 /** URL of the server-rendered PDF for one month ('YYYY-MM').
  *
@@ -164,15 +184,15 @@ export const getBatchReport = month => get(`/reports/batch${qs({ month })}`);
  *  default sends Content-Disposition: attachment (Export as PDF). Building it
  *  here keeps API_BASE in this module, per the rule that no screen constructs
  *  an API path of its own. */
-export const batchReportPdfUrl = (month, { inline = false } = {}) =>
-  `${API_BASE}/reports/batch.pdf?month=${encodeURIComponent(month)}${inline ? '&inline=1' : ''}`;
+export const batchReportPdfUrl = (month, { inline = false, supplier } = {}) =>
+  `${API_BASE}/reports/batch.pdf${qs({ month, supplier, inline: inline ? 1 : '' })}`;
 
 /** Same report, as a raw-data-shaped .csv/.xlsx download - same shared body
  *  as the PDF (backend/batch_export.py), so the numbers can never diverge. */
-export const batchReportCsvUrl = month =>
-  `${API_BASE}/reports/batch.csv?month=${encodeURIComponent(month)}`;
-export const batchReportXlsxUrl = month =>
-  `${API_BASE}/reports/batch.xlsx?month=${encodeURIComponent(month)}`;
+export const batchReportCsvUrl = (month, supplier) =>
+  `${API_BASE}/reports/batch.csv${qs({ month, supplier })}`;
+export const batchReportXlsxUrl = (month, supplier) =>
+  `${API_BASE}/reports/batch.xlsx${qs({ month, supplier })}`;
 
 // ---------------------------------------------------------------- FSN
 

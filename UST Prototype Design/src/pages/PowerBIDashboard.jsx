@@ -20,11 +20,16 @@ export default function PowerBIDashboard() {
     <div className="stack">
       {check.state === 'ok' && (
         <div className="card-h" style={{ marginBottom: 0 }}>
-          <span className="section-h">USTore Analytics — Power BI</span>
-          <span className="hint">
-            {check.method}
-            {check.method.startsWith('Publish to web') && ' · this report is publicly viewable'}
-          </span>
+          <span className="section-h">USTore Analytics (Power BI)</span>
+          {/* Secure embed has no label (inspectEmbedUrl returns null for it),
+              so this whole line is skipped rather than rendered empty — and
+              startsWith is never reached on a null. */}
+          {check.method && (
+            <span className="hint">
+              {check.method}
+              {check.method.startsWith('Publish to web') && ' · this report is publicly viewable'}
+            </span>
+          )}
         </div>
       )}
 

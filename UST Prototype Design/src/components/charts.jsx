@@ -263,7 +263,15 @@ export function HBars({ data, valueFmt = num, color = 'var(--ink)' }) {
             transition: 'background .12s',
           }}
         >
-          <span title={d.name} style={{ fontSize: 12, color: hover === i ? 'var(--text)' : 'var(--text-2)', fontWeight: hover === i ? 700 : 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
+          {/* `sub` is an optional second line under the label — the supplier,
+              on the pages that rank items across all of them. Without it a
+              bar chart of item names gives no way to tell whose stock it is. */}
+          <span style={{ minWidth: 0 }}>
+            <span title={d.name} style={{ display: 'block', fontSize: 12, color: hover === i ? 'var(--text)' : 'var(--text-2)', fontWeight: hover === i ? 700 : 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
+            {d.sub && (
+              <span title={d.sub} style={{ display: 'block', fontSize: 10.5, color: 'var(--muted)', fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{d.sub}</span>
+            )}
+          </span>
           <div style={{ height: 14, background: 'var(--bg)', borderRadius: 4, overflow: 'hidden', outline: hover === i ? '1px solid var(--line)' : 'none' }}>
             <div style={{
               width: `${(d.value / max) * 100}%`, height: '100%',

@@ -282,7 +282,30 @@ def get_meta():
 
 @app.get("/api/suppliers")
 def get_suppliers():
-    cat = catalog.compute_catalog(con())
+    c = con()
+
+    # ?month=YYYY-MM — only suppliers with a sale in that month, for the batch
+    # report's filter. Taken from build_batch_report()'s own output rather than
+    # a query of its own, so the dropdown cannot offer a supplier whose section
+    # that report would then come back empty for. An unparseable month is
+    # ignored rather than rejected: a filter list is not worth a failed screen.
+    month = request.args.get("month") or None
+    if month and validation.ISO_MONTH_RE.match(month):
+        sold = sorted({e["supplier"] for e in build_batch_report(c, month)})
+        return jsonify([catalog.ALL_SUPPLIERS, *sold])
+
+    cat = catalog.compute_catalog(c)
+    # ?forecastable=1 — only suppliers with at least one SKU the model actually
+    # forecast. The Demand Forecast screen lists nothing but forecastable SKUs,
+    # so offering it a supplier whose items are all unforecast leads straight
+    # to an empty page.
+    if _bool_flag("forecastable"):
+        ids = _forecastable_ids(c)
+        # An empty set means the pipeline has not produced any forecast at all.
+        # That screen then falls back to every SKU with sales history, so the
+        # supplier list must not narrow to nothing underneath it.
+        if ids:
+            cat = [p for p in cat if p["product_id"] in ids]
     return jsonify([catalog.ALL_SUPPLIERS, *sorted({p["supplier_name"] for p in cat})])
 
 
@@ -302,9 +325,14 @@ def get_months():
 @app.get("/api/products")
 def get_products():
     c = con()
-    cat = catalog.compute_catalog(c)
     supplier = request.args.get("supplier") or None
     category = request.args.get("category") or None
+    # The topbar's date range belongs here, not only on /api/sales/monthly.
+    # Every product-derived panel (total units, top sellers, category mix)
+    # reads this endpoint, so without it "Last 3 Months" moved the trend line
+    # and left every other figure on the page at its all-time value.
+    date_range = request.args.get("dateRange") or None
+    cat = catalog.compute_catalog(c, date_range)
     cat = [p for p in cat if catalog.matches(p, supplier, category)]
     if _bool_flag("has_history"):
         cat = [p for p in cat if p["is_active"] and p["total_units"] >= 0 and p["has_history"]]
@@ -478,11 +506,16 @@ def get_monthly_units():
     return jsonify(sorted(by_month.values(), key=lambda a: a["month"]))
 
 
-def build_batch_report(c, month):
+def build_batch_report(c, month, only_supplier=None):
     """The month's sales grouped by supplier — the shared body of both
     /api/reports/batch (JSON, for the screen) and /api/reports/batch.pdf
     (the document Purchasing and Finance actually receive). Neither may
-    compute this differently from the other."""
+    compute this differently from the other.
+
+    `only_supplier` narrows the report to that supplier's section. It is applied
+    here, in the shared body, rather than on the screen: a filter that trimmed
+    the table but not the PDF/CSV/XLSX beside it would hand someone an export
+    that disagrees with what they were looking at when they clicked."""
     cat = catalog.compute_catalog(c)
     product_by_id = {p["product_id"]: p for p in cat}
 
@@ -519,6 +552,12 @@ def build_batch_report(c, month):
 
     out = []
     for entry in by_supplier.values():
+        # Named `only_supplier`, not `supplier`: the loop above binds `supplier`
+        # to each row's own supplier, so a parameter of that name is shadowed
+        # by the time this runs and every section but the last one's is dropped.
+        if (only_supplier and only_supplier != catalog.ALL_SUPPLIERS
+                and entry["supplier"] != only_supplier):
+            continue
         entry["items"].sort(key=lambda i: i["quantity"], reverse=True)
         out.append(entry)
     out.sort(key=lambda e: e["subtotal"], reverse=True)
@@ -530,7 +569,7 @@ def get_batch_report():
     month = request.args.get("month")
     if not month:
         return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
-    return jsonify(build_batch_report(con(), month))
+    return jsonify(build_batch_report(con(), month, request.args.get("supplier") or None))
 
 
 @app.get("/api/reports/batch.pdf")
@@ -551,7 +590,7 @@ def get_batch_report_pdf():
     if not month or not validation.ISO_MONTH_RE.match(month):
         return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
 
-    report = build_batch_report(con(), month)
+    report = build_batch_report(con(), month, request.args.get("supplier") or None)
     pdf_bytes = batch_pdf.render(report, month)
 
     disposition = "inline" if _bool_flag("inline") else "attachment"
@@ -571,7 +610,7 @@ def get_batch_report_csv():
     if not month or not validation.ISO_MONTH_RE.match(month):
         return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
 
-    report = build_batch_report(con(), month)
+    report = build_batch_report(con(), month, request.args.get("supplier") or None)
     csv_bytes = batch_export.render_csv(report, month)
     filename = f"USTore_Batch_Sales_Report_{month}.csv"
     return Response(csv_bytes, mimetype="text/csv", headers={
@@ -588,7 +627,7 @@ def get_batch_report_xlsx():
     if not month or not validation.ISO_MONTH_RE.match(month):
         return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
 
-    report = build_batch_report(con(), month)
+    report = build_batch_report(con(), month, request.args.get("supplier") or None)
     xlsx_bytes = batch_export.render_xlsx(report, month)
     filename = f"USTore_Batch_Sales_Report_{month}.xlsx"
     return Response(xlsx_bytes,
@@ -1175,6 +1214,17 @@ def add_event():
 
 
 # -------------------------------------------------------------- forecast
+
+def _forecastable_ids(c):
+    """product_ids step4_forecast_model.py produced a forecast for.
+
+    Empty when the pipeline has not run. Callers must read that as "no
+    restriction is knowable yet", not as "nothing qualifies"."""
+    if not _has_forecast_table(c):
+        return set()
+    return {r["product_id"] for r in dbmod.rows(
+        c, "SELECT DISTINCT product_id FROM Result_Forecast")}
+
 
 def _has_forecast_table(c):
     tables = {r[0] for r in c.execute(
