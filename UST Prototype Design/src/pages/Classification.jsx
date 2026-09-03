@@ -25,7 +25,7 @@ import { num, FSN_TONE, FSN_LABEL } from '../lib/format';
  */
 export default function Classification({ filters }) {
   const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
-    { key: `classification:products:${filters.supplier}|${filters.category}` });
+    { key: `classification:products:${filters.supplier}|${filters.category}|${filters.dateRange}` });
 
   const [band, setBand] = useState(null);       // 'F' | 'S' | 'N' | null
   const [bestBand, setBestBand] = useState('All');
@@ -46,11 +46,17 @@ export default function Classification({ filters }) {
   // carries a unit price - a revenue ranking would sort on a half-empty column.
   // `bestBand` is this card's own filter, deliberately separate from the item
   // list's: the two answer different questions and should not move together.
+  const showSupplier = filters.supplier === ALL_SUPPLIERS;
   const topSellers = useMemo(() => [...products]
     .filter(p => p.total_units > 0 && (bestBand === 'All' || p.fsn_class === bestBand))
     .sort((a, b) => b.total_units - a.total_units)
     .slice(0, 15)
-    .map(p => ({ name: p.item_name, value: p.total_units })), [products, bestBand]);
+    .map(p => ({
+      name: p.item_name,
+      value: p.total_units,
+      // See Overview: the supplier line is for the all-suppliers view only.
+      sub: showSupplier ? p.supplier_name : undefined,
+    })), [products, bestBand, showSupplier]);
 
   const categories = useMemo(
     () => [...new Set(products.map(p => p.category))].sort(), [products]);

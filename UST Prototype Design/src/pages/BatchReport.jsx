@@ -1,19 +1,27 @@
-import { useState } from 'react';
 import { getBatchReport, getMonths, getMeta, batchReportPdfUrl, batchReportCsvUrl, batchReportXlsxUrl } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import Icon from '../components/Icon';
 import { peso, num, longMonth, usDate } from '../lib/format';
+import { ALL_SUPPLIERS } from '../services/dataService';
 
-export default function BatchReport() {
+/** `month` / `setMonth` come from App: the topbar's supplier list is scoped to
+ *  the month on show, so the two have to read the same value. */
+export default function BatchReport({ filters, month, setMonth }) {
   const { data: months } = useData(getMonths, [], []);
   const { data: meta } = useData(getMeta, []);
-  const [month, setMonth] = useState(null);
   const selected = month ?? months[months.length - 1] ?? null;
 
+  // The topbar's supplier, or undefined for all of them. It is sent to the
+  // server rather than applied to the response so the three exports below
+  // carry the same cut as the table — see build_batch_report() in app.py.
+  const supplier = filters?.supplier && filters.supplier !== ALL_SUPPLIERS
+    ? filters.supplier
+    : undefined;
+
   const { data: report, loading } = useData(
-    () => (selected ? getBatchReport(selected) : Promise.resolve([])),
-    [selected],
+    () => (selected ? getBatchReport(selected, supplier) : Promise.resolve([])),
+    [selected, supplier],
     []
   );
 
@@ -38,9 +46,13 @@ export default function BatchReport() {
     a.click();
     a.remove();
   }
-  const downloadPdf = () => download(batchReportPdfUrl(selected), `USTore_Batch_Sales_Report_${selected}.pdf`);
-  const downloadCsv = () => download(batchReportCsvUrl(selected), `USTore_Batch_Sales_Report_${selected}.csv`);
-  const downloadXlsx = () => download(batchReportXlsxUrl(selected), `USTore_Batch_Sales_Report_${selected}.xlsx`);
+  // Filtered exports get the supplier in the filename too, so a folder of
+  // downloads does not end up with several different reports under one name.
+  const stem = `USTore_Batch_Sales_Report_${selected}`
+    + (supplier ? `_${supplier.replace(/[^\w]+/g, '_').replace(/^_|_$/g, '')}` : '');
+  const downloadPdf = () => download(batchReportPdfUrl(selected, { supplier }), `${stem}.pdf`);
+  const downloadCsv = () => download(batchReportCsvUrl(selected, supplier), `${stem}.csv`);
+  const downloadXlsx = () => download(batchReportXlsxUrl(selected, supplier), `${stem}.xlsx`);
 
   return (
     <div className="stack">
@@ -66,7 +78,7 @@ export default function BatchReport() {
           <button
             className="btn btn--ghost"
             disabled={!selected || loading}
-            onClick={() => window.open(batchReportPdfUrl(selected, { inline: true }), '_blank', 'noopener')}
+            onClick={() => window.open(batchReportPdfUrl(selected, { inline: true, supplier }), '_blank', 'noopener')}
             title="Open the PDF in a new tab"
           >
             <Icon name="printer" size={14} /> Print Preview
@@ -115,7 +127,13 @@ export default function BatchReport() {
         </div>
       </div>
 
-      {loading ? <Loading label="Building report…" /> : (
+      {loading ? <Loading label="Building report…" /> : report.length === 0 ? (
+        <div className="empty">
+          {supplier
+            ? `${supplier} recorded no sales in ${selected ? longMonth(selected) : 'this period'}.`
+            : `No sales were recorded in ${selected ? longMonth(selected) : 'this period'}.`}
+        </div>
+      ) : (
         <>
           {unpricedItems > 0 && (
             <div className="notice notice--warn">

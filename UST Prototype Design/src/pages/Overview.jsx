@@ -15,7 +15,7 @@ export default function Overview({ filters, setPage }) {
   const [productsOpen, setProductsOpen] = useState(false);
   const [fsnBand, setFsnBand] = useState(null);   // 'F' | 'S' | 'N' | null
   const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
-    { key: `overview:products:${filters.supplier}|${filters.category}` });
+    { key: `overview:products:${filters.supplier}|${filters.category}|${filters.dateRange}` });
   const { data: monthly } = useData(() => getMonthlyUnits(filters), [filters], []);
   const { data: meta } = useData(getMeta, []);
   const { data: stock } = useData(() => getStockPosition(filters), [filters]);
@@ -37,10 +37,17 @@ export default function Overview({ filters, setPage }) {
     return { units, fsn };
   }, [products]);
 
+  const showSupplier = filters.supplier === ALL_SUPPLIERS;
   const top10 = useMemo(() => [...products]
     .sort((a, b) => b.total_units - a.total_units)
     .slice(0, 10)
-    .map(p => ({ name: p.item_name, value: p.total_units })), [products]);
+    .map(p => ({
+      name: p.item_name,
+      value: p.total_units,
+      // Only worth showing while the chart spans every supplier; with one
+      // selected it would just repeat that name down the whole card.
+      sub: showSupplier ? p.supplier_name : undefined,
+    })), [products, showSupplier]);
 
   const catData = useMemo(() => {
     const map = {};
@@ -55,6 +62,13 @@ export default function Overview({ filters, setPage }) {
     [monthly]
   );
 
+  // The span the headline figure actually covers. It has to follow the date
+  // filter: quoting the full sales span under a windowed total is exactly how
+  // "Last 3 Months" used to read as though it were still all-time.
+  const spanLabel = monthly.length
+    ? `${shortMonth(monthly[0].month)} → ${shortMonth(monthly[monthly.length - 1].month)}`
+    : meta ? `${usDate(meta.sales_span[0])} → ${usDate(meta.sales_span[1])}` : '';
+
   const total = products.length || 1;
 
   if (loading) return <Loading label="Loading catalogue…" />;
@@ -67,7 +81,7 @@ export default function Overview({ filters, setPage }) {
           accent
           label="Total Units Sold"
           value={num(totals.units)}
-          sub={meta ? `${usDate(meta.sales_span[0])} → ${usDate(meta.sales_span[1])}` : ''}
+          sub={spanLabel}
           icon="box"
         />
         <KPICard
