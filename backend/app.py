@@ -29,6 +29,7 @@ from pathlib import Path
 from flask import Flask, Response, g, jsonify, request
 from flask_cors import CORS
 
+import batch_export
 import batch_pdf
 import catalog
 import db as dbmod
@@ -559,6 +560,43 @@ def get_batch_report_pdf():
         "Content-Disposition": f'{disposition}; filename="{filename}"',
         "Content-Length": str(len(pdf_bytes)),
     })
+
+
+@app.get("/api/reports/batch.csv")
+def get_batch_report_csv():
+    """The batch sales report as CSV, in the same row shape as the store's
+    own TBS workbooks (see batch_export.py). Same build_batch_report() body
+    as the PDF and the screen - never a different number."""
+    month = request.args.get("month")
+    if not month or not validation.ISO_MONTH_RE.match(month):
+        return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
+
+    report = build_batch_report(con(), month)
+    csv_bytes = batch_export.render_csv(report, month)
+    filename = f"USTore_Batch_Sales_Report_{month}.csv"
+    return Response(csv_bytes, mimetype="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Length": str(len(csv_bytes)),
+    })
+
+
+@app.get("/api/reports/batch.xlsx")
+def get_batch_report_xlsx():
+    """The batch sales report as an .xlsx workbook - same row shape and
+    same shared body as the CSV and PDF exports."""
+    month = request.args.get("month")
+    if not month or not validation.ISO_MONTH_RE.match(month):
+        return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
+
+    report = build_batch_report(con(), month)
+    xlsx_bytes = batch_export.render_xlsx(report, month)
+    filename = f"USTore_Batch_Sales_Report_{month}.xlsx"
+    return Response(xlsx_bytes,
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{filename}"',
+                        "Content-Length": str(len(xlsx_bytes)),
+                    })
 
 
 # -------------------------------------------------------------------- FSN

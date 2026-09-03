@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getBatchReport, getMonths, getMeta, batchReportPdfUrl } from '../services/dataService';
+import { getBatchReport, getMonths, getMeta, batchReportPdfUrl, batchReportCsvUrl, batchReportXlsxUrl } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import Icon from '../components/Icon';
@@ -25,18 +25,22 @@ export default function BatchReport() {
   // reference data for supplier remittance.
   const grandUnits = report.reduce((s, r) => s + r.total_units, 0);
 
-  function downloadPdf() {
+  // A temporary anchor rather than assigning location: the response carries
+  // Content-Disposition: attachment, so this downloads without navigating
+  // the app away and losing the current filter state. Shared by all three
+  // export formats — they differ only in the URL and the filename.
+  function download(url, filename) {
     if (!selected) return;
-    // A temporary anchor rather than assigning location: the response carries
-    // Content-Disposition: attachment, so this downloads without navigating
-    // the app away and losing the current filter state.
     const a = document.createElement('a');
-    a.href = batchReportPdfUrl(selected);
-    a.download = `USTore_Batch_Sales_Report_${selected}.pdf`;
+    a.href = url;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
   }
+  const downloadPdf = () => download(batchReportPdfUrl(selected), `USTore_Batch_Sales_Report_${selected}.pdf`);
+  const downloadCsv = () => download(batchReportCsvUrl(selected), `USTore_Batch_Sales_Report_${selected}.csv`);
+  const downloadXlsx = () => download(batchReportXlsxUrl(selected), `USTore_Batch_Sales_Report_${selected}.xlsx`);
 
   return (
     <div className="stack">
@@ -66,6 +70,22 @@ export default function BatchReport() {
             title="Open the PDF in a new tab"
           >
             <Icon name="printer" size={14} /> Print Preview
+          </button>
+          <button
+            className="btn btn--ghost"
+            disabled={!selected || loading}
+            onClick={downloadCsv}
+            title="Download as CSV"
+          >
+            <Icon name="download" size={14} /> Export as CSV
+          </button>
+          <button
+            className="btn btn--ghost"
+            disabled={!selected || loading}
+            onClick={downloadXlsx}
+            title="Download as Excel (.xlsx)"
+          >
+            <Icon name="download" size={14} /> Export as Excel
           </button>
           <button
             className="btn btn--ink"
@@ -99,8 +119,9 @@ export default function BatchReport() {
         <>
           {unpricedItems > 0 && (
             <div className="notice notice--warn">
-              <b>{num(unpricedItems)} line item{unpricedItems === 1 ? '' : 's'}</b> in this period have no unit price on
-              record, shown as “no price” below. Quantities and subtotals are unaffected — those are unit counts.
+              <b>{num(unpricedItems)} line item{unpricedItems === 1 ? '' : 's'}</b> in this period have no item price on
+              record, shown as “—” below (no Item Price, no For Remittance figure). Quantities and unit-count subtotals
+              are unaffected.
             </div>
           )}
 
@@ -114,19 +135,29 @@ export default function BatchReport() {
                     <tr>
                       <th>Item</th>
                       <th className="num">Quantity</th>
-                      <th className="num">Unit Price</th>
+                      <th className="num">Item Price</th>
+                      <th className="num">For Remittance</th>
                     </tr>
                   </thead>
                   <tbody>
                     {items.map(item => (
                       <tr key={item.item_name}>
                         <td className="strong">
-                          <span className="cell-trunc" style={{ '--trunc': '420px' }} title={item.item_name}>
+                          <span className="cell-trunc" style={{ '--trunc': '380px' }} title={item.item_name}>
                             {item.item_name}
                           </span>
                         </td>
                         <td className="num">{num(item.quantity)}</td>
-                        <td className="num">{item.unit_price_php != null ? peso(item.unit_price_php) : <span className="muted">no price</span>}</td>
+                        <td className="num">
+                          {item.unit_price_php != null
+                            ? peso(item.unit_price_php)
+                            : <span className="muted" title="No unit price on record for this item">—</span>}
+                        </td>
+                        <td className="num">
+                          {item.line_total != null
+                            ? <span className="strong">{peso(item.line_total)}</span>
+                            : <span className="muted">—</span>}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
