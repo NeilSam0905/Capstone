@@ -62,18 +62,24 @@ async function doFetch(method, path, body) {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
-    throw new Error(
-      'Cannot reach the backend. Make sure the Flask server is running on :5000 '
-      + '(cd backend && python app.py).'
-    );
+    // Plain language on screen. The fetch failure rides along as `cause`, so a
+    // developer is still one console expand away from the real reason.
+    throw new Error('Cannot reach the server. Make sure it is running, then refresh this page.', { cause: err });
   }
   // Validation failures come back as 400 with a { ok:false, errors } body,
   // which callers already handle - only a response with no JSON body at
   // all (network error, backend down) should throw.
   try {
     return await res.json();
-  } catch {
-    throw new Error(`${method} ${path} returned no JSON (status ${res.status})`);
+  } catch (err) {
+    // This used to surface as "GET /meta returned no JSON (status 502)". A
+    // method, a path and a status code mean nothing to whoever is running the
+    // tally, so they move off the message and onto the error itself - still the
+    // first thing a developer sees when they expand it in the console.
+    const failed = new Error('The server did not respond properly. Wait a moment, then refresh this page.', { cause: err });
+    failed.request = `${method} ${path}`;
+    failed.status = res.status;
+    throw failed;
   }
 }
 

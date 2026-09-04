@@ -9,7 +9,7 @@ import Icon from './Icon';
 export default function ErrorBanner({ error }) {
   if (!error) return null;
   return (
-    <div className="notice notice--warn" style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+    <div className="notice notice--warn notice--banner" style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
       <span style={{ flexShrink: 0, marginTop: 1 }}><Icon name="alert" size={15} /></span>
       <span>
         <b>Connection problem:</b> {error.message}
