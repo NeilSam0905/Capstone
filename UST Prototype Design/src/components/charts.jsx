@@ -54,6 +54,19 @@ function ChartTip({ label, value, sub }) {
 
 /* ---------- Line chart ---------- */
 export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', tickFmt = num }) {
+  // Hover is tracked as an index, not a pixel: the pointer is mapped back
+  // through the same x() the points were drawn with, so the highlighted point
+  // is always the nearest one rather than whatever happens to be under the
+  // cursor in a rescaled viewBox.
+  // { i, left } — the snapped point index, plus where that point actually is
+  // in pixels, so the tooltip sits exactly over the crosshair no matter how
+  // the viewBox has been scaled or letterboxed.
+  // Declared above the "not enough points" guard below: hooks must run in the
+  // same order on every render, and a series can drop under two points when a
+  // filter narrows.
+  const [hover, setHover] = useState(null);
+  const svgRef = useRef(null);
+
   if (!data || data.length < 2) {
     return <div className="empty">Not enough data points to plot.</div>;
   }
@@ -76,16 +89,6 @@ export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', 
   const ticks = Math.max(1, Math.round((max - min) / step));
   // keep the x-axis readable when there are many periods
   const labelEvery = Math.ceil(data.length / 14);
-
-  // Hover is tracked as an index, not a pixel: the pointer is mapped back
-  // through the same x() the points were drawn with, so the highlighted point
-  // is always the nearest one rather than whatever happens to be under the
-  // cursor in a rescaled viewBox.
-  // { i, left } — the snapped point index, plus where that point actually is
-  // in pixels, so the tooltip sits exactly over the crosshair no matter how
-  // the viewBox has been scaled or letterboxed.
-  const [hover, setHover] = useState(null);
-  const svgRef = useRef(null);
 
   function onMove(e) {
     const local = svgPoint(svgRef.current, e.clientX, e.clientY);
@@ -143,6 +146,13 @@ export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', 
 
 /* ---------- Donut ---------- */
 export function Donut({ data, size = 180 }) {
+  // One hover index drives both the ring and the legend, so pointing at either
+  // highlights the other - the legend is the label for the slice, and reading
+  // a donut means pairing them.
+  // Declared above the "no data" guard below: hooks must run in the same order
+  // on every render, and the category set can empty out when a filter narrows.
+  const [hover, setHover] = useState(null);
+
   const total = data.reduce((s, d) => s + d.value, 0);
   if (!total) return <div className="empty">No data.</div>;
   const R = size / 2, r = R * 0.6, cx = R, cy = R;
@@ -185,10 +195,6 @@ export function Donut({ data, size = 180 }) {
       pct: frac >= 0.01 ? Math.round(frac * 100) : Math.round(frac * 1000) / 10,
     };
   });
-  // One hover index drives both the ring and the legend, so pointing at either
-  // highlights the other - the legend is the label for the slice, and reading
-  // a donut means pairing them.
-  const [hover, setHover] = useState(null);
   const active = hover != null ? arcs[hover] : null;
 
   return (
@@ -246,9 +252,12 @@ export function Donut({ data, size = 180 }) {
 
 /* ---------- Horizontal bars ---------- */
 export function HBars({ data, valueFmt = num, color = 'var(--ink)' }) {
+  // Declared above the "no data" guard below: hooks must run in the same order
+  // on every render, and an empty result set is an ordinary state here.
+  const [hover, setHover] = useState(null);
+
   if (!data.length) return <div className="empty">No data.</div>;
   const max = Math.max(...data.map(d => d.value)) || 1;
-  const [hover, setHover] = useState(null);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
       {data.map((d, i) => (
@@ -361,6 +370,12 @@ export function FSNStat({ label, count, pct, tone, onClick }) {
 
 /* ---------- Forecast chart with confidence band ---------- */
 export function ForecastChart({ data, height = 260 }) {
+  // Declared above the "not enough points" guard below: hooks must run in the
+  // same order on every render, and a horizon can come back with fewer than two
+  // points.
+  const [hover, setHover] = useState(null);
+  const svgRef = useRef(null);
+
   if (!data || data.length < 2) {
     return <div className="empty">Not enough forecast points to plot.</div>;
   }
@@ -398,9 +413,6 @@ export function ForecastChart({ data, height = 260 }) {
     if (parts.length >= 3) return `${months[+parts[1]-1]} ${+parts[2]}`;
     return d;
   };
-
-  const [hover, setHover] = useState(null);
-  const svgRef = useRef(null);
 
   function onMove(e) {
     const local = svgPoint(svgRef.current, e.clientX, e.clientY);

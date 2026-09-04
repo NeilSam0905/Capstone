@@ -342,6 +342,12 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .notice--crit { color: var(--crit); background: var(--crit-bg); border-color: var(--crit-line); }
 .notice--hvl  { color: var(--hvl);  background: var(--hvl-bg);  border-color: var(--hvl-line); }
 .notice--info { color: var(--info); background: var(--info-bg); border-color: var(--info-line); }
+/* The connection banner sits directly above the page content inside `.scroll`,
+   which is a plain block - without this it butts up against the first card.
+   `.tally-body` already spaces its children with a flex gap, so the margin
+   would stack on top of that gap there. */
+.notice--banner { margin-bottom: var(--gap); }
+.tally-body > .notice--banner { margin-bottom: 0; }
 
 /* Layout helpers used by the screens */
 .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--gap); }
