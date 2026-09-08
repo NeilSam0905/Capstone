@@ -1,0 +1,4 @@
+method,variant,mae,rmse,mase,pct_skus_beating_naive,fill_rate_at_target,n_skus_priced,mase_improved
+logistic_hurdle,per_sku (this run),13.13161182353086,19.826211498184104,5.387830041182502,56.0,0.6654,141,False
+logistic_hurdle,pooled_by_category_speed_syn5y,14.154395325415997,20.764950354421057,5.38933317418077,52.6,0.7051,141,False
+weekly_hurdle_12w,per_sku (this run),14.203835481561045,20.317884369590676,4.792499352819064,51.1,0.7285,140,

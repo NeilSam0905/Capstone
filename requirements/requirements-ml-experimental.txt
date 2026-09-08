@@ -1,0 +1,20 @@
+# USTore capstone - experimental ML baselines, deliberately separated
+#
+#   pip install -r requirements/requirements.txt -r requirements/requirements-ml-experimental.txt
+#
+# NOT part of the standard install, and not needed by anything in the
+# Part C checklist or by scripts/model_benchmark.py. Only
+# scripts/model_benchmark_ml.py and forecasting/ml_models.py import these -
+# an ad hoc extension that scores XGBoost / LightGBM / Random Forest on
+# the same walk-forward folds as the committed benchmark, kept out of
+# requirements.txt for the same reason Prophet is (requirements-prophet.txt):
+# the committed benchmark has to reproduce from a clean clone of the
+# declared dependency set alone, and this comparison is exploratory, not
+# a committed result.
+#
+# Versions left unpinned on purpose: installed ad hoc for this comparison,
+# not verified as a reproducible build.
+
+xgboost
+lightgbm
+scikit-learn

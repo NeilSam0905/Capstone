@@ -53,7 +53,8 @@ from .evaluate import aggregate_blocks
 
 __all__ = [
     "weekly_hurdle_fit_predict", "DEFAULT_WEEK", "DEFAULT_WINDOW_WEEKS",
-    "logistic_hurdle_fit_predict",
+    "logistic_hurdle_fit_predict", "pooled_logistic_hurdle_fit_predict",
+    "calendar_logistic_hurdle_fit_predict",
 ]
 
 DEFAULT_WEEK = 7
@@ -216,4 +217,167 @@ def logistic_hurdle_fit_predict(rate_windows=(7, 30), recency_cap=60,
         return _clip(p_sale * size_hat)
 
     _f.__name__ = f"logistic_hurdle(rw={rate_windows})"
+    return _f
+
+
+# ---- pooled logistic hurdle -----------------------------------------
+# docs/SPARSE_DEMAND_EXPERIMENTS.md section 2 diagnosed logistic_hurdle's
+# loss to the empirical weekly_hurdle as thin per-SKU history - "too
+# little signal for a 10-parameter model to learn weekday/recency effects
+# from without fitting noise instead" - and named the fix it did not
+# attempt: "pooling features across similar SKUs (or at least within an
+# FSN tier) ... so a slow-moving SKU can borrow statistical strength from
+# others like it". This is that model.
+#
+# WHICH half gets pooled, and why only that half:
+#
+#   probability  P(sale on day t | weekday, trailing 7/30d sale rate,
+#                days since last sale) - POOLED. Every feature is already
+#                scale-free (a one-hot, two rates in [0,1], a capped
+#                recency in [0,1]), so rows from a plushie and a tumbler
+#                are directly comparable and one shared classifier can be
+#                fit across all of them.
+#   size         E[units | it sells] - kept PER SKU. That one is pure
+#                scale: a P2,000 tumbler and a P30 sticker sell in
+#                different quantities, and averaging them would be
+#                meaningless.
+#
+# The pooled classifier does NOT collapse every SKU onto one probability:
+# the trailing-rate and recency features are computed from each SKU's own
+# history, so what is shared is the MAPPING from "how active has this item
+# been lately" to "how likely is it to sell tomorrow" - learned once from
+# every item in the group instead of separately from each item's handful
+# of sale events. That mapping is exactly what a thin per-SKU fit cannot
+# estimate, and exactly what generalises across items in a group.
+#
+# Interface note: this returns a callable taking train_by_sku (dict
+# sku -> that SKU's training slice) rather than one SKU's array, matching
+# forecasting.ml_models.pooled_fit_predict. It is deliberately NOT a
+# `fit_predict(train, horizon)`, because pooling is precisely the thing
+# that interface cannot express - see the section-2 note above.
+
+def pooled_logistic_hurdle_fit_predict(rate_windows=(7, 30), recency_cap=60,
+                                       l2=1.0, size_window=90,
+                                       min_train_days=21, min_pooled_rows=200):
+    """One shared sale-probability classifier per GROUP, each SKU's own
+    size estimate. Returns f(train_by_sku, horizon) -> {sku: predictions}."""
+    def _f(train_by_sku, horizon):
+        rows_X, rows_y = [], []
+        state = {}       # sku -> (last design row or None, n_train, size_hat)
+
+        for sku, values in train_by_sku.items():
+            t = np.asarray(values, dtype=float).ravel()
+            n = t.size
+
+            window = t[-size_window:] if n >= size_window else t
+            nz = window[window > 0]
+            size_hat = float(nz.mean()) if nz.size else 0.0
+
+            if n < min_train_days:
+                state[sku] = (None, n, size_hat)
+                continue
+
+            X = _design_matrix(t, rate_windows, recency_cap, offset=0)
+            rows_X.append(X)
+            rows_y.append((t > 0).astype(float))
+            state[sku] = (X[-1], n, size_hat)
+
+        pooled_rows = sum(x.shape[0] for x in rows_X)
+        weights = None
+        if rows_X and pooled_rows >= min_pooled_rows:
+            weights = _fit_logistic(np.vstack(rows_X), np.concatenate(rows_y), l2=l2)
+
+        out = {}
+        for sku, (last_row, n, size_hat) in state.items():
+            if weights is None or last_row is None:
+                # Same fallback the per-SKU model uses: flat empirical
+                # daily rate x size.
+                t = np.asarray(train_by_sku[sku], dtype=float).ravel()
+                rate = float(np.mean(t > 0)) if t.size else 0.0
+                out[sku] = _clip(np.full(horizon, rate * size_hat))
+                continue
+
+            Xf = np.tile(last_row, (horizon, 1))
+            wd = np.zeros((horizon, 7))
+            wd[np.arange(horizon), (n + np.arange(horizon)) % 7] = 1.0
+            Xf[:, :7] = wd
+
+            z = np.clip(Xf @ weights, -30, 30)
+            p_sale = 1.0 / (1.0 + np.exp(-z))
+            out[sku] = _clip(p_sale * size_hat)
+        return out
+
+    _f.__name__ = f"pooled_logistic_hurdle(rw={rate_windows})"
+    return _f
+
+
+# ---- calendar-aware logistic hurdle -----------------------------------
+# The full-catalogue diagnostics (2026-09-08 session) found that neither
+# sparsity nor product category explains the accuracy ceiling - a
+# synthetic-world simulation showed these methods handle sparse-but-STABLE
+# demand fine, and aggregating real SKUs into bigger, denser series didn't
+# move MASE at all. What's left is that the demand RATE itself shifts -
+# semester cycles, exam weeks, breaks - and none of the project's models
+# are told when in the academic year a given training/forecast day falls.
+# Dim_Date already carries that as real, populated columns
+# (is_enrollment_period, is_exam_week, is_event_day, is_sem_break) that
+# nothing in forecasting/ had ever read.
+#
+# This adds those four flags as extra logistic-regression columns,
+# alongside logistic_hurdle's existing weekday/recency/rate features.
+#
+# How a per-SKU array sees the calendar without ever holding a date
+# --------------------------------------------------------------------
+# `fit_predict(train, horizon)` receives only the value array - the same
+# constraint _weekday_onehot works under (recovering weekday from array
+# POSITION because every SKU's series starts on the same calendar day, per
+# model_benchmark.load_daily_series). calendar_features here is that same
+# trick generalised: a (n_total_days, n_flags) array built ONCE from
+# Dim_Date for the exact date range every series shares, then looked up by
+# position exactly like weekday is - calendar_features[:n] for the
+# training rows, calendar_features[n:n+horizon] for the forecast horizon.
+
+def calendar_logistic_hurdle_fit_predict(calendar_features, rate_windows=(7, 30),
+                                         recency_cap=60, l2=1.0,
+                                         size_window=90, min_train_days=21):
+    """logistic_hurdle_fit_predict + calendar_features as extra columns.
+
+    calendar_features: 2D array, one row per day of the SAME shared
+    calendar every SKU's series is built on, one column per calendar flag
+    (e.g. is_enrollment_period/is_exam_week/is_event_day/is_sem_break).
+    Looked up by array position - see the module note above for why that
+    is safe without ever seeing an actual date.
+    """
+    calendar_features = np.asarray(calendar_features, dtype=float)
+
+    def _f(train, horizon):
+        t = np.asarray(train, dtype=float)
+        n = t.size
+
+        window = t[-size_window:] if t.size >= size_window else t
+        nz_window = window[window > 0]
+        size_hat = float(nz_window.mean()) if nz_window.size else 0.0
+
+        if n < min_train_days:
+            rate = float(np.mean(t > 0)) if n else 0.0
+            return _clip(np.full(horizon, rate * size_hat))
+
+        base = _design_matrix(t, rate_windows, recency_cap, offset=0)
+        X = np.hstack([base, calendar_features[:n]])
+        y = (t > 0).astype(float)
+        w = _fit_logistic(X, y, l2=l2)
+
+        last_row = np.hstack([base[-1], calendar_features[n - 1]])
+        Xf = np.tile(last_row, (horizon, 1))
+        wd = np.zeros((horizon, 7))
+        wd[np.arange(horizon), (n + np.arange(horizon)) % 7] = 1.0
+        Xf[:, :7] = wd
+        n_base = base.shape[1]
+        Xf[:, n_base:] = calendar_features[n:n + horizon]
+
+        z = np.clip(Xf @ w, -30, 30)
+        p_sale = 1.0 / (1.0 + np.exp(-z))
+        return _clip(p_sale * size_hat)
+
+    _f.__name__ = f"calendar_logistic_hurdle(rw={rate_windows})"
     return _f
