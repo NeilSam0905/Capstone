@@ -9,7 +9,8 @@ import { num, usDate } from '../lib/format';
 const SCENARIO_LABEL = { low_admin_cost: 'Low (admin cost)', high_goods_value: 'High (goods value)' };
 
 export default function Reorder({ filters }) {
-  const { data: stock, loading } = useData(() => getStockPosition(filters), [filters]);
+  const { data: stock, loading } = useData(() => getStockPosition(filters), [filters], null,
+    { key: `reorder:stock:${filters.supplier}|${filters.category}` });
   const { data: alerts } = useData(getReorderAlerts, []);
   const { data: meta } = useData(getMeta, []);
 

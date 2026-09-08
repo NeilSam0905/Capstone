@@ -463,10 +463,19 @@ def _table_exists(con, name):
     ).fetchone() is not None
 
 
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 def _max_id(con, table, column):
+    """table/column are always hardcoded call-site literals (never request
+    input), but SQLite params can't bind identifiers - only values - so this
+    was built with %-formatting. Validated against an identifier allowlist
+    rather than interpolated raw, so it stays safe if that ever changes."""
+    if not (_SAFE_IDENTIFIER.match(table) and _SAFE_IDENTIFIER.match(column)):
+        raise ValueError(f"unsafe identifier: table={table!r} column={column!r}")
     if not _table_exists(con, table):
         return 0
-    return con.execute("SELECT COALESCE(MAX(%s), 0) FROM %s" % (column, table)).fetchone()[0]
+    return con.execute(f"SELECT COALESCE(MAX({column}), 0) FROM {table}").fetchone()[0]
 
 
 def _open_run_record(started_at):

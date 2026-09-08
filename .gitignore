@@ -9,6 +9,11 @@ __pycache__/
 venv/
 .pytest_cache/
 
+# local environment config (backend/.env: Power BI embed URL, etc.) - not
+# sensitive today, but nothing should have to remember that before it is
+.env
+.env.local
+
 # raw inventory workbook (~131MB, mostly embedded product photos) - too big for
 # GitHub's 100MB limit; USTore_inventory_excel_long.csv has the usable data
 Copy of USTORE INVENTORY REPORT (1).xlsx

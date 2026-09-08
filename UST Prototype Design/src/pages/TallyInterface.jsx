@@ -4,12 +4,15 @@ import {
   getEntriesByDate, getEventLog, getClosedDates, getMeta, TRANSACTION_TYPES,
   runPipeline, stopPipeline, getPipelineStatus, getPipelineStaleness,
   getInventoryCounts, saveInventoryCount, deleteInventoryCount,
+  getStockPosition, ALL_CATEGORIES, ALL_SUPPLIERS, UNATTRIBUTED, addProduct,
+  importInventoryCounts, importTallyEntries,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import DataTable from '../components/DataTable';
 import ErrorBanner from '../components/ErrorBanner';
 import Icon from '../components/Icon';
+import Modal from '../components/Modal';
 import { num, usDate, usDateTime, longMonth } from '../lib/format';
 import brandMark from '../assets/ustore-mark.png';
 
@@ -24,13 +27,119 @@ const TYPE_HINT = {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+/* ------------------------------------------------- shared form helpers */
+
+/** Categories present in the item list, so the dropdown can never offer one
+ *  that would filter the list down to nothing. Derived from the products the
+ *  form already has rather than fetched from /api/categories, which lists
+ *  every category in the catalogue including those with no sellable item. */
+function categoriesOf(products) {
+  return [...new Set(products.map(p => p.category).filter(Boolean))].sort();
+}
+
+/** The item <select> and the category <select> are always paired, and the
+ *  category one exists only to shorten the item one. Narrowing the category
+ *  must therefore clear an item that is no longer in range — otherwise the
+ *  form silently keeps a product_id the user can no longer see. */
+function itemsInCategory(products, category) {
+  return category === ALL_CATEGORIES ? products : products.filter(p => p.category === category);
+}
+
+/** Import a .csv/.xlsx and report what happened to every row.
+ *
+ *  The server archives the upload into rawdata/ and returns counts plus a
+ *  per-row rejection list. Showing those rejections is the whole point: a
+ *  silent partial import is the failure mode worth designing against, since
+ *  an item name that misses the controlled vocabulary looks identical to one
+ *  that was never in the file.
+ *
+ *  The <input type="file"> is hidden behind its own label — the native
+ *  control cannot be styled to match the buttons around it, and it is reset
+ *  after every pick so choosing the same file twice still fires onChange. */
+function ImportButton({ onImport, onDone, label = 'Import CSV / Excel', hint }) {
+  const input = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  async function pick(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      setResult(await onImport(file));
+    } catch (err) {
+      setResult({ ok: false, error: err.message });
+    } finally {
+      setBusy(false);
+    }
+    onDone?.();
+  }
+
+  return (
+    <>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <input ref={input} type="file" accept=".csv,.xlsx" onChange={pick} style={{ display: 'none' }} />
+        <button className="btn btn--ghost btn--sm" disabled={busy}
+                onClick={() => input.current?.click()}>
+          <Icon name="download" size={13} /> {busy ? 'Importing…' : label}
+        </button>
+        {hint && <span className="hint">{hint}</span>}
+      </span>
+      {result && <ImportResult result={result} />}
+    </>
+  );
+}
+
+function ImportResult({ result }) {
+  if (!result.ok) {
+    return (
+      <div className="notice notice--warn" style={{ marginTop: 12 }}>
+        <b>Import failed:</b> {result.error || 'Unknown error.'}
+      </div>
+    );
+  }
+  const { imported = 0, updated = 0, rejected = [], rejected_total = 0, rows_read = 0 } = result;
+  const clean = rejected_total === 0;
+  return (
+    <div className={`notice notice--${clean ? 'ok' : 'warn'}`} style={{ marginTop: 12 }}>
+      <b>{clean ? 'Imported' : 'Imported with problems'}:</b>{' '}
+      {num(rows_read)} row{rows_read === 1 ? '' : 's'} read · {num(imported)} added
+      {updated > 0 && <> · {num(updated)} updated</>}
+      {rejected_total > 0 && <> · <b>{num(rejected_total)} rejected</b></>}
+      {result.saved_to && (
+        <div className="hint" style={{ marginTop: 4 }}>File archived to rawdata/</div>
+      )}
+      {rejected.length > 0 && (
+        <details style={{ marginTop: 8 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 12.5 }}>
+            Show rejected rows ({num(rejected.length)}{rejected_total > rejected.length
+              ? ` of ${num(rejected_total)}` : ''})
+          </summary>
+          <ul className="date-list" style={{ marginTop: 8 }}>
+            {rejected.map(r => (
+              <li key={r.row}>
+                <b>Row {r.row}</b>{r.item ? ` — ${r.item}` : ''}: {r.reason}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export default function TallyInterface({ setView }) {
   const [reloadKey, setReloadKey] = useState(0);
   const bump = useCallback(() => setReloadKey(k => k + 1), []);
 
   const { data: products } = useData(getSellableProducts, [], []);
   const { data: recent, loading: recentLoading } = useData(() => getRecentEntries(25), [reloadKey], []);
-  const { data: meta, loading: metaLoading, error: connectionError } = useData(getMeta, []);
+  // Only the error is read now — the connected/disconnected status bar this
+  // also fed was removed. The call stays because it is what detects a
+  // backend that is not running.
+  const { error: connectionError } = useData(getMeta, []);
   // Re-read on every `bump()`: saving an entry, an event or a closure is
   // exactly what makes the analytics stale, and a finished pipeline run is
   // what clears it. Both already call bump().
@@ -54,33 +163,45 @@ export default function TallyInterface({ setView }) {
       <div className="tally-body">
         {connectionError && <ErrorBanner error={connectionError} />}
         <StalenessBanner staleness={staleness} />
-        <EntryForm products={products} onSaved={bump} />
-        <InventoryCount products={products} onSaved={bump} />
-        <CalendarControls onSaved={bump} reloadKey={reloadKey} />
-        <RecentEntries entries={recent} loading={recentLoading} />
-        <ByDate reloadKey={reloadKey} />
-        <PipelineFooter meta={meta} loading={metaLoading} />
-        <PipelineRunner onChanged={bump} />
+        <SalesInventoryTally products={products} onSaved={bump}
+                             recent={recent} recentLoading={recentLoading} />
+        <MonthlyInventoryCount products={products} onSaved={bump} />
+        <ClosureAndEventCards onSaved={bump} reloadKey={reloadKey} />
+        <EntriesByDate reloadKey={reloadKey} />
+        <FullPipelineRun onChanged={bump} />
       </div>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ entry */
+/* ------------------------------------------------- Sales Inventory Tally */
 
-function EntryForm({ products, onSaved }) {
+function SalesInventoryTally({ products, onSaved, recent, recentLoading }) {
   const [form, setForm] = useState({
     calendar_date: today(), transaction_type: 'SALE', product_id: '', quantity_sold: '',
   });
+  const [category, setCategory] = useState(ALL_CATEGORIES);
   const [errors, setErrors] = useState({});
   const [saved, setSaved] = useState(null);
 
-  const selected = products.find(p => p.product_id === Number(form.product_id));
+  const categories = categoriesOf(products);
+  const visible = itemsInCategory(products, category);
   const set = (key, value) => {
     setForm(f => ({ ...f, [key]: value }));
     setErrors(e => ({ ...e, [key]: undefined }));
     setSaved(null);
   };
+
+  /** Narrowing the category drops the selected item if it falls outside the
+   *  new range, so the form can never submit a product the list no longer
+   *  shows. */
+  function setCategoryAndPrune(next) {
+    setCategory(next);
+    setSaved(null);
+    const stillVisible = itemsInCategory(products, next)
+      .some(p => p.product_id === Number(form.product_id));
+    if (!stillVisible) setForm(f => ({ ...f, product_id: '' }));
+  }
 
   async function submit() {
     const result = await addEntry(form);
@@ -92,8 +213,12 @@ function EntryForm({ products, onSaved }) {
   }
 
   return (
-    <div className="card card__pad">
-      <div className="card-h"><span className="section-h">Record Inventory Entry</span></div>
+    <div className="card card__pad card--sales-tally">
+      <div className="card-h">
+        <span className="section-h">Sales Inventory Tally</span>
+        <ImportButton onImport={importTallyEntries} onDone={onSaved}
+                      hint="Date · Item · Total Quantity" />
+      </div>
 
       <div className="form-grid">
         <Field label="Date" error={errors.calendar_date}>
@@ -110,13 +235,21 @@ function EntryForm({ products, onSaved }) {
           </select>
         </Field>
 
+        <Field label="Category" hint={category === ALL_CATEGORIES ? undefined
+                 : `${visible.length} item${visible.length === 1 ? '' : 's'} in this category`}>
+          <select value={category} onChange={e => setCategoryAndPrune(e.target.value)}>
+            <option value={ALL_CATEGORIES}>{ALL_CATEGORIES}</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Field>
+
         <div className="col-2">
           <Field label="Item" error={errors.product_id}>
             <select value={form.product_id}
                     className={errors.product_id ? 'is-err' : ''}
                     onChange={e => set('product_id', e.target.value)}>
               <option value="">— Select an item —</option>
-              {products.map(p => (
+              {visible.map(p => (
                 <option key={p.product_id} value={p.product_id}>
                   {p.item_name}{p.category !== 'Uncategorised' ? ` (${p.category})` : ''}
                 </option>
@@ -126,14 +259,9 @@ function EntryForm({ products, onSaved }) {
         </div>
 
         <Field label="Quantity" error={errors.quantity_sold}>
-          <input type="number" min="1" step="1" value={form.quantity_sold} placeholder="Enter quantity"
+          <input type="number" min="1" step="1" value={form.quantity_sold} placeholder="Enter Quantity"
                  className={errors.quantity_sold ? 'is-err' : ''}
                  onChange={e => set('quantity_sold', e.target.value)} />
-        </Field>
-
-        <Field label="Supplier">
-          <input type="text" readOnly value={selected ? selected.supplier_name : ''}
-                 placeholder="Auto-filled on item selection" />
         </Field>
       </div>
 
@@ -148,11 +276,35 @@ function EntryForm({ products, onSaved }) {
           <span className="hint"></span>
         )}
       </div>
+
+      {/* Collapsible: the form is what this card is for, and a ten-row table
+          under it pushed Monthly Inventory Count off screen. Closed by
+          default — <details> keeps the whole thing out of the layout until
+          opened, and the summary still carries the counts so it is useful
+          shut. Same header shape as Monthly Inventory Count's "Counted in
+          <month>" block, so the two cards read the same way. */}
+      <details className="collapse" style={{ marginTop: 20 }}>
+        <summary>
+          <span className="section-h">Recent Entries</span>
+          <span className="hint">
+            {recent.length === 0 ? 'nothing tallied yet'
+              : `${num(recent.length)} most recent · ${num(recent.reduce((s, e) => s + e.quantity_sold, 0))} units`}
+          </span>
+        </summary>
+        <div style={{ marginTop: 12 }}>
+          {recentLoading
+            ? <Loading />
+            : recent.length === 0
+              ? <div className="empty">No entries recorded yet.</div>
+              : <DataTable columns={RECENT_COLUMNS} data={recent.map(e => ({ ...e, rowKey: entryKey(e) }))}
+                           pageSize={10} minWidth={760} />}
+        </div>
+      </details>
     </div>
   );
 }
 
-/* -------------------------------------------------------------- inventory */
+/* ----------------------------------------------- Monthly Inventory Count */
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
@@ -172,21 +324,35 @@ const thisMonth = () => new Date().toISOString().slice(0, 7);
  *
  *  Zero is a valid, and important, count: it is the store recording that it is
  *  out of an item. */
-function InventoryCount({ products, onSaved }) {
+function MonthlyInventoryCount({ products, onSaved }) {
   const [month, setMonth] = useState(thisMonth());
   const [form, setForm] = useState({ product_id: '', quantity: '', note: '' });
+  const [category, setCategory] = useState(ALL_CATEGORIES);
   const [errors, setErrors] = useState({});
   const [saved, setSaved] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [stockOpen, setStockOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   const { data, loading } = useData(() => getInventoryCounts(month), [month, reloadKey], null);
   const counts = data?.counts ?? [];
+
+  const categories = categoriesOf(products);
+  const visible = itemsInCategory(products, category);
 
   const set = (key, value) => {
     setForm(f => ({ ...f, [key]: value }));
     setErrors(e => ({ ...e, [key]: undefined }));
     setSaved(null);
   };
+
+  function setCategoryAndPrune(next) {
+    setCategory(next);
+    setSaved(null);
+    const stillVisible = itemsInCategory(products, next)
+      .some(p => p.product_id === Number(form.product_id));
+    if (!stillVisible) setForm(f => ({ ...f, product_id: '' }));
+  }
 
   async function submit() {
     const result = await saveInventoryCount({ ...form, count_month: month });
@@ -222,23 +388,40 @@ function InventoryCount({ products, onSaved }) {
   const rows = counts.map(c => ({ ...c, rowKey: `ic${c.count_id}` }));
 
   return (
-    <div className="card card__pad">
+    <div className="card card__pad card--inventory-count">
       <div className="card-h">
         <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
           <Icon name="db" size={14} /> Monthly Inventory Count
         </span>
-        {data?.workbook_month && (
-          <span className="hint">
-            Latest Inventory Data: {longMonth(data.workbook_month)}
-          </span>
-        )}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {data?.workbook_month && (
+            <span className="hint">Latest Inventory Data: {longMonth(data.workbook_month)}</span>
+          )}
+          <button className="btn btn--ghost btn--sm" onClick={() => setStockOpen(true)}>
+            <Icon name="box" size={13} /> Check current inventory
+          </button>
+          <button className="btn btn--ghost btn--sm" onClick={() => setAddOpen(v => !v)}>
+            <Icon name="calPlus" size={13} /> Add New Item
+          </button>
+          <ImportButton
+            onImport={file => importInventoryCounts(file, month)}
+            onDone={() => { setReloadKey(k => k + 1); onSaved?.(); }}
+            hint={`Item · Units On Hand → ${longMonth(month)}`}
+          />
+        </span>
       </div>
 
-      <div className="hint" style={{ marginBottom: 14 }}>
-        Units on hand at the time of counting, per item, for the month selected. Recounting an item
-        replaces its figure for that month rather than adding to it. <b>Zero is a valid count</b> — it
-        records that the item is out of stock.
-      </div>
+      <AddItemModal
+        open={addOpen}
+        products={products}
+        onClose={() => setAddOpen(false)}
+        onAdded={p => {
+          setAddOpen(false);
+          setCategory(ALL_CATEGORIES);
+          setForm(f => ({ ...f, product_id: String(p.product_id) }));
+          onSaved?.();            // refreshes the item list this card was given
+        }}
+      />
 
       <div className="form-grid">
         <Field label="Count Month" error={errors.count_month}>
@@ -248,9 +431,17 @@ function InventoryCount({ products, onSaved }) {
         </Field>
 
         <Field label="Units on Hand" error={errors.quantity}>
-          <input type="number" min="0" step="1" value={form.quantity} placeholder="Enter units counted"
+          <input type="number" min="0" step="1" value={form.quantity} placeholder="Enter Units Counted"
                  className={errors.quantity ? 'is-err' : ''}
                  onChange={e => set('quantity', e.target.value)} />
+        </Field>
+
+        <Field label="Category" hint={category === ALL_CATEGORIES ? undefined
+                 : `${visible.length} item${visible.length === 1 ? '' : 's'} in this category`}>
+          <select value={category} onChange={e => setCategoryAndPrune(e.target.value)}>
+            <option value={ALL_CATEGORIES}>{ALL_CATEGORIES}</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
         </Field>
 
         <div className="col-2">
@@ -259,7 +450,7 @@ function InventoryCount({ products, onSaved }) {
                     className={errors.product_id ? 'is-err' : ''}
                     onChange={e => set('product_id', e.target.value)}>
               <option value="">— Select an item —</option>
-              {products.map(p => (
+              {visible.map(p => (
                 <option key={p.product_id} value={p.product_id}>
                   {p.item_name}{p.category !== 'Uncategorised' ? ` (${p.category})` : ''}
                 </option>
@@ -270,7 +461,7 @@ function InventoryCount({ products, onSaved }) {
 
         <div className="col-2">
           <Field label="Note (optional)">
-            <input type="text" value={form.note} placeholder="e.g. damaged units excluded"
+            <input type="text" value={form.note} placeholder="e.g. Damaged Units Excluded"
                    onChange={e => set('note', e.target.value)} />
           </Field>
         </div>
@@ -289,26 +480,234 @@ function InventoryCount({ products, onSaved }) {
         )}
       </div>
 
-      <div className="card-h" style={{ marginTop: 20 }}>
-        <span className="section-h">Counted in {longMonth(month)}</span>
-        <span className="hint">
-          {counts.length === 0 ? 'nothing counted yet' :
-            `${num(counts.length)} item${counts.length === 1 ? '' : 's'} · ${num(data.total_units)} units`}
-        </span>
-      </div>
-      {loading
-        ? <Loading />
-        : counts.length === 0
-          ? <div className="empty">No stock counts recorded for {longMonth(month)}.</div>
-          : <DataTable columns={columns} data={rows} pageSize={10} minWidth={760} />}
+      {/* Collapsible, matching Recent Entries in Sales Inventory Tally: the
+          form is what the card is for, and the table under it pushed the rest
+          of the page down. The summary keeps the counts so it stays useful
+          shut. Re-keyed on `month` so switching month reopens it — a closed
+          section would otherwise hide the fact that the list just changed. */}
+      <details className="collapse" style={{ marginTop: 20 }} key={month}>
+        <summary>
+          <span className="section-h">Counted in {longMonth(month)}</span>
+          <span className="hint">
+            {counts.length === 0 ? 'nothing counted yet' :
+              `${num(counts.length)} item${counts.length === 1 ? '' : 's'} · ${num(data.total_units)} units`}
+          </span>
+        </summary>
+        <div style={{ marginTop: 12 }}>
+          {loading
+            ? <Loading />
+            : counts.length === 0
+              ? <div className="empty">No stock counts recorded for {longMonth(month)}.</div>
+              : <DataTable columns={columns} data={rows} pageSize={10} minWidth={760} />}
+        </div>
+      </details>
+
+      <CurrentStockModal open={stockOpen} onClose={() => setStockOpen(false)} />
     </div>
   );
 }
 
-/* -------------------------------------------------- closures and events */
+/** Create an item the catalogue does not have yet, so today's count is not
+ *  blocked on a vocabulary update.
+ *
+ *  The warning is not decoration. `step1_apply_mapping.py` opens with
+ *  `DELETE FROM Dim_Product` and rebuilds it from
+ *  `data/vocab_mapping_FINAL_v5.csv`, so an item added here disappears at the
+ *  next full pipeline run unless it is also added to that file. Saying so at
+ *  the point of creation is the only place a user would ever see it. */
+function AddItemModal({ open, products, onClose, onAdded }) {
+  const [item, setItem] = useState({ item_name: '', category: '', supplier_name: '' });
+  const [errors, setErrors] = useState({});
+  const [busy, setBusy] = useState(false);
 
-function CalendarControls({ onSaved, reloadKey }) {
+  // Clear on open so a cancelled attempt does not reappear half-filled.
+  useEffect(() => {
+    if (open) { setItem({ item_name: '', category: '', supplier_name: '' }); setErrors({}); }
+  }, [open]);
+
+  const categories = categoriesOf(products);
+  const suppliers = [...new Set(products.map(p => p.supplier_name).filter(Boolean))].sort();
+
+  async function submit() {
+    setBusy(true);
+    const result = await addProduct(item);
+    setBusy(false);
+    if (!result.ok) { setErrors(result.errors || {}); return; }
+    setErrors({});
+    onAdded(result.product);
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Add New Item"
+      subtitle="Adds the item permanently — to the catalogue, the controlled vocabulary and the inventory source."
+      width={620}
+    >
+      <div className="form-grid">
+        <div className="col-2">
+          <Field label="Item Name" error={errors.item_name}>
+            <input type="text" value={item.item_name} placeholder="e.g. UST Tumbler 500ml (Gold)"
+                   className={errors.item_name ? 'is-err' : ''}
+                   autoFocus
+                   onChange={e => { setItem(v => ({ ...v, item_name: e.target.value }));
+                                    setErrors(x => ({ ...x, item_name: undefined })); }} />
+          </Field>
+        </div>
+
+        {/* Free text with a datalist rather than a <select>: a genuinely new
+            item may well belong to a category or supplier the catalogue has
+            not seen either, and a closed list would block that. */}
+        <Field label="Category">
+          <input type="text" list="add-item-categories" value={item.category}
+                 placeholder="Uncategorised"
+                 onChange={e => setItem(v => ({ ...v, category: e.target.value }))} />
+          <datalist id="add-item-categories">
+            {categories.map(c => <option key={c} value={c} />)}
+          </datalist>
+        </Field>
+
+        <Field label="Supplier">
+          <input type="text" list="add-item-suppliers" value={item.supplier_name}
+                 placeholder="Optional"
+                 onChange={e => setItem(v => ({ ...v, supplier_name: e.target.value }))} />
+          <datalist id="add-item-suppliers">
+            {suppliers.map(s => <option key={s} value={s} />)}
+          </datalist>
+        </Field>
+      </div>
+
+      <div className="btn-row" style={{ marginTop: 16 }}>
+        <button className="btn btn--ink btn--sm" onClick={submit} disabled={busy}>
+          {busy ? 'Adding…' : 'Add Item'}
+        </button>
+        <button className="btn btn--ghost btn--sm" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Everything the store currently believes it holds — the same figures the
+ *  Stock Status screen reads (/api/stock), which take a count entered above
+ *  over the historical workbook as soon as it is more recent.
+ *
+ *  Read-only and deliberately unfiltered: the question this answers is "what
+ *  do we have right now", asked mid-count, so it opens over the form rather
+ *  than navigating away from it. Items with no stock record at all are absent
+ *  rather than shown as zero — the backend only returns rows where
+ *  current_stock is not null, and "we have none" and "we have never counted
+ *  this" are different statements. */
+function CurrentStockModal({ open, onClose }) {
+  // Only fetch once the dialog is actually opened: this is the whole catalogue
+  // with derived stock, and the card renders on every visit to the page.
+  const { data, loading } = useData(() => (open ? getStockPosition() : Promise.resolve(null)), [open], null);
+  const items = data?.items ?? [];
+
+  const [q, setQ] = useState('');
+  const [category, setCategory] = useState(ALL_CATEGORIES);
+  const [supplier, setSupplier] = useState(ALL_SUPPLIERS);
+  const [stockOnly, setStockOnly] = useState(false);
+
+  // Reset the filters each time it opens: the question this answers is asked
+  // fresh ("what do we have right now"), and reopening onto someone's stale
+  // search looks like missing data.
+  useEffect(() => { if (open) { setQ(''); setCategory(ALL_CATEGORIES); setSupplier(ALL_SUPPLIERS); setStockOnly(false); } }, [open]);
+
+  const categories = [...new Set(items.map(i => i.category || 'Uncategorised'))].sort();
+  const suppliers = [...new Set(items.map(i => i.supplier_name || UNATTRIBUTED))].sort();
+
+  const needle = q.trim().toLowerCase();
+  const shown = items.filter(i =>
+    (!needle || i.item_name.toLowerCase().includes(needle)
+      || (i.supplier_name || '').toLowerCase().includes(needle))
+    && (category === ALL_CATEGORIES || (i.category || 'Uncategorised') === category)
+    && (supplier === ALL_SUPPLIERS || (i.supplier_name || UNATTRIBUTED) === supplier)
+    && (!stockOnly || i.current_stock > 0));
+
+  const columns = [
+    { key: 'item_name',      label: 'Item', strong: true, truncate: true, width: '34%' },
+    { key: 'category',       label: 'Category', truncate: true, width: '18%' },
+    { key: 'supplier_name',  label: 'Supplier', truncate: true, width: '22%' },
+    { key: 'current_stock',  label: 'On hand', num: true, strong: true, width: '12%', render: num },
+    {
+      key: 'days_of_supply', label: 'Days left', num: true, width: '14%',
+      render: v => v == null ? <span className="muted">—</span> : Math.round(v),
+    },
+  ];
+
+  const inStock = items.filter(i => i.current_stock > 0);
+  const out = items.length - inStock.length;
+  const filtered = shown.length !== items.length;
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Current inventory"
+      subtitle={loading ? 'Loading…' : items.length === 0 ? 'No item has a stock record yet.'
+        : `${num(inStock.length)} item${inStock.length === 1 ? '' : 's'} with stock on hand`
+          + (out > 0 ? ` · ${num(out)} counted at zero` : '')
+          + ` · ${num(data.total - data.covered)} of ${num(data.total)} never counted`}
+    >
+      {loading ? <Loading /> : items.length === 0
+        ? <div className="empty">No stock counts or workbook figures exist yet.</div>
+        : (
+          <>
+            <div className="modal-filters">
+              <input
+                type="search"
+                value={q}
+                placeholder="Search Item Or Supplier…"
+                onChange={e => setQ(e.target.value)}
+                aria-label="Search current inventory"
+              />
+              <select value={category} onChange={e => setCategory(e.target.value)} aria-label="Filter by category">
+                <option value={ALL_CATEGORIES}>{ALL_CATEGORIES}</option>
+                {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <select value={supplier} onChange={e => setSupplier(e.target.value)} aria-label="Filter by supplier">
+                <option value={ALL_SUPPLIERS}>{ALL_SUPPLIERS}</option>
+                {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <label className="check">
+                <input type="checkbox" checked={stockOnly} onChange={e => setStockOnly(e.target.checked)} />
+                In stock only
+              </label>
+            </div>
+
+            <div className="hint" style={{ margin: '2px 0 10px' }}>
+              {filtered
+                ? <>Showing <b>{num(shown.length)}</b> of {num(items.length)} items</>
+                : <>Showing all {num(items.length)} items</>}
+            </div>
+
+            <div className="modal-grow">
+              {shown.length === 0
+                ? <div className="empty">No item matches those filters.</div>
+                : <DataTable
+                    columns={columns}
+                    data={shown.map(i => ({
+                      ...i,
+                      category: i.category || 'Uncategorised',
+                      supplier_name: i.supplier_name || UNATTRIBUTED,
+                      rowKey: `st${i.product_id}`,
+                    }))}
+                    pageSize={12}
+                    minWidth={720}
+                  />}
+            </div>
+          </>
+        )}
+    </Modal>
+  );
+}
+
+/* -------------------------- Store Closure / Suspension · Flag an Event */
+
+function ClosureAndEventCards({ onSaved, reloadKey }) {
   const [closureDate, setClosureDate] = useState(today());
+  const [closureReason, setClosureReason] = useState('');
   const [event, setEvent] = useState({ calendar_date: today(), event_name: '', event_description: '' });
   const [errors, setErrors] = useState({});
   const [note, setNote] = useState(null);
@@ -317,10 +716,12 @@ function CalendarControls({ onSaved, reloadKey }) {
   const { data: events } = useData(getEventLog, [reloadKey], []);
 
   async function toggleClosed(isClosed) {
-    const result = await setStoreClosed(closureDate, isClosed);
+    const result = await setStoreClosed(closureDate, isClosed, closureReason);
     if (!result.ok) { setErrors(result.errors); return; }
     setErrors({});
-    setNote(`${closureDate} marked ${isClosed ? 'CLOSED' : 'open'}.`);
+    setNote(`${closureDate} marked ${isClosed ? 'CLOSED' : 'open'}`
+      + (closureReason.trim() ? ` — ${closureReason.trim()}` : '.'));
+    setClosureReason('');
     onSaved();
   }
 
@@ -336,17 +737,28 @@ function CalendarControls({ onSaved, reloadKey }) {
   return (
     <>
       <div className="grid-2">
-        <div className="card card__pad">
+        <div className="card card__pad card--store-closure">
           <div className="card-h" style={{ marginBottom: 4 }}>
             <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
               <Icon name="calOff" size={14} /> Store Closure / Suspension
             </span>
           </div>
 
-          <Field label="Date" error={errors.calendar_date}>
-            <input type="date" value={closureDate}
-                   onChange={e => { setClosureDate(e.target.value); setNote(null); }} />
-          </Field>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Field label="Date" error={errors.calendar_date}>
+              <input type="date" value={closureDate}
+                     onChange={e => { setClosureDate(e.target.value); setNote(null); }} />
+            </Field>
+
+            {/* Closure_Log.reason has existed in the schema since the table was
+                created but had no way in from the interface. Free text and
+                optional — a closure is still recorded without one. */}
+            <Field label="Reason for Store Closure">
+              <input type="text" value={closureReason}
+                     placeholder="Optional — e.g. University Holiday, Inventory Day, Typhoon"
+                     onChange={e => { setClosureReason(e.target.value); setNote(null); }} />
+            </Field>
+          </div>
 
           <div className="btn-row" style={{ marginTop: 14 }}>
             <button className="btn btn--crit btn--sm" onClick={() => toggleClosed(true)}>Mark closed</button>
@@ -372,7 +784,7 @@ function CalendarControls({ onSaved, reloadKey }) {
           </div>
         </div>
 
-        <div className="card card__pad">
+        <div className="card card__pad card--flag-event">
           <div className="card-h" style={{ marginBottom: 4 }}>
             <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
               <Icon name="calPlus" size={14} /> Flag an Event
@@ -396,7 +808,7 @@ function CalendarControls({ onSaved, reloadKey }) {
           </div>
 
           <div className="btn-row" style={{ marginTop: 14 }}>
-            <button className="btn btn--gold btn--sm" onClick={submitEvent}>Flag event</button>
+            <button className="btn btn--ink btn--sm" onClick={submitEvent}>Flag event</button>
           </div>
 
           <div className="hint" style={{ marginTop: 14 }}>
@@ -413,7 +825,7 @@ function CalendarControls({ onSaved, reloadKey }) {
   );
 }
 
-/* ------------------------------------------------------------- read views */
+/* ------------------------------------------------------- Entries by Date */
 
 function entryKey(e) {
   return e.local_id ? `l${e.local_id}` : `s${e.sale_id}`;
@@ -421,34 +833,22 @@ function entryKey(e) {
 
 const TYPE_CELL = v => <span className={`tag tag--${TYPE_TONE[v] || 'info'}`}>{v}</span>;
 
-function RecentEntries({ entries, loading }) {
-  const columns = [
-    { key: 'calendar_date', label: 'Date', width: '14%', render: usDate },
-    { key: 'item_name',     label: 'Item', strong: true, truncate: true, width: '30%' },
-    { key: 'quantity_sold', label: 'Qty', num: true, strong: true, width: '8%' },
-    { key: 'supplier_name', label: 'Supplier', truncate: true, width: '24%' },
-    { key: 'transaction_type', label: 'Type', width: '13%', render: TYPE_CELL },
-    {
-      key: 'is_local', label: 'Origin', width: '11%',
-      render: v => v ? <span className="badge-local">this session</span> : <span className="muted">tallied</span>,
-    },
-  ];
-  const rows = entries.map(e => ({ ...e, rowKey: entryKey(e) }));
+/** Shared by the Recent Entries block inside Sales Inventory Tally. Lifted to
+ *  module scope when that block moved into the form card, so the table shape
+ *  is defined once. */
+const RECENT_COLUMNS = [
+  { key: 'calendar_date', label: 'Date', width: '14%', render: usDate },
+  { key: 'item_name',     label: 'Item', strong: true, truncate: true, width: '30%' },
+  { key: 'quantity_sold', label: 'Qty', num: true, strong: true, width: '8%' },
+  { key: 'supplier_name', label: 'Supplier', truncate: true, width: '24%' },
+  { key: 'transaction_type', label: 'Type', width: '13%', render: TYPE_CELL },
+  {
+    key: 'is_local', label: 'Origin', width: '11%',
+    render: v => v ? <span className="badge-local">this session</span> : <span className="muted">tallied</span>,
+  },
+];
 
-  return (
-    <div className="card card__pad">
-      <div className="card-h">
-        <span className="section-h">Recent Entries</span>
-        <a className="btn btn--ghost btn--sm" href="/api/tally/export" download>
-          <Icon name="db" size={13} /> Export as CSV
-        </a>
-      </div>
-      {loading ? <Loading /> : <DataTable columns={columns} data={rows} pageSize={10} minWidth={760} />}
-    </div>
-  );
-}
-
-function ByDate({ reloadKey }) {
+function EntriesByDate({ reloadKey }) {
   const [date, setDate] = useState(today());
   const { data: entries, loading } = useData(() => getEntriesByDate(date), [date, reloadKey], []);
   const total = entries.reduce((s, e) => s + e.quantity_sold, 0);
@@ -462,7 +862,7 @@ function ByDate({ reloadKey }) {
   const rows = entries.map(e => ({ ...e, rowKey: entryKey(e) }));
 
   return (
-    <div className="card card__pad">
+    <div className="card card__pad card--entries-by-date">
       <div className="card-h">
         <span className="section-h">Entries by Date</span>
         <div className="field" style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -483,30 +883,6 @@ function ByDate({ reloadKey }) {
   );
 }
 
-function PipelineFooter({ meta, loading }) {
-  // Three real states, not two: `meta` is falsy both while the first
-  // request is still in flight AND after it's failed - collapsing those
-  // into one "disconnected" badge is what flashed a false "disconnected"
-  // on every normal page load before the fetch had even resolved.
-  const status = meta ? 'connected' : loading ? 'connecting…' : 'disconnected';
-  const tone = meta ? 'tag--ok' : loading ? 'tag--warn' : 'tag--crit';
-  return (
-    <div className="card statusbar">
-      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Icon name="db" size={13} />
-        {meta ? (
-          <>
-            Data source: <b>{meta.source}</b>
-            <span className="muted">· {num(meta.fact_sales_rows)} Fact_Sales rows</span>
-          </>
-        ) : (
-          <>Data source: <b>ustore.db</b></>
-        )}
-      </span>
-      <span className={`tag ${tone}`}>{status}</span>
-    </div>
-  );
-}
 
 /* ------------------------------------------------------------- staleness */
 
@@ -661,7 +1037,7 @@ function StepProblem({ step }) {
   );
 }
 
-function PipelineRunner({ onChanged }) {
+function FullPipelineRun({ onChanged }) {
   const [pipelineStatus, setPipelineStatus] = useState(null);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -739,7 +1115,7 @@ function PipelineRunner({ onChanged }) {
   const tailStep = current || [...steps].reverse().find(s => s.output);
 
   return (
-    <div className="card card__pad">
+    <div className="card card__pad card--pipeline-run">
       <div className="card-h">
         <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
           <Icon name="zap" size={14} /> Full Pipeline Run
@@ -754,7 +1130,7 @@ function PipelineRunner({ onChanged }) {
 
       <div className="btn-row">
         <button className="btn btn--ink" onClick={() => start(false)} disabled={running || starting}>
-          {running ? 'Running…' : 'Run Pipeline (no forecast)'}
+          {running ? 'Running…' : 'Run Pipeline (Without Forecast)'}
         </button>
         <button className="btn" onClick={() => start(true)} disabled={running || starting}>
           {running ? 'Running…' : 'Run Full Pipeline + Forecast'}
