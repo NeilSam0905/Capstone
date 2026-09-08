@@ -64,5 +64,9 @@ export function inspectEmbedUrl(url) {
             + 'A workspace or report page URL will not embed.',
     };
   }
-  return { state: 'ok', method: isView ? 'Publish to web (public)' : 'Secure embed (login required)' };
+  // Secure embed carries no label: it is the ordinary case, and naming it on
+  // screen told the reader nothing they could act on. Publish-to-web keeps
+  // one, because "this report is publicly viewable" is a warning rather than
+  // a description of the setup.
+  return { state: 'ok', method: isView ? 'Publish to web (public)' : null };
 }
