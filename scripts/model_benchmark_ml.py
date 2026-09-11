@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import model_benchmark as mb
+from forecasting.category import build_service_class_fn
 from forecasting.evaluate import evaluate_methods, summarise
 from forecasting.ml_models import (
     lightgbm_fit_predict, random_forest_fit_predict, xgboost_fit_predict,
@@ -87,9 +88,9 @@ def main():
         print("No SKU had enough history to score. Nothing written.")
         return 1
 
-    fsn_class = dict(mb.sqlite3.connect(mb.DB_NAME).execute(
-        "SELECT product_id, fsn_class FROM Dim_Product").fetchall())
-    results = mb.service_metrics(results, series, fsn_class)
+    # Fold-scoped Fast/Slow for the safety-stock class, not the committed
+    # full-history Dim_Product.fsn_class - see mb.service_metrics().
+    results = mb.service_metrics(results, series, build_service_class_fn(series))
     results["item_name"] = results["sku"].map(names)
     results.to_csv(OUT_CSV, index=False, lineterminator="\n")
 
@@ -115,6 +116,8 @@ def main():
         svc[["method", "fill_rate_at_target", "units_short", "units_held"]],
         on="method", how="left")
     summary["n_skus_priced"] = summary["method"].map(priced).astype(int)
+    summary["n_skus_priced_per_fold"] = summary["method"].map(
+        mb.skus_priced_per_fold(results)).astype(float)
     # drop the re-run naive row - the committed CSV already has it, and this
     # run's copy exists only to seed pct_skus_beating_naive
     ml_only = summary[summary["method"] != "naive"].reset_index(drop=True)
@@ -136,7 +139,8 @@ def write_combined_xlsx(ml_summary: pd.DataFrame):
     combined["new_model"] = is_new
 
     err_cols = ["method", "mae", "rmse", "mase", "pct_skus_beating_naive", "new_model"]
-    dec_cols = ["method", "n_skus_priced", "fill_rate_at_target",
+    dec_cols = ["method", "n_skus_priced", "n_skus_priced_per_fold",
+                "fill_rate_at_target",
                 "units_short", "units_held", "new_model"]
 
     by_mase = combined.sort_values(["mase", "mae"], na_position="last",

@@ -90,14 +90,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import model_benchmark as mb
 from forecasting.baselines import naive_fit_predict
 from forecasting.category import (
-    classify, classify_product_type, fold_scoped_speed_labels,
+    build_service_class_fn, classify, classify_product_type,
+    fold_scoped_speed_labels,
 )
 from forecasting.clustering import cluster_skus, sku_features
 from forecasting.evaluate import aggregate_blocks, make_folds, summarise
 from forecasting.metrics import naive_scale
 from forecasting.hurdle import (
-    logistic_hurdle_fit_predict, pooled_logistic_hurdle_fit_predict,
-    weekly_hurdle_fit_predict,
+    logistic_hurdle_fit_predict, pooled_calendar_logistic_hurdle_fit_predict,
+    pooled_logistic_hurdle_fit_predict, weekly_hurdle_fit_predict,
 )
 from forecasting.ml_models import (
     lightgbm_pooled_ctor, pooled_fit_predict, random_forest_pooled_ctor,
@@ -124,6 +125,13 @@ POOLED_METHODS = {
     "random_forest": _tree_pooled(random_forest_pooled_ctor(n_estimators=50)),
     # docs/SPARSE_DEMAND_EXPERIMENTS.md section 2 asked for exactly this
     "logistic_hurdle": pooled_logistic_hurdle_fit_predict(),
+    # Pooled AND calendar-aware - the combination
+    # docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md #7/#8/#9 all point at and
+    # none of them runs. BOUND IN main(), not here: it needs the Dim_Date
+    # flag array for the exact calendar every series shares, which needs a
+    # DB connection this module does not have at import time. Present as a
+    # key so argparse's --methods choices include it.
+    "calendar_logistic_hurdle": None,
 }
 
 # scored per SKU on the SAME folds, so each pooled method can be read
@@ -210,13 +218,16 @@ def build_speed_fn(series, real_offset=0):
     of this script looked up a static, full-history Dim_Product.fsn_class
     for this on EVERY run regardless of grouping choice, which is the
     second leak this module was corrected for - see
-    docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md's correction section."""
-    to_z_key = {"fast": "F", "slow": "S"}
+    docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md's correction section.
 
-    def _fn(train_end):
-        labels = fold_scoped_speed_labels(series, train_end, real_offset)
-        return {sku: to_z_key[lab] for sku, lab in labels.items()}
-    return _fn
+    Now a thin alias for forecasting.category.build_service_class_fn. The
+    same fix was later applied to scripts/model_benchmark.py and
+    scripts/model_benchmark_ml.py, which is what made a single shared
+    implementation worth having: three scorers re-spelling the same
+    fast/slow lookup is how one of them drifts back to the leaked
+    version. Kept as a name because this module's docstring and the
+    correction notice both cite it."""
+    return build_service_class_fn(series, real_offset)
 
 
 def skus_by_group(group_map):
@@ -260,6 +271,12 @@ def score_pooled(series, folds, group_fn, real_offset=0, methods=None):
         for method_name, pooled_fn in POOLED_METHODS.items():
             if methods and method_name not in methods:
                 continue
+            if pooled_fn is None:
+                raise RuntimeError(
+                    f"POOLED_METHODS[{method_name!r}] was never bound - it is "
+                    f"constructed in main() because it needs the Dim_Date "
+                    f"calendar block. Calling score_pooled() directly has to "
+                    f"bind it first.")
             out_name = method_name + METHOD_SUFFIX
             for group_name, skus in groups.items():
                 if not skus:
@@ -324,6 +341,8 @@ def skus_priced_pooled(series, groups, horizon, methods=None):
     out = {}
     for method_name, pooled_fn in POOLED_METHODS.items():
         if methods and method_name not in methods:
+            continue
+        if pooled_fn is None:      # see score_pooled's guard
             continue
         n = 0
         for skus in groups.values():
@@ -430,6 +449,13 @@ def build_summary(results, series, deployed_groups, horizon, speed_fn, real_offs
         svc[["method", "fill_rate_at_target", "units_short", "units_held"]],
         on="method", how="left")
     summary["n_skus_priced"] = summary["method"].map(priced).astype(int)
+    # Deployment stat vs. out-of-sample coverage - two different questions,
+    # see mb.skus_priced_per_fold. The pooled tree models price 266/266 on
+    # EVERY fold where the statistical methods average ~217, which is the
+    # real coverage claim; n_skus_priced alone overstates the gap against
+    # rolling_mean_30 (79 deployed vs 109.4 per fold).
+    summary["n_skus_priced_per_fold"] = summary["method"].map(
+        mb.skus_priced_per_fold(results)).astype(float)
     return results, summary
 
 
@@ -444,6 +470,7 @@ def write_comparison(summary, comparison_csv, variant_label):
     data/model_benchmark_ml_summary.csv row."""
     cols = ["method", "variant", "mae", "rmse", "mase",
             "pct_skus_beating_naive", "fill_rate_at_target", "n_skus_priced"]
+    # committed CSVs written before this column existed still merge cleanly
 
     pooled = summary[summary["method"].str.endswith(METHOD_SUFFIX)].copy()
     pooled["method"] = pooled["method"].str.replace(METHOD_SUFFIX, "", regex=False)
@@ -592,6 +619,21 @@ def main():
     # SKUs-priced deployment stat.
     group_fn = build_group_fn(con, args.by, series, k=args.k, real_offset=real_offset)
     speed_fn = build_speed_fn(series, real_offset=real_offset)
+
+    # Bind the pooled calendar-aware hurdle now that `index` is known. The
+    # flags are looked up by array POSITION, so they must cover the same
+    # calendar the series are built on; under --synthetic-years the series
+    # are prepended with real_offset synthetic days, and the calendar has
+    # nothing to say about days that never happened - so the block is
+    # padded at the FRONT with zeros to keep position i aligned for the
+    # real portion. (Pooling does not change the alignment: every SKU in a
+    # group shares one index.)
+    cal = mb.load_calendar_features(con, index)
+    if real_offset:
+        cal = np.vstack([np.zeros((real_offset, cal.shape[1])), cal])
+    POOLED_METHODS["calendar_logistic_hurdle"] = (
+        pooled_calendar_logistic_hurdle_fit_predict(
+            cal, weekdays=mb.weekday_positions(index) if real_offset == 0 else None))
     con.close()
 
     deployed_group_map = group_fn(n_total)

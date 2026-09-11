@@ -53,6 +53,20 @@ against the contract in `test_zero_fraction_of_fact_sales_exceeds_one_half`.
 Eight methods, 266 SKUs, 12 walk-forward folds each, all scored on identical folds — 25,536
 predictions. From `model_benchmark_summary.csv`:
 
+> **This table is a HISTORICAL record, frozen pre-D1.** Its fill rates were measured when
+> `model_benchmark.py` computed safety stock as `z*sigma*sqrt(7)` — a continuous-review formula
+> against a periodic-review simulation. Remediation D1 corrected that to `sqrt(37)` at the source,
+> and the committed CSV now reads `ets` 0.7768 (not 0.716), `rolling_mean_30` 0.7746 (not 0.710) and
+> `rolling_median_30` 0.5062 (not 0.354). See `tools/service_frontier.py`'s `PRE_FIX_EXP_CAUSE1`,
+> which keeps the same frozen record for the same reason.
+>
+> **The argument is unaffected, which is why the table is kept rather than restated:** the ranking
+> inverts exactly where the identity chain predicts under either measurement, and
+> `rolling_median_30` still prices 0 of 266 SKUs. A second correction since — the safety-stock
+> service class is now fold-scoped rather than read from the full-history `Dim_Product.fsn_class`
+> (`docs/FORECAST_VALIDATION.md` §5.1) — will move these fill rates again, in an as-yet unmeasured
+> direction. Re-run before quoting any figure below as current.
+
 | Method | MASE ↓ | rank | Fill rate ↑ | rank | SKUs priced |
 |---|---:|---:|---:|---:|---:|
 | **rolling_median_30** | **4.834** | **1** | **0.354** | **8** | **0** |

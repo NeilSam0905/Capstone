@@ -46,22 +46,11 @@ from forecasting.metrics import mape as mape_fn
 
 OUT_CSV = "data/calendar_hurdle_results.csv"
 
-CALENDAR_COLS = ["is_enrollment_period", "is_exam_week", "is_event_day", "is_sem_break"]
-
-
-def load_calendar_features(con, index):
-    """(n_days, len(CALENDAR_COLS)) array, one row per day of `index`, in
-    the exact same order - Dim_Date covers this range with no gaps, so
-    positional alignment with every SKU's series is exact."""
-    start, end = index[0].date().isoformat(), index[-1].date().isoformat()
-    df = pd.read_sql_query(
-        f"SELECT calendar_date, {', '.join(CALENDAR_COLS)} FROM Dim_Date "
-        f"WHERE calendar_date BETWEEN ? AND ? ORDER BY calendar_date",
-        con, params=(start, end))
-    if len(df) != len(index):
-        raise ValueError(f"Dim_Date returned {len(df)} rows for {len(index)} "
-                         f"calendar days - gap or duplicate, aborting")
-    return df[CALENDAR_COLS].to_numpy(dtype=float)
+# Both moved to scripts/model_benchmark.py so the per-SKU calendar model
+# here and the POOLED one in scripts/model_benchmark_category.py read the
+# calendar through one loader - re-spelling it twice is how the two drift.
+CALENDAR_COLS = mb.CALENDAR_COLS
+load_calendar_features = mb.load_calendar_features
 
 
 def per_sku_metrics(rows_df):

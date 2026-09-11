@@ -56,10 +56,18 @@ Run:
     python tools/service_frontier.py
 ------------------------------------------------------------------
 """
+import argparse
+import os
 import sys
 
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+
+import model_benchmark as mb
 
 RESULTS_CSV = "data/model_benchmark_results.csv"
 
@@ -265,6 +273,84 @@ def eoq_demand_basis(df):
     return int((per_sku > 0).sum()), len(per_sku)
 
 
+# ------------------------------------------- objective-currency compare -
+# docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md reports eleven experiments in
+# MAE, MASE, RMSSE and MAPE, and not one fill rate, holding cost or
+# out-of-sample coverage figure anywhere. By docs/DEGENERATE_FORECAST.md
+# #21's own argument it therefore cannot be evidence for B3, whichever way
+# its numbers fall - the error-metric optimum on this data is a forecast of
+# zero, which prices nothing and stocks nothing.
+#
+# This section closes that. It re-scores any additional results CSV - a
+# pooled run, a clustered run, a hurdle run - on the SAME empirical-
+# quantile frontier as the committed benchmark, at the same knee, and puts
+# them in one table with the incumbents.
+#
+# Deliberately additive: `load()` and every gate below still see ONLY the
+# committed CSV, so nothing here can move a pinned expectation. Extra runs
+# are namespaced `tag:method` so a `logistic_hurdle_per_sku` from two
+# different runs cannot silently collide.
+
+def load_extra(paths):
+    """Concatenate extra results CSVs, namespacing each method by its run.
+
+    The tag is derived from the filename, stripping the shared
+    `model_benchmark_category_results` prefix, so
+    data/model_benchmark_category_results_cluster4.csv becomes `cluster4`.
+    """
+    frames = []
+    for path in paths:
+        if not os.path.exists(path):
+            print(f"  (skipping missing {path})")
+            continue
+        tag = (os.path.basename(path)
+               .replace("model_benchmark_category_results", "")
+               .replace("model_benchmark_results", "committed")
+               .replace("model_benchmark_ml_results", "ml")
+               .replace(".csv", "").strip("_") or "run")
+        d = pd.read_csv(path)
+        d["method"] = tag + ":" + d["method"].astype(str)
+        frames.append(d)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def objective_currency_table(df, q=0.80):
+    """Every method in `df` at the knee, in the objective's currency.
+
+    Reports fill rate, units short and units held from the SAME expanding-
+    window empirical quantile the frontier uses (leakage-safe: a fold's
+    buffer sees only that SKU's strictly-prior folds), alongside the
+    out-of-sample coverage that the `n_skus_priced` deployment statistic
+    has been standing in for. See mb.skus_priced_per_fold for why those
+    two are not the same number.
+    """
+    coverage = mb.skus_priced_per_fold(df)
+    demand = df.groupby("method")["actual_30d"].sum()
+
+    rows = []
+    for m in sorted(df["method"].unique()):
+        if m == "naive" or m.endswith(":naive"):
+            continue
+        r = empirical_quantile_frontier(df, method=m, quantiles=[q]).iloc[0]
+        served = r["fill_rate"] * demand[m]
+        rows.append({
+            "method": m,
+            "fill_rate": r["fill_rate"],
+            "units_short": r["units_short"],
+            "units_held": r["units_held"],
+            # The column that keeps a fill-rate gain bought purely with
+            # stock from reading as a win: random_forest pooled by
+            # category_speed posts the highest fill rate anywhere in this
+            # project and holds 147,298 units to do it.
+            "held_per_unit_served": round(r["units_held"] / served, 2)
+                                    if served > 0 else float("nan"),
+            "skus_priced_per_fold": coverage.get(m, float("nan")),
+        })
+    return (pd.DataFrame(rows)
+              .sort_values("fill_rate", ascending=False)
+              .reset_index(drop=True))
+
+
 # --------------------------------------------------------------- gates -
 
 def expect(label, actual, expected, failures, tol=None):
@@ -278,7 +364,34 @@ def expect(label, actual, expected, failures, tol=None):
         failures.append(label)
 
 
+# Every results CSV this project has produced that is NOT the committed
+# statistical benchmark. Passed to --compare by default so the objective-
+# currency table covers the whole investigation without anyone having to
+# remember eight filenames. Missing files are skipped, not fatal.
+DEFAULT_COMPARE = [
+    "data/model_benchmark_ml_results.csv",
+    "data/model_benchmark_category_results.csv",
+    "data/model_benchmark_category_results_category_speed.csv",
+    "data/model_benchmark_category_results_product_type.csv",
+    "data/model_benchmark_category_results_cluster4.csv",
+    "data/model_benchmark_category_results_category_speed_hurdle.csv",
+    "data/model_benchmark_category_results_category_speed_syn5y.csv",
+    "data/model_benchmark_category_results_category_speed_syn5y_hurdle.csv",
+]
+
+
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--compare", nargs="*", default=None,
+                    help="extra results CSVs to re-score on the frontier "
+                         "alongside the committed benchmark (default: every "
+                         "pooled/clustered/hurdle run in data/). Pass with no "
+                         "values to skip the comparison section entirely.")
+    ap.add_argument("--knee", type=float, default=0.80,
+                    help="quantile to compare at (default: %(default)s, the "
+                         "measured knee)")
+    args = ap.parse_args()
+
     df = load()
     failures = []
 
@@ -363,6 +476,35 @@ def main():
         (rm.loc["rolling_mean_30", "units_held"] < rm.loc["tsb", "units_held"])
     )
     expect("rolling_mean_30 dominates ets and tsb at q=0.80", dominates, True, failures)
+
+    # ---- objective-currency comparison (additive; no gate reads it) ---
+    compare_paths = DEFAULT_COMPARE if args.compare is None else args.compare
+    if compare_paths:
+        print("\n=== The objective's currency - every variant at the knee "
+              f"(q={args.knee}) ===")
+        print("  Same expanding-window empirical quantile as Cause 3 above, "
+              "so this is\n  leakage-safe and like-for-like: a fold's buffer "
+              "sees only that SKU's\n  strictly-prior folds.")
+        extra = load_extra(compare_paths)
+        combined = pd.concat(
+            [df.assign(method="committed:" + df["method"].astype(str)), extra],
+            ignore_index=True) if not extra.empty else df
+        table = objective_currency_table(combined, q=args.knee)
+        print(table.to_string(index=False,
+                              float_format=lambda x: f"{x:.4f}"))
+        print("""
+  Read `held_per_unit_served` before `fill_rate`. A method can buy fill
+  rate with nothing but stock, and on this catalogue several do - that is
+  what makes a bare fill-rate ranking as misleading as a bare MASE one.
+
+  `skus_priced_per_fold` is the OUT-OF-SAMPLE coverage, averaged over the
+  same folds as every error metric. It is not the `n_skus_priced` column
+  in the summary CSVs, which fits on the full history and forecasts from a
+  single origin - see mb.skus_priced_per_fold, and B14 for how much that
+  one anchor moves (rolling_mean_30: 79 deployed vs 109.4 per fold).
+
+  This section is a MEASUREMENT and selects nothing. B3 is the team's
+  decision and is gated on B2.""")
 
     if failures:
         print(f"\nFAILED: {len(failures)} gate(s).")

@@ -58,6 +58,7 @@ from forecasting.baselines import (
     rolling_mean_fit_predict, rolling_median_fit_predict,
     rolling_quantile_fit_predict, seasonal_naive_fit_predict,
 )
+from forecasting.category import build_service_class_fn
 from forecasting.evaluate import evaluate_methods, summarise
 from forecasting.hurdle import logistic_hurdle_fit_predict, weekly_hurdle_fit_predict
 from forecasting.intermittent import (
@@ -122,13 +123,110 @@ def build_methods(quick=False):
     }
 
 
-def load_daily_series(con, limit=None):
+def trading_day_mask(con, index):
+    """Boolean mask over `index`: True where Dim_Date says a tally
+    happened that day.
+
+    docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md #10 found that 405 of 821
+    modelled days show zero store-wide sales, and that a large share of
+    those are not "customers wanted nothing" but days the store was not
+    recording at all. The biggest single block is 2024-06-01..2024-07-31:
+    61 consecutive days with no Fact_Sales rows whatsoever.
+
+    Dim_Date.is_tally_date already answers this and is unused by the
+    forecasting path. It is populated by scripts/populate_dim_date.py from
+    the distinct dates in the zero-inclusive sales CSV - i.e. "a physical
+    tally happened this day", which is exactly the question. Measured on
+    the benchmark span (2024-05-02..2026-07-31): 608 of 821 days are tally
+    dates, so this mask drops 213 days (25.9%), including all 61 days of
+    the 2024 gap.
+
+    What it does NOT do, and must not be extended to do:
+
+      - It does not encode a weekly closure schedule. Sundays are 65%
+        tallied here, not ~12% - close to Monday's 65% and not far off
+        Thursday's 80%. #10's separate "Sundays are 88% zero" finding is
+        about zero SALES, not absent tallies, and the two need different
+        treatment. Deciding that is B8, a client question.
+      - It does not widen Dim_Date.is_store_closed, which means special
+        closures (24 days in span) and is a different flag with a
+        different meaning.
+
+    Whether the 2024 gap is missing data or genuine zero demand is B7 and
+    is NOT answerable from the code - the two need opposite treatment.
+    That is why this is opt-in and why --trading-days-only refuses to
+    overwrite the committed artifacts.
+    """
+    tally = pd.read_sql_query(
+        "SELECT calendar_date, is_tally_date FROM Dim_Date",
+        con, parse_dates=["calendar_date"])
+    flagged = set(tally.loc[tally["is_tally_date"] == 1, "calendar_date"])
+    return np.array([d in flagged for d in index], dtype=bool)
+
+
+CALENDAR_COLS = ["is_enrollment_period", "is_exam_week",
+                 "is_event_day", "is_sem_break"]
+
+
+def load_calendar_features(con, index):
+    """(len(index), len(CALENDAR_COLS)) array, one row per day of `index`,
+    in exactly that order.
+
+    Looked up by array POSITION by the calendar-aware hurdle models, which
+    is only safe if row i here is the same day as position i of every
+    SKU's series - so this reindexes onto `index` by date rather than
+    assuming Dim_Date returns a contiguous block. That matters because
+    load_daily_series(trading_days_only=True) hands over an index with
+    holes in it; a BETWEEN-range query plus a length check would raise on
+    a perfectly valid trading-day run.
+
+    Moved here from tools/calendar_hurdle_test.py so the pooled and
+    per-SKU calendar models share one loader.
+    """
+    df = pd.read_sql_query(
+        f"SELECT calendar_date, {', '.join(CALENDAR_COLS)} FROM Dim_Date",
+        con, parse_dates=["calendar_date"]).set_index("calendar_date")
+    out = df.reindex(pd.DatetimeIndex(index))
+    missing = int(out[CALENDAR_COLS].isna().any(axis=1).sum())
+    if missing:
+        raise ValueError(
+            f"Dim_Date is missing {missing} of {len(index)} days in the "
+            f"benchmark span - the positional lookup the calendar models "
+            f"rely on would be wrong, so this aborts rather than guessing")
+    return out[CALENDAR_COLS].to_numpy(dtype=float)
+
+
+def weekday_positions(index):
+    """0-6 weekday per position of `index`, for the hurdle models'
+    `weekdays=` argument. Only strictly necessary when the index is not
+    consecutive days (trading_days_only), but always correct."""
+    return np.asarray([d.dayofweek for d in pd.DatetimeIndex(index)], dtype=int)
+
+
+def load_daily_series(con, limit=None, trading_days_only=False):
     """One daily series per moving SKU, over a complete calendar index.
 
     Fact_Sales carries explicit zero rows for densely tallied months, but
     not for every calendar day, so the series is reindexed onto a full
     daily range and missing days are filled with 0. The 30-day aggregate
     is a calendar window, so it needs a calendar-complete series.
+
+    `trading_days_only=True` restricts that index to Dim_Date's tally
+    dates (see trading_day_mask). TWO consequences, both real, neither
+    hidden:
+
+      1. The horizon stops being 30 CALENDAR days and becomes 30 TRADING
+         days - about 40 calendar days at this catalogue's 74% tally
+         density. `actual_30d` is then a different quantity and is NOT
+         comparable to a figure from a full-calendar run.
+      2. Methods that recover the weekday from array position no longer
+         can, because positions are no longer consecutive days. That is
+         forecasting.hurdle._weekday_onehot (logistic_hurdle,
+         weekly_hurdle_12w, calendar_logistic_hurdle) and seasonal_naive's
+         season=7. Pass the real weekday array to the hurdle constructors
+         under this flag - they accept one for exactly this reason.
+
+    Default is False: unchanged behaviour, byte-for-byte.
     """
     fact = pd.read_sql_query("""
         SELECT f.product_id, d.calendar_date, f.quantity_sold
@@ -142,6 +240,17 @@ def load_daily_series(con, limit=None):
 
     full_index = pd.date_range(fact["calendar_date"].min(),
                                fact["calendar_date"].max(), freq="D")
+
+    if trading_days_only:
+        mask = trading_day_mask(con, full_index)
+        dropped = int((~mask).sum())
+        full_index = full_index[mask]
+        print(f"--trading-days-only: {len(full_index)} tally dates kept, "
+              f"{dropped} non-tally days dropped "
+              f"({100.0 * dropped / (len(full_index) + dropped):.1f}%)")
+        print(f"  horizon {HORIZON} is now {HORIZON} TRADING days, not "
+              f"calendar days - actual_30d is not comparable to a "
+              f"full-calendar run (B7 open)")
 
     names = dict(con.execute("SELECT product_id, item_name FROM Dim_Product").fetchall())
 
@@ -173,6 +282,14 @@ def main():
                     help="per-fold results CSV (default: %(default)s)")
     ap.add_argument("--summary-out", default=SUMMARY_CSV,
                     help="ranked summary CSV (default: %(default)s)")
+    ap.add_argument("--trading-days-only", action="store_true",
+                    help="restrict the calendar index to Dim_Date tally "
+                         "dates, dropping the 2024-06/07 gap and every "
+                         "other non-tally day (see trading_day_mask). "
+                         "Changes what a 30-day horizon MEANS, so it "
+                         "refuses to write the committed artifacts - pass "
+                         "--out/--summary-out. B7 must be answered before "
+                         "any number from this becomes committed.")
     args = ap.parse_args()
 
     if args.limit and (args.out == OUT_CSV or args.summary_out == SUMMARY_CSV):
@@ -182,8 +299,26 @@ def main():
               f"for a full run.")
         return 1
 
+    # Same guard, different reason: a trading-day run is measured on a
+    # different calendar, so its actual_30d is not the committed CSV's
+    # actual_30d. Letting it land on the committed path would silently
+    # redefine every downstream figure - including the ones
+    # tools/service_frontier.py and tests/test_degenerate_forecast.py pin.
+    if args.trading_days_only and (args.out == OUT_CSV
+                                   or args.summary_out == SUMMARY_CSV):
+        print("REFUSING to overwrite the committed artifacts with a "
+              "trading-day-only run.\n"
+              "Its horizon is 30 TRADING days, not 30 calendar days, so "
+              "actual_30d is a different quantity and the two runs are not "
+              "comparable row-for-row.\n"
+              "Pass --out/--summary-out to write elsewhere, and report the "
+              "result ALONGSIDE the committed figures, not in place of "
+              "them (B7 is still open).")
+        return 1
+
     con = sqlite3.connect(DB_NAME)
-    series, names, index = load_daily_series(con, args.limit)
+    series, names, index = load_daily_series(con, args.limit,
+                                             args.trading_days_only)
     con.close()
 
     print(f"Loaded {len(series)} moving SKUs over {len(index)} calendar days "
@@ -204,9 +339,10 @@ def main():
         print("No SKU had enough history to score. Nothing written.")
         return 1
 
-    fsn_class = dict(sqlite3.connect(DB_NAME).execute(
-        "SELECT product_id, fsn_class FROM Dim_Product").fetchall())
-    results = service_metrics(results, series, fsn_class)
+    # Fold-scoped Fast/Slow, NOT Dim_Product.fsn_class - see
+    # service_metrics()'s docstring for why reading the committed column
+    # here was a leak.
+    results = service_metrics(results, series, build_service_class_fn(series))
     results["item_name"] = results["sku"].map(names)
     results.to_csv(args.out, index=False, lineterminator="\n")
 
@@ -279,11 +415,13 @@ def main():
         svc[["method", "fill_rate_at_target", "units_short", "units_held"]],
         on="method", how="left")
     summary["n_skus_priced"] = summary["method"].map(priced).astype(int)
+    summary["n_skus_priced_per_fold"] = summary["method"].map(
+        skus_priced_per_fold(results)).astype(float)
     summary.to_csv(args.summary_out, index=False, lineterminator="\n")
 
     err_cols = ["method", "mae", "rmse", "mase", "pct_skus_beating_naive"]
-    dec_cols = ["method", "n_skus_priced", "fill_rate_at_target",
-                "units_short", "units_held"]
+    dec_cols = ["method", "n_skus_priced", "n_skus_priced_per_fold",
+                "fill_rate_at_target", "units_short", "units_held"]
 
     print("\n" + "=" * 78)
     print("TABLE 1 - ERROR METRIC: ordered by MASE, MAE as tie-break")
@@ -310,6 +448,13 @@ disagreement is the point of printing both: Table 1 asks which method is
 least wrong, Table 2 asks which one would have met demand. `n_skus_priced`
 is the column to read first - a method that prices zero SKUs cannot stock
 anything, whatever its error metric says.
+
+`n_skus_priced` and `n_skus_priced_per_fold` are NOT the same measurement.
+The first fits on the full history and forecasts from one origin at the end
+of the series (a deployment statistic, sensitive to that anchor month - see
+B14); the second averages over the same 12 folds every error metric here
+uses. Quote the per-fold column when comparing against MAE/MASE, and the
+deployment column when asking what step5_prescriptive.py would price today.
 
 Safety stock in Table 2 uses A10's formula, risk period corrected to
 review + lead time (remediation D1) rather than lead time alone, with
@@ -376,7 +521,7 @@ gate in section 3.3.4 survives at all). No winner is declared here.
     return 0 if ok else 1
 
 
-def service_metrics(results, series, fsn_class):
+def service_metrics(results, series, service_class_fn):
     """Turn each forecast into a stocking decision and score the outcome.
 
     Per fold: stock = forecast + safety stock, where safety stock is
@@ -388,10 +533,31 @@ def service_metrics(results, series, fsn_class):
         served = min(actual, stock)      short = max(0, actual - stock)
                                          held  = max(0, stock - actual)
 
-    sigma is computed from the fold's TRAINING slice only. Using the whole
-    series would leak the test window into the safety stock and quietly
-    flatter every method - the same leakage the harness is built to
-    prevent, reintroduced through the back door.
+    TWO things here are scoped to the fold, and both have to be:
+
+    1. sigma is computed from the fold's TRAINING slice only. Using the
+       whole series would leak the test window into the safety stock and
+       quietly flatter every method - the same leakage the harness is
+       built to prevent, reintroduced through the back door.
+
+    2. `service_class_fn` is a CALLABLE, origin -> {sku: 'F'/'S'}, not a
+       dict. This used to take a static Dim_Product.fsn_class map, which
+       scripts/step3_fsn_classification.py computes from the WHOLE
+       Fact_Sales table with no date bound - so an early fold's Z came
+       partly from sales that happen after that fold's own origin.
+       forecasting.category.build_service_class_fn recomputes the
+       Fast/Slow split from each fold's pre-origin data instead. Measured
+       on this catalogue: 20% of SKUs get a different label at fold 0
+       than the full-history value, so this moved real numbers.
+
+       The same defect was found and fixed first in
+       scripts/model_benchmark_category.py (see
+       docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md's correction section).
+       It was NOT fixed here at the same time, which left every fill rate
+       in data/model_benchmark_summary.csv computed on a leaked class
+       while the experiment CSVs used the fixed one - and the two were
+       then compared directly. Fixing only one side of a comparison is
+       worse than fixing neither.
 
     This is a service-level view, not a cost optimisation: it says how
     much demand each method would actually have met.
@@ -404,8 +570,11 @@ def service_metrics(results, series, fsn_class):
     ss_col = np.zeros(len(results))
 
     # sigma depends only on (sku, origin), not on the method - cache it so
-    # this is one pass over the folds rather than one per method
+    # this is one pass over the folds rather than one per method. The
+    # service class depends only on the origin (it is a cross-sectional
+    # split across all SKUs at that origin), so it caches one level up.
     sigma_cache = {}
+    class_cache = {}
 
     for i, (sku, origin, pred, actual) in enumerate(zip(
             results["sku"].to_numpy(), results["origin"].to_numpy(),
@@ -416,7 +585,9 @@ def service_metrics(results, series, fsn_class):
             sigma_cache[key] = float(np.std(train, ddof=1)) if train.size > 1 else 0.0
         sigma = sigma_cache[key]
 
-        z = Z_BY_CLASS.get(fsn_class.get(sku), 0.0)
+        if origin not in class_cache:
+            class_cache[origin] = service_class_fn(origin)
+        z = Z_BY_CLASS.get(class_cache[origin].get(sku), 0.0)
         ss = z * sigma * np.sqrt(SERVICE_RISK_PERIOD)
         stock = max(pred + ss, 0.0)
 
@@ -454,6 +625,50 @@ def skus_priced(series, methods):
                 n += 1
         out[name] = n
     return out
+
+
+def skus_priced_per_fold(results):
+    """Mean SKUs with a positive 30-day forecast PER FOLD - the
+    out-of-sample counterpart to skus_priced().
+
+    The two answer different questions and have been read as if they were
+    the same number, which flatters some methods and penalises others:
+
+      skus_priced()        fits on the FULL history and forecasts once,
+                           from a single origin at the end of the series.
+                           It is a deployment statistic - "if we ran this
+                           today, how many SKUs would get an EOQ" - and it
+                           inherits whatever is peculiar about that one
+                           anchor month. B14 records the sensitivity
+                           directly: the 2026-07 anchor prices 79 SKUs for
+                           rolling_mean_30, the 2026-06 anchor prices 130.
+
+      skus_priced_per_fold() averages over the same 12 walk-forward folds
+                           every error metric in this file is computed on.
+                           On this catalogue rolling_mean_30 scores 109.4
+                           here against 79 there.
+
+    Reporting only the first next to 12-fold MAE/MASE mixes measurement
+    bases in one table. Both columns are written so a reader can see which
+    question is being answered.
+    """
+    methods = results["method"].unique()
+    n_folds = results.groupby("method")["fold"].nunique()
+
+    positive = results[results["pred_30d"] > 0]
+    if positive.empty:
+        return {m: 0.0 for m in methods}
+
+    # reindex BEFORE dividing: a method that never produces a positive
+    # forecast (rolling_median_30 does exactly this - see
+    # docs/DEGENERATE_FORECAST.md) is absent from `positive` entirely, and
+    # dividing two differently-indexed Series would give it NaN rather
+    # than the 0.0 that is the true answer.
+    priced = (positive.groupby(["method", "fold"])["sku"].nunique()
+                      .groupby("method").sum()
+                      .reindex(n_folds.index, fill_value=0))
+    out = (priced / n_folds).round(1)
+    return {m: float(out.get(m, 0.0)) for m in methods}
 
 
 def beats_naive(results):
