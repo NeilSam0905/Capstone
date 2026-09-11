@@ -15,14 +15,45 @@ SKUs are grouped for pooling:
     category        apparel / non-apparel (forecasting/category.classify:
                      Dim_Product.category where set - read-only, never
                      modified here - a keyword match on item_name where
-                     it is not)
-    speed            fast / slow mover, from Dim_Product.fsn_class - the
-                     store's own tag (also read-only), not derived
+                     it is not). Static product attribute - safe to use
+                     for every fold unchanged.
+    speed            fast / slow mover. CORRECTED (see
+                     docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md's
+                     correction section): earlier versions of this script
+                     read Dim_Product.fsn_class directly, which is
+                     computed by step3_fsn_classification.py from the
+                     WHOLE Fact_Sales table with no date bound - using it
+                     inside a walk-forward fold leaks each fold's own
+                     future into that fold's group assignment (measured:
+                     20% of SKUs get a different label at fold 0 than the
+                     full-history value). This now calls
+                     forecasting.category.fold_scoped_speed_labels PER
+                     FOLD, from only that fold's pre-origin training data.
     category_speed   the cross of both, e.g. "apparel-fast" - the first
                      run (category alone) showed the damage was
                      concentrated in near-flat/slow-moving SKUs, so this
                      tests whether separating fast from slow within each
-                     category recovers it
+                     category recovers it. Also fold-scoped, for the same
+                     reason as `speed`.
+    product_type     TEMPORARY/exploratory finer split (clothes,
+                     drinkware, bags, ...) - forecasting.category.
+                     classify_product_type, keyword-only on item_name.
+                     Static - safe, same reasoning as `category`.
+    cluster          K-means on demand behaviour (forecasting/clustering.py).
+                     CORRECTED for the same reason as `speed`: the
+                     features (density, size, volatility, volume) are
+                     computed from sales history, so they are now built
+                     PER FOLD from only that fold's pre-origin data, not
+                     once from the whole series.
+
+Every leak-prone grouping above is now built fold-by-fold via a
+`group_fn(train_end) -> {sku: label}` closure (build_group_fn) rather
+than once before the fold loop - see docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md's
+correction section for the audit that found this and the measured size of
+the leak it closes. The safety-stock service class (Z_BY_CLASS) has the
+identical fix, independent of --by: `build_speed_fn` supplies a fold-scoped
+Fast/Slow label to every run, replacing what used to be a static, full-history
+Dim_Product.fsn_class lookup regardless of grouping choice.
 
 Scored on the SAME walk-forward folds as model_benchmark_ml.py (all
 series share one calendar index, so fold origins are identical for
@@ -33,8 +64,8 @@ folds.
 EXPERIMENTAL - see requirements/requirements-ml-experimental.txt.
 
 Run (from the repo root):
-    python scripts/model_benchmark_category.py [--by category|speed|category_speed]
-                                                [--max-folds N] [--limit N]
+    python scripts/model_benchmark_category.py [--by category|speed|category_speed|product_type|cluster]
+                                                [--k N] [--max-folds N] [--limit N]
 
 Writes (filenames carry a suffix for --by speed / --by category_speed, so
 different groupings never clobber each other):
@@ -58,7 +89,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import model_benchmark as mb
 from forecasting.baselines import naive_fit_predict
-from forecasting.category import classify, classify_product_type, speed_label
+from forecasting.category import (
+    classify, classify_product_type, fold_scoped_speed_labels,
+)
+from forecasting.clustering import cluster_skus, sku_features
 from forecasting.evaluate import aggregate_blocks, make_folds, summarise
 from forecasting.metrics import naive_scale
 from forecasting.hurdle import (
@@ -104,41 +138,85 @@ PER_SKU_METHODS = {
 METHOD_SUFFIX = "_pooled_cat"
 PER_SKU_SUFFIX = "_per_sku"
 
-GROUPERS = {
-    "category": lambda cat, speed: cat,
-    "speed": lambda cat, speed: speed,
-    "category_speed": lambda cat, speed: f"{cat}-{speed}",
-    # "product_type" is handled separately in load_group_map - it needs
-    # item_name/db_category directly (forecasting.category.classify_product_type),
-    # not the (category, speed) pair the other groupers combine.
-    "product_type": None,
-}
+GROUPERS = ("category", "speed", "category_speed", "product_type", "cluster")
+
+# --by values whose label is derived from SALES HISTORY rather than a
+# static product attribute - these MUST be recomputed per fold from only
+# that fold's pre-origin data (build_group_fn below), never once from the
+# whole series. See the module docstring's correction note.
+LEAK_PRONE_GROUPERS = {"speed", "category_speed", "cluster"}
 
 
-def load_group_map(con, skus, by):
-    """product_id -> group label for every sku in `skus`, per the chosen
-    --by grouping. category comes from forecasting.category.classify;
-    speed comes from Dim_Product.fsn_class via forecasting.category.speed_label;
-    product_type is the TEMPORARY/exploratory finer split (clothes,
-    drinkware, bags, ... - forecasting.category.classify_product_type),
-    keyword-only since there is no DB column for it. category/fsn_class
-    are read-only controlled vocabulary - this only reads them."""
+def build_group_fn(con, by, series, k=4, cluster_seed=0, real_offset=0):
+    """Returns group_fn(train_end) -> {sku: group label}.
+
+    For `category`/`product_type` (static product attributes - Dim_Product.
+    category, or an item_name keyword match) the underlying map is computed
+    ONCE and the returned closure ignores train_end: there is no history to
+    leak from a label that never changes over time.
+
+    For `speed`/`category_speed`/`cluster` (LEAK_PRONE_GROUPERS) the label
+    depends on sales history, so the closure recomputes it EVERY call from
+    only series[sku][real_offset:train_end] - speed via
+    forecasting.category.fold_scoped_speed_labels, cluster via a
+    train_end-sliced call to forecasting.clustering.sku_features/cluster_skus.
+    A fold-0 call and a fold-11 call can therefore return different labels
+    for the same SKU, by construction - that is the leak being closed, not
+    a bug in this function.
+    """
+    if by == "cluster":
+        prices = dict(con.execute(
+            "SELECT product_id, unit_price_php FROM Dim_Product").fetchall())
+
+        def _cluster_fn(train_end):
+            sliced = {sku: v[real_offset:train_end] for sku, v in series.items()}
+            feat = sku_features(sliced, prices)
+            labels, _, _ = cluster_skus(feat, k=k, seed=cluster_seed)
+            return labels
+        return _cluster_fn
+
+    if by in ("speed", "category_speed"):
+        cat_component = None
+        if by == "category_speed":
+            prod = pd.read_sql_query(
+                "SELECT product_id, item_name, category FROM Dim_Product", con)
+            prod = prod[prod["product_id"].isin(series)]
+            cat_component = {row.product_id: classify(row.item_name, row.category)
+                            for row in prod.itertuples()}
+
+        def _speed_fn(train_end):
+            speed = fold_scoped_speed_labels(series, train_end, real_offset)
+            if by == "speed":
+                return speed
+            return {sku: f"{cat_component[sku]}-{speed[sku]}" for sku in speed}
+        return _speed_fn
+
+    # category / product_type: static product attributes, computed once
     prod = pd.read_sql_query(
-        "SELECT product_id, item_name, category, fsn_class FROM Dim_Product", con)
-    prod = prod[prod["product_id"].isin(skus)]
-
+        "SELECT product_id, item_name, category FROM Dim_Product", con)
+    prod = prod[prod["product_id"].isin(series)]
     if by == "product_type":
-        return {
-            row.product_id: classify_product_type(row.item_name, row.category)
-            for row in prod.itertuples()
-        }
+        static_map = {row.product_id: classify_product_type(row.item_name, row.category)
+                     for row in prod.itertuples()}
+    else:
+        static_map = {row.product_id: classify(row.item_name, row.category)
+                     for row in prod.itertuples()}
+    return lambda train_end: static_map
 
-    grouper = GROUPERS[by]
-    return {
-        row.product_id: grouper(classify(row.item_name, row.category),
-                                speed_label(row.fsn_class))
-        for row in prod.itertuples()
-    }
+
+def build_speed_fn(series, real_offset=0):
+    """train_end -> {sku: 'F'/'S'}, fold-scoped, for the safety-stock
+    service class (Z_BY_CLASS). Independent of --by: the earlier version
+    of this script looked up a static, full-history Dim_Product.fsn_class
+    for this on EVERY run regardless of grouping choice, which is the
+    second leak this module was corrected for - see
+    docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md's correction section."""
+    to_z_key = {"fast": "F", "slow": "S"}
+
+    def _fn(train_end):
+        labels = fold_scoped_speed_labels(series, train_end, real_offset)
+        return {sku: to_z_key[lab] for sku, lab in labels.items()}
+    return _fn
 
 
 def skus_by_group(group_map):
@@ -164,22 +242,28 @@ def _real_denom(values, real_offset, train_end, horizon):
     return naive_scale(blocks) if blocks.size > 1 else float("nan")
 
 
-def score_pooled(series, folds, groups, real_offset=0, methods=None):
+def score_pooled(series, folds, group_fn, real_offset=0, methods=None):
     """One row per (sku, pooled-method, fold), same schema
     evaluate_methods() produces. Fits ONE model per (method, group,
     fold) - not one per SKU - on rows pooled across that group's SKUs.
     Training uses the FULL series (real, or real+synthetic pre-history);
     the MASE denominator always uses the REAL portion only - see
-    _real_denom."""
+    _real_denom.
+
+    Fold is the OUTER loop (not group/method) because group_fn(f.train_end)
+    - for a leak-prone grouping - can return a DIFFERENT group map per
+    fold; groups must therefore be resolved fresh inside the fold loop,
+    never hoisted out of it. See build_group_fn."""
     rows = []
-    for method_name, pooled_fn in POOLED_METHODS.items():
-        if methods and method_name not in methods:
-            continue
-        out_name = method_name + METHOD_SUFFIX
-        for group_name, skus in groups.items():
-            if not skus:
+    for f in folds:
+        groups = skus_by_group(group_fn(f.train_end))
+        for method_name, pooled_fn in POOLED_METHODS.items():
+            if methods and method_name not in methods:
                 continue
-            for f in folds:
+            out_name = method_name + METHOD_SUFFIX
+            for group_name, skus in groups.items():
+                if not skus:
+                    continue
                 train_by_sku = {sku: f.train_slice(series[sku]) for sku in skus}
                 preds_by_sku = pooled_fn(train_by_sku, f.horizon)
 
@@ -260,14 +344,28 @@ def skus_priced_pooled(series, groups, horizon, methods=None):
     return out
 
 
-def service_metrics_real_offset(results, series, fsn_class, real_offset):
-    """mb.service_metrics, but safety-stock sigma is computed from the REAL
-    portion of training only (series[sku][real_offset:origin]) - same
-    reasoning as _real_denom: synthetic pre-history is bootstrapped i.i.d.
-    per weekday and does not carry this SKU's real day-to-day
-    autocorrelation, so including it in the volatility estimate would size
-    the safety stock off of manufactured noise. Identical to
-    mb.service_metrics when real_offset=0."""
+def service_metrics_real_offset(results, series, speed_fn, real_offset):
+    """mb.service_metrics, but with TWO leak fixes instead of mb.service_metrics's
+    one:
+
+    1. safety-stock sigma is computed from the REAL portion of training
+       only (series[sku][real_offset:origin]) - same reasoning as
+       _real_denom: synthetic pre-history is bootstrapped i.i.d. per
+       weekday and does not carry this SKU's real day-to-day
+       autocorrelation, so including it in the volatility estimate would
+       size the safety stock off of manufactured noise.
+    2. the service class (Z_BY_CLASS) comes from speed_fn(origin) - a
+       FOLD-SCOPED Fast/Slow label (forecasting.category.
+       fold_scoped_speed_labels via build_speed_fn) - not a static,
+       full-history Dim_Product.fsn_class lookup. This applies to every
+       row regardless of --by: fill rate is the project's actual
+       objective metric, so this was the more consequential of the two
+       leaks found in this module - see
+       docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md's correction section.
+
+    Identical to mb.service_metrics only when real_offset=0 AND speed_fn
+    happens to agree with Dim_Product.fsn_class at every origin, which it
+    will not in general - that disagreement IS the fix."""
     from step5_prescriptive import Z_BY_CLASS
 
     served = np.zeros(len(results))
@@ -275,6 +373,7 @@ def service_metrics_real_offset(results, series, fsn_class, real_offset):
     held = np.zeros(len(results))
     ss_col = np.zeros(len(results))
     sigma_cache = {}
+    speed_cache = {}
 
     for i, (sku, origin, pred, actual) in enumerate(zip(
             results["sku"].to_numpy(), results["origin"].to_numpy(),
@@ -285,7 +384,9 @@ def service_metrics_real_offset(results, series, fsn_class, real_offset):
             sigma_cache[key] = float(np.std(train, ddof=1)) if train.size > 1 else 0.0
         sigma = sigma_cache[key]
 
-        z = Z_BY_CLASS.get(fsn_class.get(sku), 0.0)
+        if origin not in speed_cache:
+            speed_cache[origin] = speed_fn(origin)
+        z = Z_BY_CLASS.get(speed_cache[origin].get(sku), 0.0)
         ss = z * sigma * np.sqrt(mb.SERVICE_RISK_PERIOD)
         stock = max(pred + ss, 0.0)
 
@@ -303,16 +404,21 @@ def service_metrics_real_offset(results, series, fsn_class, real_offset):
     return out
 
 
-def build_summary(results, series, groups, horizon, fsn_class, real_offset=0,
+def build_summary(results, series, deployed_groups, horizon, speed_fn, real_offset=0,
                   methods=None):
-    results = service_metrics_real_offset(results, series, fsn_class, real_offset)
+    """deployed_groups: the group_fn evaluated at the FULL series length -
+    used only for skus_priced_pooled's deployment-coverage count ("if run
+    today, how many SKUs would this price"), which is explicitly not an
+    out-of-sample statistic (see skus_priced_pooled's own docstring) and so
+    is not part of the leak this module was corrected for."""
+    results = service_metrics_real_offset(results, series, speed_fn, real_offset)
 
     summary = summarise(results)
     beats = mb.beats_naive(results)
     summary["pct_skus_beating_naive"] = (
         summary["method"].map(beats).astype(float).round(1))
 
-    priced = skus_priced_pooled(series, groups, horizon, methods)
+    priced = skus_priced_pooled(series, deployed_groups, horizon, methods)
     svc = (results.groupby("method")
                   .agg(units_served=("units_served", "sum"),
                        units_short=("units_short", "sum"),
@@ -422,11 +528,17 @@ def main():
     ap.add_argument("--tag", default="",
                     help="extra suffix for this run's output filenames, so a "
                          "subset run does not overwrite a full one")
+    ap.add_argument("--k", type=int, default=4,
+                    help="number of clusters for --by cluster (default: "
+                         "%(default)s - see forecasting.clustering.choose_k "
+                         "for why 4). Ignored for every other --by.")
     args = ap.parse_args()
 
     methods = set(args.methods) if args.methods else None
 
     suffix = "" if args.by == "category" else f"_{args.by}"
+    if args.by == "cluster":
+        suffix += f"{args.k}"
     if args.synthetic_years:
         suffix += f"_syn{args.synthetic_years}y"
     if args.tag:
@@ -436,21 +548,15 @@ def main():
     breakdown_csv = f"{BASE}_breakdown{suffix}.csv"
     comparison_csv = f"{BASE}_comparison{suffix}.csv"
     variant_label = f"pooled_by_{args.by}"
+    if args.by == "cluster":
+        variant_label += str(args.k)
     if args.synthetic_years:
         variant_label += f"_syn{args.synthetic_years}y"
 
     con = mb.sqlite3.connect(mb.DB_NAME)
     series, names, index = mb.load_daily_series(con, args.limit)
-    group_map = load_group_map(con, series.keys(), args.by)
-    fsn_class = dict(con.execute(
-        "SELECT product_id, fsn_class FROM Dim_Product").fetchall())
-    con.close()
-
-    groups = skus_by_group(group_map)
     print(f"Loaded {len(series)} moving SKUs over {len(index)} calendar days "
           f"({index[0].date()} .. {index[-1].date()})")
-    print(f"Grouped by --by {args.by}: " +
-          ", ".join(f"{len(skus)} {name}" for name, skus in sorted(groups.items())))
 
     n_total = len(index)
     real_offset = 0
@@ -477,6 +583,26 @@ def main():
               "portion of training only (real_offset), never the synthetic "
               "days - see _real_denom / service_metrics_real_offset")
 
+    # Built AFTER the synthetic-history block, so real_offset and the final
+    # (possibly augmented) series are both settled - group_fn/speed_fn close
+    # over them. For LEAK_PRONE_GROUPERS this is recomputed fresh inside the
+    # fold loop (score_pooled); the "Grouped by" line below and
+    # `deployed_groups` both use group_fn(n_total) - the full-history label -
+    # purely for display and for the (explicitly not out-of-sample)
+    # SKUs-priced deployment stat.
+    group_fn = build_group_fn(con, args.by, series, k=args.k, real_offset=real_offset)
+    speed_fn = build_speed_fn(series, real_offset=real_offset)
+    con.close()
+
+    deployed_group_map = group_fn(n_total)
+    deployed_groups = skus_by_group(deployed_group_map)
+    print(f"Grouped by --by {args.by} (full-history label, for display): " +
+          ", ".join(f"{len(skus)} {name}" for name, skus in sorted(deployed_groups.items())))
+    if args.by in LEAK_PRONE_GROUPERS:
+        print(f"  ({args.by} is fold-scoped during actual scoring - the "
+              f"per-fold group membership used to pool/predict differs from "
+              f"this full-history display, by design. See build_group_fn.)")
+
     folds = make_folds(n_total, horizon=mb.HORIZON, min_folds=mb.MIN_FOLDS,
                        max_folds=args.max_folds, min_train=mb.MIN_TRAIN)
     if not folds:
@@ -487,7 +613,7 @@ def main():
           f"(shared across every SKU - see model_benchmark.load_daily_series)\n")
 
     t0 = time.time()
-    rows = score_pooled(series, folds, groups, real_offset, methods)
+    rows = score_pooled(series, folds, group_fn, real_offset, methods)
     rows += score_per_sku(series, folds, real_offset, methods)
     elapsed = time.time() - t0
 
@@ -499,10 +625,13 @@ def main():
           f"{results['method'].nunique()} methods "
           f"in {elapsed:.1f}s ({len(results):,} rows)")
 
-    results, summary = build_summary(results, series, groups, mb.HORIZON,
-                                     fsn_class, real_offset, methods)
+    results, summary = build_summary(results, series, deployed_groups, mb.HORIZON,
+                                     speed_fn, real_offset, methods)
     results["item_name"] = results["sku"].map(names)
-    results["group"] = results["sku"].map(group_map)
+    # Display/breakdown label only (full-history) - see the "Grouped by"
+    # note above. The actual scoring above used the fold-scoped group for
+    # LEAK_PRONE_GROUPERS, which can differ per fold.
+    results["group"] = results["sku"].map(deployed_group_map)
     results.to_csv(results_csv, index=False, lineterminator="\n")
     print(f"Wrote {results_csv}")
 
@@ -510,7 +639,7 @@ def main():
     scored.to_csv(summary_csv, index=False, lineterminator="\n")
     print(f"Wrote {summary_csv}")
 
-    write_breakdown(results, group_map, breakdown_csv)
+    write_breakdown(results, deployed_group_map, breakdown_csv)
     write_comparison(scored, comparison_csv, variant_label)
     return 0
 

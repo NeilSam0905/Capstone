@@ -22,8 +22,10 @@ Two-tier classification:
 import re
 from typing import Optional
 
+import numpy as np
+
 __all__ = ["APPAREL", "NON_APPAREL", "classify", "speed_label",
-           "PRODUCT_TYPES", "classify_product_type"]
+           "fold_scoped_speed_labels", "PRODUCT_TYPES", "classify_product_type"]
 
 APPAREL = "apparel"
 NON_APPAREL = "non-apparel"
@@ -73,18 +75,68 @@ def classify(item_name: str, db_category: Optional[str]) -> str:
     return APPAREL if _apparel_by_keyword(item_name) else NON_APPAREL
 
 
-# Dim_Product.fsn_class is the store's own fast/slow-mover tag (F/S, and N
-# for non-moving where it appears elsewhere in the catalogue) - controlled
-# vocabulary, read-only here, same as `category`. Not derived or guessed:
-# unlike apparel/non-apparel there is no fallback because every moving SKU
-# already carries an fsn_class value.
+# CORRECTION (see docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md's correction
+# section): Dim_Product.fsn_class is NOT "the store's own tag" and is NOT
+# controlled vocabulary - it is computed by scripts/step3_fsn_classification.py
+# from an unfiltered SELECT over the whole Fact_Sales table (every calendar
+# day, no date bound) and an 80th-percentile cross-sectional cutoff, then
+# written back into Dim_Product. Using it (via speed_label below) to choose
+# a walk-forward fold's pooling group is a leak: an early fold's group
+# assignment is partly determined by sales that happen after that fold's
+# own origin. Measured directly - recomputing the label from only the data
+# available at the first fold's origin flips 54 of 266 SKUs (20%) relative
+# to this full-history value. speed_label/_SPEED_MAP below are kept for
+# code that genuinely wants the deployed, current classification (e.g.
+# step5_prescriptive.py's real ROP/safety-stock run, which is not a
+# backtest and has no "future" to leak from). For anything scored on
+# walk-forward folds, use fold_scoped_speed_labels instead - see its
+# docstring.
 _SPEED_MAP = {"F": "fast", "S": "slow", "N": "nonmoving"}
 
 
 def speed_label(fsn_class: Optional[str]) -> str:
     """'fast' / 'slow' / 'nonmoving' for Dim_Product.fsn_class, or
-    'unknown' for anything else (missing, or a value outside F/S/N)."""
+    'unknown' for anything else (missing, or a value outside F/S/N).
+
+    This is the CURRENT, full-history classification - correct for a real
+    (non-backtest) use like step5_prescriptive.py, LEAKAGE if used to
+    choose a walk-forward fold's pooling group or safety-stock class. See
+    fold_scoped_speed_labels for the leak-free version."""
     return _SPEED_MAP.get(fsn_class, "unknown")
+
+
+def fold_scoped_speed_labels(series, train_end: int, real_offset: int = 0,
+                             threshold: float = 80.0):
+    """sku -> 'fast'/'slow', computed from ONLY series[sku][real_offset:train_end]
+    for every sku - the leak-free replacement for speed_label(fsn_class) inside
+    a walk-forward fold. Approximates step3_fsn_classification.py's method
+    (ADUS = units sold per day-with-a-sale, ranked cross-sectionally, split
+    at the 80th percentile) scoped to one fold's training window instead of
+    the whole series.
+
+    Deliberately NOT a byte-for-byte port of step3: that script additionally
+    weights by imputation_flag and excludes is_censored days, using raw
+    Fact_Sales rows this function never sees (it works from the daily-
+    aggregated arrays scripts/model_benchmark.py already builds). For
+    choosing which SKUs get POOLED together, that is a second-order
+    difference - the two things that matter for a pooling decision (which
+    SKUs sell often, which barely sell at all) are exactly what ADUS-per-
+    sale-day and an 80th-percentile split capture. This function is not a
+    replacement for step3's committed fsn_class column, which is the
+    deployed classification USTore's prescriptive layer actually uses.
+
+    A SKU with zero sales in the training window gets ADUS 0, which sorts
+    to "slow" - there is no "non-moving" bucket here, matching how
+    forecasting/category.py's callers only ever pool F/S SKUs anyway.
+    """
+    adus = {}
+    for sku, values in series.items():
+        train = np.asarray(values, dtype=float)[real_offset:train_end]
+        sale_days = int(np.count_nonzero(train > 0))
+        adus[sku] = float(train.sum()) / sale_days if sale_days > 0 else 0.0
+
+    cutoff = np.quantile(np.fromiter(adus.values(), dtype=float), threshold / 100.0)
+    return {sku: ("fast" if a >= cutoff else "slow") for sku, a in adus.items()}
 
 
 # ---- finer product-type buckets (TEMPORARY / exploratory) -----------
