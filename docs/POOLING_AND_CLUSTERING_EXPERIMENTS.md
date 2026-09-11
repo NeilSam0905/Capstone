@@ -498,6 +498,12 @@ seeds - their numbers reproduce exactly, not just directionally.
 
 ## Related
 
+- `docs/FORECAST_VALIDATION.md` - an independent validation of THIS document against the
+  objective rather than against its own metrics. Confirms every number here reproduces exactly
+  from the committed fold CSVs, and finds that #11's clustering result - genuinely the best
+  demand-weighted MASE in the repository - is strictly dominated by `rolling_mean_30` on fill
+  rate per unit held, and that its 266/266 coverage recovers ~0.5% of the demand the incumbent
+  misses. Also the origin of the pooled calendar-aware hurdle this document's #7/#8/#9 point at
 - `docs/SPARSE_DEMAND_EXPERIMENTS.md` - the four experiments this document follows up on,
   in particular section 2 (the pooling fix built in #7) and section 4 (the synthetic-data
   mechanism extended in #5)

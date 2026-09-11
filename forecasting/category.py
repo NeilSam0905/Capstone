@@ -25,7 +25,9 @@ from typing import Optional
 import numpy as np
 
 __all__ = ["APPAREL", "NON_APPAREL", "classify", "speed_label",
-           "fold_scoped_speed_labels", "PRODUCT_TYPES", "classify_product_type"]
+           "fold_scoped_speed_labels", "fold_scoped_service_classes",
+           "build_service_class_fn",
+           "PRODUCT_TYPES", "classify_product_type"]
 
 APPAREL = "apparel"
 NON_APPAREL = "non-apparel"
@@ -137,6 +139,43 @@ def fold_scoped_speed_labels(series, train_end: int, real_offset: int = 0,
 
     cutoff = np.quantile(np.fromiter(adus.values(), dtype=float), threshold / 100.0)
     return {sku: ("fast" if a >= cutoff else "slow") for sku, a in adus.items()}
+
+
+# Z_BY_CLASS (scripts/step5_prescriptive.py) is keyed "F"/"S", not
+# "fast"/"slow". Every walk-forward scorer that sizes safety stock needs
+# the SAME fold-scoped label fold_scoped_speed_labels produces, in that
+# key space - so the mapping lives here once rather than being re-spelled
+# in each benchmark script. See the correction note above for why reading
+# Dim_Product.fsn_class for this is a leak.
+_SERVICE_KEY = {"fast": "F", "slow": "S"}
+
+
+def fold_scoped_service_classes(series, train_end: int, real_offset: int = 0,
+                                threshold: float = 80.0):
+    """sku -> 'F'/'S' for the safety-stock service class, computed from
+    ONLY series[sku][real_offset:train_end] - the leak-free replacement
+    for a static Dim_Product.fsn_class lookup inside a walk-forward fold.
+
+    This is deliberately the same computation as fold_scoped_speed_labels,
+    re-keyed: the pooling group and the service class are the same
+    fast/slow question asked at the same origin, and letting them drift
+    apart is how one of them silently goes back to leaking."""
+    return {sku: _SERVICE_KEY[lab] for sku, lab in
+            fold_scoped_speed_labels(series, train_end, real_offset,
+                                     threshold).items()}
+
+
+def build_service_class_fn(series, real_offset: int = 0,
+                           threshold: float = 80.0):
+    """train_end -> {sku: 'F'/'S'}, as a closure over `series`.
+
+    The shape every walk-forward scorer wants: service_metrics() is handed
+    this instead of a dict, so it resolves the class at each fold's OWN
+    origin rather than once from the whole history."""
+    def _fn(train_end):
+        return fold_scoped_service_classes(series, train_end, real_offset,
+                                           threshold)
+    return _fn
 
 
 # ---- finer product-type buckets (TEMPORARY / exploratory) -----------

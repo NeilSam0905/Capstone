@@ -61,6 +61,14 @@ TREE_RUNS = [
      "data/model_benchmark_category_results_product_type.csv", "_pooled_cat"),
     ("pooled_by_category_speed_syn5y",
      "data/model_benchmark_category_results_category_speed_syn5y.csv", "_pooled_cat"),
+    # K-means behavioural clustering (docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md
+    # #11). This was missing, which is why that section's weighted/global MASE
+    # figures could not be reproduced by any committed tool - they had to be
+    # computed ad hoc. They are correct (they reproduce exactly from the fold
+    # CSV), but "correct and unreproducible" is not a state this project's
+    # numbers are allowed to be in.
+    ("pooled_by_cluster4",
+     "data/model_benchmark_category_results_cluster4.csv", "_pooled_cat"),
 ]
 
 STATISTICAL_RUN = ("committed statistical benchmark",
@@ -75,6 +83,9 @@ HURDLE_RUNS = [
      "data/model_benchmark_category_results_category_speed_hurdle.csv", ""),
     ("+5y synthetic",
      "data/model_benchmark_category_results_category_speed_syn5y_hurdle.csv", ""),
+    # the same cluster run, read for its hurdle rows rather than its tree rows
+    ("clustered (K=4)",
+     "data/model_benchmark_category_results_cluster4.csv", ""),
 ]
 
 
