@@ -1,0 +1,2 @@
+method,mae,rmse,mase,mase_n_skus,n_skus,n_folds,pct_skus_beating_naive,fill_rate_at_target,units_short,units_held,n_skus_priced
+lightgbm_pooled_cat,45.19228764244872,51.8216241044254,117.4195808613017,262,266,3192,25.2,0.8401,8564.081368956016,183064.179180677,266

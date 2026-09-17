@@ -26,10 +26,11 @@ group count.
 """
 import numpy as np
 import pandas as pd
+from scipy.optimize import linear_sum_assignment
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
-__all__ = ["sku_features", "cluster_skus", "choose_k"]
+__all__ = ["sku_features", "cluster_skus", "choose_k", "match_clusters_to_reference"]
 
 FEATURE_COLS = ["density", "mean_nz", "cv_nz", "log_total", "log_price"]
 
@@ -73,12 +74,73 @@ def choose_k(df, k_range=range(2, 9), seed=0):
     return pd.DataFrame(rows)
 
 
-def cluster_skus(df, k, seed=0):
+def match_clusters_to_reference(centers, reference_centers):
+    """old_label -> new_label so each row of `centers` (k x len(FEATURE_COLS),
+    ORIGINAL feature units) is matched one-to-one to whichever row of
+    `reference_centers` (same shape) it is closest to, minimizing total
+    distance (Hungarian assignment - scipy.optimize.linear_sum_assignment).
+
+    Why this exists: K-means's own cluster numbering is ARBITRARY per fit -
+    refitting on slightly different data (a different fold's window, a
+    handful of changed values) can permute which integer label lands on
+    which real cluster, even when the clusters themselves are nearly
+    identical. Observed directly: re-running the walk-forward cluster
+    grouping with a small data change (see docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md's
+    gap-fill sensitivity check) put 262 of 266 SKUs under 3-4 DIFFERENT
+    cluster numbers across their 12 folds, versus 0 in the unmodified run -
+    not because the underlying grouping changed that much, but because
+    K-means relabelled it. Matching every fit's clusters back to one fixed
+    reference (typically the full-history clustering) keeps "cluster0"
+    meaning the same real group across folds/runs, which per-cluster
+    reporting depends on. This does not change which SKUs get pooled with
+    which inside any single fold - only what the resulting label is called
+    - so it cannot leak anything into scoring.
+
+    Distances are scaled by the reference's own per-feature spread first,
+    so a large-magnitude feature (e.g. log_total) cannot dominate purely
+    from its units. Falls back to the identity mapping if the two center
+    arrays don't have the same shape (e.g. a different k)."""
+    centers = np.asarray(centers, dtype=float)
+    reference_centers = np.asarray(reference_centers, dtype=float)
+    if centers.shape != reference_centers.shape:
+        return {i: i for i in range(centers.shape[0])}
+    scale = reference_centers.std(axis=0)
+    scale[scale == 0] = 1.0
+    d = np.linalg.norm(
+        (centers[:, None, :] - reference_centers[None, :, :]) / scale, axis=2)
+    row_ind, col_ind = linear_sum_assignment(d)
+    return {int(r): int(c) for r, c in zip(row_ind, col_ind)}
+
+
+def cluster_skus(df, k, seed=0, reference_centers=None):
     """sku -> f"cluster{n}" for n in [0, k). Also returns the fitted
-    KMeans and the scaler, so a caller can inspect cluster centers in
-    original feature units (scaler.inverse_transform(km.cluster_centers_))."""
-    X = StandardScaler()
-    Xs = X.fit_transform(df[FEATURE_COLS])
+    KMeans, the scaler, and the cluster centers in ORIGINAL feature units
+    (k x len(FEATURE_COLS): scaler.inverse_transform(km.cluster_centers_),
+    computed once here rather than re-derived by every caller).
+
+    Pass `reference_centers` (this same original-units center array from a
+    prior/reference fit - typically the full-history clustering) to hold
+    cluster IDENTITY stable across independent fits: see
+    match_clusters_to_reference for why raw K-means labels cannot be
+    trusted to mean the same thing twice."""
+    scaler = StandardScaler()
+    Xs = scaler.fit_transform(df[FEATURE_COLS])
     km = KMeans(n_clusters=k, n_init=10, random_state=seed).fit(Xs)
-    labels = {row.sku: f"cluster{lab}" for row, lab in zip(df.itertuples(), km.labels_)}
-    return labels, km, X
+    raw_centers = scaler.inverse_transform(km.cluster_centers_)
+
+    label_map = {i: i for i in range(k)}
+    if reference_centers is not None:
+        label_map = match_clusters_to_reference(raw_centers, reference_centers)
+
+    labels = {row.sku: f"cluster{label_map[lab]}"
+             for row, lab in zip(df.itertuples(), km.labels_)}
+
+    # Reordered so centers[i] is cluster i's center IN THE RETURNED LABELS -
+    # a caller chaining stability fold-to-fold (see build_group_fn) can pass
+    # this straight back in as the next call's reference_centers without
+    # having to track label_map itself.
+    centers = np.empty_like(raw_centers)
+    for old_label, new_label in label_map.items():
+        centers[new_label] = raw_centers[old_label]
+
+    return labels, km, scaler, centers

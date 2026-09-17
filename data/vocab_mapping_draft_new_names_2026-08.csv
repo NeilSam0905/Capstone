@@ -1,0 +1,8 @@
+raw_name,canonical_item_name,merged,row_count,source,revisit_with_store
+Go USTE (WHITE) @450,,no,,sales,AMBIGUOUS: could be a color-split of the existing bundled 'Go USTE (W,Y,B) @450' OR the same product as inventory's 'Go Uste White Shirt' under a different name. Confirm with USTore before mapping.
+Go USTE (YELLOW AND BLACK) @450,,no,,sales,AMBIGUOUS: same bundled-entry question as the WHITE variant above - is this a genuine split of 'Go USTE (W,Y,B) @450' or a new SKU? Confirm with USTore.
+TM UST Logo Embro Polo Shirt (2XL-3XL),TM UST Logo Embro Polo Shirt (2XL-3XL),no,,sales,New canonical entry per instruction - kept SEPARATE from the existing (no-TM) 'UST Logo Embro Polo Shirt (2XL-3XL)'. Confirm the TM prefix is a real distinct product line and not a typo/duplicate.
+TM UST Logo Embro Polo Shirt (4XL-5XL),TM UST Logo Embro Polo Shirt (4XL-5XL),no,,sales,New canonical entry - no existing (no-TM) 4XL-5XL size tier exists at all, so this is a new size regardless.
+TM UST Logo Embro Polo Shirt (XS-XL),TM UST Logo Embro Polo Shirt (XS-XL),no,,sales,New canonical entry per instruction - kept SEPARATE from the existing (no-TM) 'UST Logo Embro Polo Shirt (XS-XL)'. Confirm the TM prefix is a real distinct product line and not a typo/duplicate.
+DRI-FIT,,no,,sales,AMBIGUOUS: two unrelated existing canonical products could match ('DRI-FIT NEW' and 'Dri-Fit Golden Tigresses'). Too generic to guess - needs a human decision.
+VL Long Sticker,Varsity Long Sticker,no,,sales,LIKELY MATCH: 'Varsity Long Sticker' already exists as a canonical entry (inventory source) and 'VL' plausibly abbreviates 'Varsity Long'. Confirm before merging - not auto-applied.

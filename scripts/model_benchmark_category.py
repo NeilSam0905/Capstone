@@ -168,10 +168,26 @@ def build_group_fn(con, by, series, k=4, cluster_seed=0, real_offset=0):
         prices = dict(con.execute(
             "SELECT product_id, unit_price_php FROM Dim_Product").fetchall())
 
+        # K-means's own label numbering is arbitrary per fit (see
+        # forecasting.clustering.match_clusters_to_reference) - CHAINED
+        # here, each call matched against the PREVIOUS call's centers,
+        # rather than to one fixed distant reference: two of this
+        # catalogue's four clusters (the steady sellers and the moderate
+        # mixed sellers) sit close enough together that matching every
+        # fold back to a single full-history snapshot flip-flopped between
+        # them; consecutive folds differ by only ~30 days of data and stay
+        # far more comparable to each other. This is a labeling/reporting
+        # choice only - it never changes which SKUs a given fold pools
+        # together, so it cannot leak into scoring.
+        chain_state = {"centers": None}
+
         def _cluster_fn(train_end):
             sliced = {sku: v[real_offset:train_end] for sku, v in series.items()}
             feat = sku_features(sliced, prices)
-            labels, _, _ = cluster_skus(feat, k=k, seed=cluster_seed)
+            labels, _, _, centers = cluster_skus(
+                feat, k=k, seed=cluster_seed,
+                reference_centers=chain_state["centers"])
+            chain_state["centers"] = centers
             return labels
         return _cluster_fn
 
