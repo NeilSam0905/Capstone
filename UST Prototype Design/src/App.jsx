@@ -54,11 +54,18 @@ const UNFILTERED = {
  *     could only contradict it.
  *   - reorder and powerbi take no topbar filters at all. Reorder is a
  *     stock-position decision about every item, and the Power BI report
- *     carries its own slicers. */
+ *     carries its own slicers.
+ *   - forecast is the ONLY page with no topbar category filter. Category is
+ *     now the primary axis of that screen, chosen in the page itself, so a
+ *     second selector in the topbar could only disagree with the one the user
+ *     is looking at - and would empty the page under them by excluding the
+ *     very category they had just selected. Overview and Classification keep
+ *     theirs: there category is a refinement of what is shown, not the
+ *     subject of it. */
 const PAGE_FILTERS = {
   overview:       ['dateRange', 'supplier', 'category'],
   classification: ['dateRange', 'supplier', 'category'],
-  forecast:       ['supplier', 'category'],
+  forecast:       ['supplier'],
   reorder:        [],
   report:         ['supplier'],
   powerbi:        [],

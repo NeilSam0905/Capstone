@@ -12,6 +12,7 @@ import { Loading } from '../components/Pending';
 import DataTable from '../components/DataTable';
 import ErrorBanner from '../components/ErrorBanner';
 import Icon from '../components/Icon';
+import ComboBox from '../components/ComboBox';
 import Modal from '../components/Modal';
 import { num, usDate, usDateTime, longMonth } from '../lib/format';
 import brandMark from '../assets/ustore-mark.png';
@@ -528,6 +529,14 @@ function AddItemModal({ open, products, onClose, onAdded }) {
   const categories = categoriesOf(products);
   const suppliers = [...new Set(products.map(p => p.supplier_name).filter(Boolean))].sort();
 
+  // Whether what is typed would introduce a value the catalogue has not seen.
+  // Surfaced in the dialog because creating a category or supplier is a wider
+  // change than adding one item, and the user should know before saving.
+  const isNewCategory = !!item.category.trim()
+    && !categories.some(c => c.toLowerCase() === item.category.trim().toLowerCase());
+  const isNewSupplier = !!item.supplier_name.trim()
+    && !suppliers.some(x => x.toLowerCase() === item.supplier_name.trim().toLowerCase());
+
   async function submit() {
     setBusy(true);
     const result = await addProduct(item);
@@ -556,27 +565,41 @@ function AddItemModal({ open, products, onClose, onAdded }) {
           </Field>
         </div>
 
-        {/* Free text with a datalist rather than a <select>: a genuinely new
+        {/* Free text with suggestions, not a closed <select>: a genuinely new
             item may well belong to a category or supplier the catalogue has
-            not seen either, and a closed list would block that. */}
-        <Field label="Category">
-          <input type="text" list="add-item-categories" value={item.category}
-                 placeholder="Uncategorised"
-                 onChange={e => setItem(v => ({ ...v, category: e.target.value }))} />
-          <datalist id="add-item-categories">
-            {categories.map(c => <option key={c} value={c} />)}
-          </datalist>
+            not seen either, and a closed list would block exactly the case
+            this dialog exists for. ComboBox keeps that open AND visible -
+            typing an unknown value offers it explicitly as "new", where the
+            <datalist> this replaced simply showed nothing and looked broken. */}
+        <Field label="Category" hint="Pick one, or type a new category">
+          <ComboBox
+            value={item.category}
+            onChange={v => setItem(s => ({ ...s, category: v }))}
+            options={categories}
+            placeholder="Uncategorised"
+            newLabel="new category"
+          />
         </Field>
 
-        <Field label="Supplier">
-          <input type="text" list="add-item-suppliers" value={item.supplier_name}
-                 placeholder="Optional"
-                 onChange={e => setItem(v => ({ ...v, supplier_name: e.target.value }))} />
-          <datalist id="add-item-suppliers">
-            {suppliers.map(s => <option key={s} value={s} />)}
-          </datalist>
+        <Field label="Supplier" hint="Pick one, or type a new supplier">
+          <ComboBox
+            value={item.supplier_name}
+            onChange={v => setItem(s => ({ ...s, supplier_name: v }))}
+            options={suppliers}
+            placeholder="Optional"
+            newLabel="new supplier"
+          />
         </Field>
       </div>
+
+      {(isNewCategory || isNewSupplier) && (
+        <div className="notice" style={{ marginTop: 12 }}>
+          This will also create{' '}
+          {isNewCategory && <>a new category <b>{item.category.trim()}</b></>}
+          {isNewCategory && isNewSupplier && <> and </>}
+          {isNewSupplier && <>a new supplier <b>{item.supplier_name.trim()}</b></>}.
+        </div>
+      )}
 
       <div className="btn-row" style={{ marginTop: 16 }}>
         <button className="btn btn--ink btn--sm" onClick={submit} disabled={busy}>
@@ -765,20 +788,43 @@ function ClosureAndEventCards({ onSaved, reloadKey }) {
             <button className="btn btn--ghost btn--sm" onClick={() => toggleClosed(false)}>Mark open</button>
           </div>
 
-          {/* A scrolling list rather than one comma-joined line: this is every
-              date in Dim_Date flagged is_store_closed across 2023-2026, which
-              is currently 43 dates and grows with each closure logged. As
-              running prose it wrapped into an unreadable paragraph that pushed
-              the rest of the card off screen. */}
+          {/* A scrolling list rather than one comma-joined line: as running
+              prose this wrapped into an unreadable paragraph that pushed the
+              rest of the card off screen.
+
+              Two records of a closure exist and BOTH are shown, tagged by
+              origin (see /api/calendar/closed):
+                calendar  the published academic calendar, plus whatever was
+                          flagged through this card
+                workbook  read out of the TBS spreadsheets, where each date's
+                          header cell is coloured and the sheet's own legend
+                          says what the colour means
+              The workbook knows closures the term calendar cannot - most of
+              them Sundays, which no academic calendar has an opinion about -
+              so showing only the calendar under-reported closures by more
+              than half. */}
           <div style={{ marginTop: 14 }}>
             <div className="hint" style={{ marginBottom: 6 }}>
               {closed.length === 0
                 ? 'No dates are flagged closed.'
-                : <>Flagged closed <span className="muted">({closed.length})</span></>}
+                : <>Flagged closed <span className="muted">({closed.length})</span> · newest first</>}
             </div>
             {closed.length > 0 && (
-              <ul className="date-list">
-                {closed.map(d => <li key={d}>{usDate(d)}</li>)}
+              <ul className="date-list date-list--closures">
+                {closed.map(c => (
+                  <li key={c.calendar_date}>
+                    <span className="closure__date">{usDate(c.calendar_date)}</span>
+                    {c.reason && <span className="closure__reason">{c.reason}</span>}
+                    <span className={`closure__src closure__src--${c.source}`}
+                          title={c.source === 'workbook'
+                            ? 'Read from the colour legend in the TBS spreadsheet'
+                            : c.source === 'both'
+                              ? 'Flagged in the calendar and in the spreadsheet'
+                              : 'From the academic calendar or flagged here'}>
+                      {c.source === 'both' ? 'both' : c.source}
+                    </span>
+                  </li>
+                ))}
               </ul>
             )}
           </div>

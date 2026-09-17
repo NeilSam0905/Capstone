@@ -976,10 +976,84 @@ def get_calendar():
 
 @app.get("/api/calendar/closed")
 def get_closed_dates():
-    rows = dbmod.rows(con(), """
-        SELECT calendar_date FROM Dim_Date WHERE is_store_closed = 1 ORDER BY calendar_date
+    """Every date the store was shut, from BOTH records of it.
+
+    There are two, and they do not agree:
+
+      Dim_Date.is_store_closed   the published academic calendar
+                                 (calendar_ranges.csv) plus anything staff
+                                 flagged through this interface.
+      Dim_Day_Status             read out of the TBS workbooks themselves,
+                                 where each date's header cell is coloured
+                                 and a per-sheet legend gives the meaning
+                                 ("NO OPERATION", "HOLIDAY (DAY OF VALOR)").
+
+    The workbook is the store's own record of what it actually did, and it
+    knows things the academic calendar cannot: 48 of the dates it marks
+    "NO OPERATION" are Sundays, which no term calendar has an opinion
+    about. Showing only Dim_Date therefore under-reports closures badly.
+
+    Rows are merged by date and carry their provenance, so the interface
+    can show WHY a date is flagged and where that came from rather than
+    presenting two different sets of truth as one list. Returned most
+    recent first: the list spans 2023-2026 and the recent end is the part
+    anyone is checking.
+    """
+    c = con()
+    rows = dbmod.rows(c, """
+        WITH merged AS (
+            SELECT calendar_date,
+                   1 AS from_calendar, 0 AS from_workbook,
+                   NULL AS label
+            FROM Dim_Date WHERE is_store_closed = 1
+
+            UNION ALL
+
+            SELECT calendar_date,
+                   0 AS from_calendar, 1 AS from_workbook,
+                   legend_label AS label
+            FROM Dim_Day_Status WHERE is_store_closed = 1
+        )
+        SELECT calendar_date,
+               MAX(from_calendar) AS from_calendar,
+               MAX(from_workbook) AS from_workbook,
+               MAX(label)         AS label
+        FROM merged
+        GROUP BY calendar_date
+        ORDER BY calendar_date DESC
+    """) if "Dim_Day_Status" in _table_names(c) else dbmod.rows(c, """
+        SELECT calendar_date, 1 AS from_calendar, 0 AS from_workbook,
+               NULL AS label
+        FROM Dim_Date WHERE is_store_closed = 1
+        ORDER BY calendar_date DESC
     """)
-    return jsonify([r["calendar_date"] for r in rows])
+
+    # Closure_Log holds the reason a staff member typed. It is the better
+    # label when there is one, because it describes this specific closure
+    # rather than the legend category the workbook filed it under.
+    reasons = {}
+    if "Closure_Log" in _table_names(c):
+        for r in dbmod.rows(c, "SELECT closure_date, reason FROM Closure_Log "
+                               "WHERE is_closed = 1 AND reason IS NOT NULL"):
+            if r["reason"]:
+                reasons[r["closure_date"]] = r["reason"]
+
+    out = []
+    for r in rows:
+        d = r["calendar_date"]
+        src = ("both" if r["from_calendar"] and r["from_workbook"]
+               else "workbook" if r["from_workbook"] else "calendar")
+        out.append({
+            "calendar_date": d,
+            "source": src,
+            "reason": reasons.get(d) or r["label"] or None,
+        })
+    return jsonify(out)
+
+
+def _table_names(c):
+    return {r[0] for r in c.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
 
 
 @app.get("/api/calendar/<iso_date>")
@@ -1321,6 +1395,95 @@ def get_forecast(product_id):
             "snapshot_date": forecast_rows[0]["snapshot_date"],
             "forecast": forecast_rows,
             "metrics": metrics,
+        },
+    })
+
+
+@app.get("/api/forecast/category/<path:category>")
+def get_forecast_category(category):
+    """The 30-day forecast for a whole category.
+
+    Built by SUMMING the per-SKU rows in Result_Forecast rather than from a
+    separately fitted category model. That is a deliberate choice: the
+    dashboard lets a user drill from the category straight into one of its
+    items, and a separately fitted category total would not equal the sum of
+    the items shown underneath it. Here it always does, so the two views can
+    never contradict each other on screen.
+
+    Only Fast SKUs get a forecast, so a category's total covers the items in
+    `contributors` and no others - the response says how many that is, and
+    how many products the category holds in total, so the figure is never
+    read as covering the whole category when it does not.
+    """
+    c = con()
+    if not _has_forecast_table(c):
+        return jsonify(_FORECAST_PENDING)
+
+    rows = dbmod.rows(c, """
+        SELECT f.forecast_date,
+               SUM(f.yhat)       AS yhat,
+               SUM(f.yhat_lower) AS yhat_lower,
+               SUM(f.yhat_upper) AS yhat_upper
+        FROM Result_Forecast f
+        JOIN Dim_Product p ON p.product_id = f.product_id
+        WHERE p.category = ?
+        GROUP BY f.forecast_date
+        ORDER BY f.forecast_date
+    """, (category,))
+
+    if not rows:
+        total = dbmod.one(c,
+            "SELECT COUNT(*) AS n FROM Dim_Product WHERE category = ?",
+            (category,))
+        return jsonify({
+            "available": False,
+            "reason": (f"No item in {category} has a forecast yet. "
+                       "Only Fast-moving items are forecast, and this "
+                       "category has none."
+                       if total and total["n"] else
+                       f"No products are in {category}."),
+            "data": None,
+        })
+
+    contributors = dbmod.rows(c, """
+        SELECT p.product_id, p.item_name, p.fsn_class, p.is_hvl,
+               COALESCE(p.supplier_name, ?) AS supplier_name,
+               SUM(f.yhat) AS yhat_30d
+        FROM Result_Forecast f
+        JOIN Dim_Product p ON p.product_id = f.product_id
+        WHERE p.category = ?
+        GROUP BY p.product_id
+        ORDER BY yhat_30d DESC
+    """, (catalog.UNATTRIBUTED, category))
+
+    meta = dbmod.one(c, """
+        SELECT COUNT(*) AS n_products,
+               SUM(CASE WHEN fsn_class='F' THEN 1 ELSE 0 END) AS n_fast
+        FROM Dim_Product WHERE category = ?
+    """, (category,))
+
+    head = dbmod.one(c, """
+        SELECT f.model_type, f.snapshot_date,
+               MAX(f.is_heuristic) AS any_heuristic
+        FROM Result_Forecast f
+        JOIN Dim_Product p ON p.product_id = f.product_id
+        WHERE p.category = ?
+    """, (category,))
+
+    return jsonify({
+        "available": True,
+        "reason": None,
+        "data": {
+            "category": category,
+            "model_type": head["model_type"] if head else None,
+            "snapshot_date": head["snapshot_date"] if head else None,
+            "is_heuristic": bool(head["any_heuristic"]) if head else False,
+            "n_products": meta["n_products"] if meta else 0,
+            "n_fast": (meta["n_fast"] or 0) if meta else 0,
+            "n_forecast": len(contributors),
+            "total_30d": round(sum(r["yhat_30d"] or 0 for r in contributors), 3),
+            "forecast": rows,
+            "contributors": contributors,
         },
     })
 

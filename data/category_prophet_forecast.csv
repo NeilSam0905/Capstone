@@ -1,0 +1,141 @@
+forecast_category,origin,actual_30d,n_trading_days,n_train_obs,tier,cap,naive_scale,pred_30d,fallback,capped,regressors,error,pred_raw_30d
+Apparel Accessories,2025-09-11,42.0,27,63,reduced,336.0,38.0,73.61205907662828,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,73.61205907662828
+Apparel Accessories,2025-10-11,25.0,17,79,reduced,336.0,28.0,45.2471477386267,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,45.2471477386267
+Apparel Accessories,2025-11-10,81.0,22,90,reduced,336.0,30.0,60.06395531445541,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,60.06395531445541
+Apparel Accessories,2025-12-10,6.0,9,99,reduced,411.0,26.0,19.045932532212564,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,19.045932532212564
+Apparel Accessories,2026-01-09,171.0,21,100,reduced,411.0,24.0,73.40132138988974,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,73.40132138988974
+Apparel Accessories,2026-02-08,13.0,18,106,reduced,870.0,112.5,54.36804014479287,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,54.36804014479287
+Apparel Accessories,2026-03-10,67.0,20,111,reduced,882.0,130.0,113.19009572728703,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,113.19009572728703
+Apparel Accessories,2026-04-09,2.0,21,119,reduced,1041.0,143.5,73.01306597936225,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,73.01306597936225
+Apparel Accessories,2026-05-09,41.0,19,121,full,1041.0,112.33333333333333,93.36622936524805,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,93.36622936524805
+Apparel Accessories,2026-06-08,20.0,22,133,full,1044.0,65.66666666666667,102.06209607786026,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,102.06209607786026
+Bags,2025-07-13,164.0,23,171,full,3615.0,288.25,1085.8066072811976,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1085.8066072811976
+Bags,2025-08-12,199.0,23,184,full,3615.0,384.6,166.94282444562396,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,166.94282444562396
+Bags,2025-09-11,336.0,27,202,full,3615.0,207.4,220.701608492723,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,220.701608492723
+Bags,2025-10-11,174.0,17,221,full,3615.0,354.3333333333333,336.1595316598783,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,336.1595316598783
+Bags,2025-11-10,472.0,22,234,full,3615.0,190.16666666666666,263.9326211698157,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,263.9326211698157
+Bags,2025-12-10,221.0,9,251,full,3615.0,326.7142857142857,390.2760371796824,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,390.2760371796824
+Bags,2026-01-09,659.0,21,260,full,3615.0,223.28571428571428,1144.1727598813843,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1144.1727598813843
+Bags,2026-02-08,109.0,18,280,full,3615.0,293.375,79.0045227440716,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,79.0045227440716
+Bags,2026-03-10,199.0,20,297,full,3615.0,328.25,336.93399151210474,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,336.93399151210474
+Bags,2026-04-09,296.0,21,313,full,3615.0,333.55555555555554,223.0541780225285,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,223.0541780225285
+Bags,2026-05-09,611.0,19,329,full,3615.0,280.55555555555554,260.97004360237,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,260.97004360237
+Bags,2026-06-08,520.0,22,345,full,3615.0,363.0,329.5468917114453,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,329.5468917114453
+Drinkware,2025-07-13,113.0,23,115,reduced,1332.0,144.0,340.31224442829955,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,340.31224442829955
+Drinkware,2025-08-12,126.0,23,126,full,1359.0,110.0,159.27143899597286,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,159.27143899597286
+Drinkware,2025-09-11,306.0,27,142,full,1359.0,145.0,368.7178053452309,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,368.7178053452309
+Drinkware,2025-10-11,183.0,17,160,full,1359.0,100.75,116.36955737306876,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,116.36955737306876
+Drinkware,2025-11-10,234.0,22,173,full,1455.0,99.75,133.7414130988915,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,133.7414130988915
+Drinkware,2025-12-10,202.0,9,191,full,1455.0,94.0,98.09373082033771,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,98.09373082033771
+Drinkware,2026-01-09,84.0,21,200,full,1455.0,117.6,122.63851135670872,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,122.63851135670872
+Drinkware,2026-02-08,100.0,18,217,full,1455.0,58.666666666666664,130.3629336278677,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,130.3629336278677
+Drinkware,2026-03-10,132.0,20,233,full,1455.0,120.16666666666667,300.12337298546333,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,300.12337298546333
+Drinkware,2026-04-09,309.0,21,245,full,1455.0,74.57142857142857,348.4524642834392,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,348.4524642834392
+Drinkware,2026-05-09,240.0,19,261,full,1455.0,179.85714285714286,325.26968775948615,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,325.26968775948615
+Drinkware,2026-06-08,206.0,22,278,full,1545.0,91.5,410.215423235126,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,410.215423235126
+Home & Novelty,2025-09-10,13.0,27,61,reduced,954.0,56.0,174.57543753141226,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,174.57543753141226
+Home & Novelty,2025-10-10,4.0,17,65,reduced,954.0,113.0,113.33769246460659,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,113.33769246460659
+Home & Novelty,2025-11-09,51.0,22,69,reduced,954.0,202.0,66.71360114777504,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,66.71360114777504
+Home & Novelty,2025-12-09,30.0,10,73,reduced,954.0,23.0,211.8191014098079,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,211.8191014098079
+Home & Novelty,2026-01-08,30.0,21,77,reduced,954.0,6.0,74.41084634753172,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,74.41084634753172
+Home & Novelty,2026-02-07,6.0,17,84,reduced,954.0,77.0,63.5163290306739,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,63.5163290306739
+Home & Novelty,2026-03-09,13.0,21,87,reduced,954.0,81.0,159.0830954347529,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,159.0830954347529
+Home & Novelty,2026-04-08,93.0,20,93,reduced,954.0,74.0,69.83150013192525,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,69.83150013192525
+Home & Novelty,2026-05-08,22.0,19,98,reduced,954.0,83.5,248.95662916024085,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,248.95662916024085
+Home & Novelty,2026-06-07,113.0,22,106,reduced,954.0,17.0,141.2471364531477,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,141.2471364531477
+Keychains & Charms,2025-07-13,227.0,23,176,full,2325.0,206.5,132.97330093816356,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,132.97330093816356
+Keychains & Charms,2025-08-12,233.0,23,190,full,2325.0,273.2,252.5618469956178,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,252.5618469956178
+Keychains & Charms,2025-09-11,309.0,27,210,full,2325.0,174.5,438.9887977139955,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,438.9887977139955
+Keychains & Charms,2025-10-11,337.0,17,230,full,2325.0,263.5,371.2397909306761,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,371.2397909306761
+Keychains & Charms,2025-11-10,795.0,22,243,full,2325.0,189.85714285714286,367.6551518389795,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,367.6551518389795
+Keychains & Charms,2025-12-10,222.0,9,261,full,3345.0,317.0,471.5289223820672,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,471.5289223820672
+Keychains & Charms,2026-01-09,1127.0,21,270,full,3387.0,213.25,518.4731160893415,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,518.4731160893415
+Keychains & Charms,2026-02-08,177.0,18,290,full,5955.0,318.625,355.55738189694813,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,355.55738189694813
+Keychains & Charms,2026-03-10,175.0,20,308,full,5955.0,229.44444444444446,673.3697848414685,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,673.3697848414685
+Keychains & Charms,2026-04-09,219.0,21,324,full,5955.0,357.44444444444446,411.50554595720473,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,411.50554595720473
+Keychains & Charms,2026-05-09,881.0,19,340,full,5955.0,292.6,680.452501456563,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,680.452501456563
+Keychains & Charms,2026-06-08,580.0,22,358,full,5955.0,344.5,680.6902512952778,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,680.6902512952778
+Lanyards & IDs,2025-07-13,1046.0,23,180,full,3213.0,229.4,135.84573616297249,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,135.84573616297249
+Lanyards & IDs,2025-08-12,1116.0,23,194,full,3918.0,296.0,2466.930219021099,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,2466.930219021099
+Lanyards & IDs,2025-09-11,1085.0,27,214,full,6138.0,393.6666666666667,2478.5785757541043,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,2478.5785757541043
+Lanyards & IDs,2025-10-11,669.0,17,234,full,6447.0,367.8333333333333,1125.8705067209523,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1125.8705067209523
+Lanyards & IDs,2025-11-10,1179.0,22,247,full,6447.0,409.0,1499.3824092196435,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1499.3824092196435
+Lanyards & IDs,2025-12-10,355.0,9,266,full,6447.0,407.42857142857144,562.3797592833118,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,562.3797592833118
+Lanyards & IDs,2026-01-09,1538.0,21,275,full,6447.0,362.125,1327.290576203342,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1327.290576203342
+Lanyards & IDs,2026-02-08,566.0,18,295,full,7584.0,300.75,640.5449691851594,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,640.5449691851594
+Lanyards & IDs,2026-03-10,342.0,20,313,full,7584.0,230.66666666666666,1191.0800550206893,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1191.0800550206893
+Lanyards & IDs,2026-04-09,341.0,21,329,full,7584.0,502.22222222222223,810.1766671348897,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,810.1766671348897
+Lanyards & IDs,2026-05-09,623.0,19,345,full,7584.0,359.1,564.3263263914557,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,564.3263263914557
+Lanyards & IDs,2026-06-08,1040.0,22,363,full,7584.0,371.09090909090907,771.8970482720015,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,771.8970482720015
+Outerwear,2025-07-13,171.0,23,181,full,1524.0,123.0,251.84052181325862,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,251.84052181325862
+Outerwear,2025-08-12,288.0,23,194,full,1524.0,91.0,329.19381802455376,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,329.19381802455376
+Outerwear,2025-09-11,412.0,27,214,full,1524.0,101.83333333333333,473.36730516342584,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,473.36730516342584
+Outerwear,2025-10-11,248.0,17,235,full,1668.0,95.16666666666667,357.86447847543945,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,357.86447847543945
+Outerwear,2025-11-10,404.0,22,248,full,1845.0,80.14285714285714,424.98439277967407,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,424.98439277967407
+Outerwear,2025-12-10,229.0,9,267,full,1878.0,94.42857142857143,207.72982284609643,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,207.72982284609643
+Outerwear,2026-01-09,352.0,21,276,full,1974.0,84.25,461.8753596311541,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,461.8753596311541
+Outerwear,2026-02-08,246.0,18,296,full,2202.0,74.875,232.81378263629747,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,232.81378263629747
+Outerwear,2026-03-10,155.0,20,314,full,2202.0,80.33333333333333,307.32345881095836,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,307.32345881095836
+Outerwear,2026-04-09,193.0,21,330,full,2202.0,111.0,369.34130788756454,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,369.34130788756454
+Outerwear,2026-05-09,364.0,19,346,full,2202.0,101.2,327.3822669341243,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,327.3822669341243
+Outerwear,2026-06-08,293.0,22,364,full,2202.0,117.27272727272727,487.24940933521196,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,487.24940933521196
+Plush & Souvenirs,2025-07-13,61.0,23,162,full,3405.0,468.75,1095.5141123057433,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1095.5141123057433
+Plush & Souvenirs,2025-08-12,78.0,23,175,full,3405.0,418.0,426.3145212529573,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,426.3145212529573
+Plush & Souvenirs,2025-09-11,205.0,27,193,full,3405.0,478.8,156.37295990593674,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,156.37295990593674
+Plush & Souvenirs,2025-10-11,119.0,17,213,full,3405.0,469.3333333333333,233.2743176107246,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,233.2743176107246
+Plush & Souvenirs,2025-11-10,159.0,22,225,full,3405.0,408.8333333333333,247.16392025213776,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,247.16392025213776
+Plush & Souvenirs,2025-12-10,79.0,9,244,full,3405.0,410.0,1001.0258028839609,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1001.0258028839609
+Plush & Souvenirs,2026-01-09,116.0,21,253,full,3405.0,374.0,71.56414613661562,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,71.56414613661562
+Plush & Souvenirs,2026-02-08,161.0,18,267,full,3405.0,266.85714285714283,24.005587898619588,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,24.005587898619588
+Plush & Souvenirs,2026-03-10,116.0,20,283,full,3405.0,330.0,190.9108225797001,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,190.9108225797001
+Plush & Souvenirs,2026-04-09,142.0,21,297,full,3405.0,233.625,154.7178560292708,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,154.7178560292708
+Plush & Souvenirs,2026-05-09,640.0,19,313,full,3405.0,295.44444444444446,218.34204271542455,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,218.34204271542455
+Plush & Souvenirs,2026-06-08,311.0,22,331,full,3405.0,333.0,459.4872969064696,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,459.4872969064696
+Shirts & Tops,2025-07-13,1408.0,23,181,full,4806.0,202.0,316.83429690512736,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,316.83429690512736
+Shirts & Tops,2025-08-12,1929.0,23,194,full,6066.0,325.0,2496.987588220649,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,2496.987588220649
+Shirts & Tops,2025-09-11,1974.0,27,214,full,9537.0,473.0,3678.4069472340248,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,3678.4069472340248
+Shirts & Tops,2025-10-11,824.0,17,235,full,10749.0,532.1666666666666,2021.1290479577456,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,2021.1290479577456
+Shirts & Tops,2025-11-10,1327.0,22,248,full,10749.0,655.1428571428571,1779.9535438450462,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1779.9535438450462
+Shirts & Tops,2025-12-10,729.0,9,267,full,10749.0,536.0,588.1993373515733,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,588.1993373515733
+Shirts & Tops,2026-01-09,1274.0,21,276,full,10749.0,549.375,1919.755359796054,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1919.755359796054
+Shirts & Tops,2026-02-08,722.0,18,296,full,10749.0,477.125,984.254563568203,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,984.254563568203
+Shirts & Tops,2026-03-10,674.0,20,314,full,10749.0,543.0,1302.3151148516044,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1302.3151148516044
+Shirts & Tops,2026-04-09,553.0,21,330,full,10749.0,456.2,1085.8417119701976,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1085.8417119701976
+Shirts & Tops,2026-05-09,1189.0,19,346,full,10749.0,552.3,974.8079313369715,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,974.8079313369715
+Shirts & Tops,2026-06-08,924.0,22,364,full,10749.0,474.1818181818182,1323.2222969443203,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1323.2222969443203
+Stationery,2025-07-13,678.0,23,170,full,6246.0,545.0,416.4435835822817,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,416.4435835822817
+Stationery,2025-08-12,1072.0,23,184,full,6246.0,378.8,715.4933182876811,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,715.4933182876811
+Stationery,2025-09-11,908.0,27,204,full,6246.0,572.8,1463.5721762188446,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1463.5721762188446
+Stationery,2025-10-11,796.0,17,225,full,6246.0,379.1666666666667,785.3699117841626,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,785.3699117841626
+Stationery,2025-11-10,1573.0,22,238,full,6246.0,530.0,1267.5176689303694,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1267.5176689303694
+Stationery,2025-12-10,494.0,9,257,full,6807.0,488.14285714285717,398.78202756305416,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,398.78202756305416
+Stationery,2026-01-09,1350.0,21,266,full,6807.0,508.42857142857144,1352.7542689126672,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1352.7542689126672
+Stationery,2026-02-08,479.0,18,286,full,7083.0,436.125,1316.0284516512447,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1316.0284516512447
+Stationery,2026-03-10,548.0,20,304,full,7083.0,386.22222222222223,1734.9441883667987,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1734.9441883667987
+Stationery,2026-04-09,396.0,21,320,full,7083.0,506.22222222222223,1548.6581178598472,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1548.6581178598472
+Stationery,2026-05-09,1050.0,19,336,full,7083.0,371.7,1104.6262667815251,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,1104.6262667815251
+Stationery,2026-06-08,748.0,22,354,full,7083.0,543.3,964.9448596101053,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,964.9448596101053
+Umbrellas & Gear,2025-07-13,77.0,23,159,full,1284.0,144.5,330.3832492619056,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,330.3832492619056
+Umbrellas & Gear,2025-08-12,406.0,23,171,full,1284.0,112.75,490.0053465830291,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,490.0053465830291
+Umbrellas & Gear,2025-09-11,183.0,27,190,full,1434.0,135.4,426.7809461234834,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,426.7809461234834
+Umbrellas & Gear,2025-10-11,109.0,17,210,full,1581.0,171.5,162.2976596771429,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,162.2976596771429
+Umbrellas & Gear,2025-11-10,147.0,22,223,full,1581.0,142.83333333333334,235.24759500761036,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,235.24759500761036
+Umbrellas & Gear,2025-12-10,52.0,9,241,full,1581.0,183.57142857142858,245.5347510265103,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,245.5347510265103
+Umbrellas & Gear,2026-01-09,96.0,21,248,full,1581.0,134.85714285714286,124.80682754872986,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,124.80682754872986
+Umbrellas & Gear,2026-02-08,44.0,18,264,full,1581.0,169.57142857142858,80.74288637827352,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,80.74288637827352
+Umbrellas & Gear,2026-03-10,47.0,20,278,full,1581.0,128.375,106.30202962030516,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,106.30202962030516
+Umbrellas & Gear,2026-04-09,96.0,21,293,full,1581.0,165.0,79.22441221930927,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,79.22441221930927
+Umbrellas & Gear,2026-05-09,241.0,19,308,full,1581.0,114.44444444444444,148.792876432603,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,148.792876432603
+Umbrellas & Gear,2026-06-08,169.0,22,325,full,1581.0,181.77777777777777,229.21989739381058,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,229.21989739381058
+Uncategorised,2025-07-13,28.0,23,85,reduced,438.0,36.0,70.17515378157945,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,70.17515378157945
+Uncategorised,2025-08-12,56.0,23,95,reduced,438.0,11.5,87.2796320685405,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,87.2796320685405
+Uncategorised,2025-09-11,175.0,27,114,reduced,438.0,30.5,102.25558102141146,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,102.25558102141146
+Uncategorised,2025-10-11,82.0,17,135,full,594.0,49.0,133.74376083208728,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,133.74376083208728
+Uncategorised,2025-11-10,150.0,22,148,full,729.0,56.666666666666664,197.462119065033,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,197.462119065033
+Uncategorised,2025-12-10,94.0,9,167,full,729.0,45.0,66.27392855595772,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,66.27392855595772
+Uncategorised,2026-01-09,244.0,21,176,full,804.0,54.75,116.08372297201501,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,116.08372297201501
+Uncategorised,2026-02-08,122.0,18,195,full,1170.0,65.4,137.1108528746576,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,137.1108528746576
+Uncategorised,2026-03-10,121.0,20,213,full,1170.0,39.166666666666664,259.1585935363977,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,259.1585935363977
+Uncategorised,2026-04-09,126.0,21,229,full,1170.0,71.0,199.0722933115389,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,199.0722933115389
+Uncategorised,2026-05-09,160.0,19,245,full,1170.0,49.857142857142854,124.8522875163617,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,124.8522875163617
+Uncategorised,2026-06-08,158.0,22,263,full,1170.0,75.28571428571429,213.11863627712043,0,0,"is_enrollment_period,is_exam_week,is_event_day,is_sem_break",,213.11863627712043
