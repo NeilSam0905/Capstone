@@ -1,13 +1,36 @@
 """
-Phase 3 of ETL: rolling-mean demand forecasting, scored on 30-day aggregates.
+Phase 3 of ETL: demand forecasting for Fast SKUs, scored on 30-day aggregates.
 
-Every Fast SKU is forecast with the SAME model: the mean of the trailing
-30 days, held flat across a 30-day horizon. That model is literally
-`forecasting.baselines.rolling_mean_fit_predict(30)` - the identical
-callable `model_benchmark.py` scores as `rolling_mean_30` and
-`step5_prescriptive.py` lists in DEMAND_METHODS - so the benchmark's and
-the frontier's findings about `rolling_mean_30` are findings about THIS
-model, not about a near relative of it.
+Every Fast SKU is forecast with the SAME model, selected by `--model`.
+The default is `rolling_mean_30` - the trailing 30-day mean. Whichever is
+chosen, it is literally the callable from `forecasting/` that
+`model_benchmark.py` and `scripts/benchmark_fast_raw_vs_clean.py` score
+under the same name, so their findings are findings about THIS model, not
+about a near relative.
+
+--- Why rolling_mean_30 ---
+
+`docs/FAST_MOVING_BENCHMARK.md` scored 37 methods across 10 families on
+the 58 Fast SKUs over identical walk-forward folds - trailing averages,
+quantiles, exponential smoothing, intermittent-demand (Croston/SBA/TSB),
+hurdle, Holt-Winters, six ML learners, pooled ML, Prophet, calendar-lag
+and top-down hierarchical. Nothing beat a trailing average (section 6.1),
+and the top eight sat within 10% of each other on MASE. `rolling_mean_30`
+has the best MAE of the lot (40.02) and is the simplest thing in the
+comparison, which is the tie-break when the error metric will not
+separate the candidates.
+
+The one thing it is NOT best at is coverage: it forecasts exactly zero
+whenever its 30-day window contains no sale, which on this catalogue is
+32 of 58 Fast items, so those SKUs carry no EOQ. `tsb` prices all 58 for
+a 0.5% worse MASE. That trade-off is deferred decision **B3** and is not
+settled here - run `--model tsb` to see the other side of it.
+`Result_Forecast.model_type` records which model wrote each row, and
+`step5_prescriptive.py` reads that column rather than assuming, so the
+provenance label follows the choice automatically.
+
+Neither model has trend or seasonality: the forecast is a flat rate per
+SKU. Nothing about the calendar enters the prediction.
 
 --- What this file used to be ---
 
@@ -26,8 +49,18 @@ Both are gone. Consequences worth stating plainly:
 
 --- The model ---
 
-    level      = mean of the trailing 30 observations (fewer if the
-                 training slice is shorter), clipped at 0
+Both available models emit a flat rate held across the horizon, so the
+row shape is identical and only `level` differs:
+
+    tsb              level = p_hat * z_hat, where z_hat is the smoothed
+                     demand SIZE (updated on days with a sale) and p_hat
+                     the smoothed demand PROBABILITY (updated EVERY day,
+                     including zeros - that is what makes it decay on a
+                     dying SKU where Croston holds flat). alpha=beta=0.1,
+                     the values the benchmark scored.
+    rolling_mean_30  level = mean of the trailing 30 observations (fewer
+                     if the training slice is shorter), clipped at 0
+
     yhat       = level, on each of the 30 horizon days
     yhat_lower = max(level - SD, 0)
     yhat_upper = level + SD
@@ -112,6 +145,7 @@ transaction, so an interrupted run leaves the previous forecasts in place.
 Filename note: this was step4_prophet_forecast.py until the model changed.
 Older docs and log entries refer to it under that name.
 """
+import argparse
 import os
 import sqlite3
 import sys
@@ -124,8 +158,11 @@ import pandas as pd
 # step5_prescriptive.py and conftest.py do.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from forecasting.baselines import naive_fit_predict, rolling_mean_fit_predict
+from forecasting.baselines import (
+    ewma_fit_predict, naive_fit_predict, rolling_mean_fit_predict,
+)
 from forecasting.evaluate import make_folds, walk_forward_evaluate
+from forecasting.intermittent import tsb_fit_predict
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ustore.db")
 
@@ -136,7 +173,72 @@ MAX_FOLDS = 12
 MIN_TRAIN = 60
 
 WINDOW = 30                    # the rolling mean's trailing window
-MODEL_TYPE = "rolling_mean_30"
+TSB_ALPHA = 0.1                # size smoothing      - benchmark's values
+TSB_BETA = 0.1                 # probability smoothing
+
+# Every entry is the SAME callable the benchmarks score under that name.
+# Keyed by the string written to Result_Forecast.model_type, so the label
+# and the model can never drift apart.
+#
+# Each factory takes a `ctx` dict so a model that needs calendar context
+# can have it. Prophet is the only one that does - it is bound to the
+# shared daily index and to Dim_Date's regressor columns - but every entry
+# takes the same argument rather than special-casing one, so adding
+# another calendar-aware model does not require changing the call site.
+MODELS = {
+    "tsb": (lambda ctx: tsb_fit_predict(TSB_ALPHA, TSB_BETA),
+            f"TSB p_hat*z_hat, alpha={TSB_ALPHA} beta={TSB_BETA}, "
+            f"flat over {HORIZON} days"),
+    "rolling_mean_30": (lambda ctx: rolling_mean_fit_predict(WINDOW),
+                        f"trailing {WINDOW}-day mean, flat over {HORIZON} days"),
+    "ewma_a0.1": (lambda ctx: ewma_fit_predict(0.1),
+                  f"EWMA alpha=0.1, flat over {HORIZON} days"),
+    "prophet": (lambda ctx: _make_prophet(ctx),
+                f"Prophet, weekly+yearly seasonality with Dim_Date calendar "
+                f"regressors, VARYING over {HORIZON} days"),
+}
+# Measured, not assumed. On the 58 Fast SKUs over identical folds
+# (data/fastmoving_benchmark_results.csv):
+#
+#   median per-SKU MAE   rolling_mean_30 26.83 | tsb 28.06
+#                        prophet_plain   33.17 | prophet_cal 33.83 | naive 51.50
+#   head-to-head         prophet beats rolling_mean_30 on 12 of 58 SKUs (21%)
+#
+# Prophet sits nearer the naive baseline than the trailing mean. The reason is
+# structural rather than a tuning gap: ~50% of days are zeros and the span is
+# 23 months, so the trend and yearly-seasonality terms are fitted on almost no
+# evidence and then extrapolated - Home & Novelty forecast 6,999 units against
+# an actual of 13 before the sufficiency tiers were added. A trailing mean has
+# no trend term to run away with, which is exactly why it wins here.
+#
+# `prophet` stays in MODELS and is still selectable with --model prophet: it is
+# the comparison the manuscript's sections 2.1.4 and 3.3.2 need, and a measured
+# negative result is worth more than an untested claim.
+DEFAULT_MODEL = "rolling_mean_30"
+
+# Prophet is the only model here whose forecast is not flat. Recorded as a
+# constant so append_forecast and the summary print agree about which
+# models produce a curve, instead of each testing the name separately.
+CURVE_MODELS = {"prophet"}
+
+
+def _make_prophet(ctx):
+    """Prophet bound to the benchmark's shared daily index and calendar.
+
+    Returns the standard `fit_predict(train, horizon)` callable, so it
+    drops into the same harness as the trailing averages and is scored by
+    `walk_forward_evaluate` on identical folds.
+
+    The calendar columns come from Dim_Date, which
+    `populate_dim_date.py` fills from `calendar_ranges.csv`.
+    `semester_week` is deliberately NOT among them - Divergence #8 records
+    that its continuous form resets each term and extrapolates badly
+    across the boundary.
+    """
+    from forecasting.prophet_model import load_calendar, prophet_fit_predict
+    cal = load_calendar(ctx["con"], ctx["index"]) if ctx.get("con") is not None else None
+    return prophet_fit_predict(ctx["index"], cal, "prophet")
+
 VALIDATION_METHOD = "walk_forward_30d_aggregate"
 MAPE_PASS_THRESHOLD = 20.0
 
@@ -294,20 +396,57 @@ def metrics_rows(model_rows, naive_rows, breaks, folds):
     return out
 
 
-def append_forecast(product_id, level, spread, is_heuristic, last_date, snapshot_date, rows):
-    """30 flat rows: the trailing-window mean, banded by +/- 1 SD, clipped at 0."""
+def append_forecast(product_id, level, spread, is_heuristic, last_date, snapshot_date,
+                    model_type, rows):
+    """30 flat rows: the model's level, banded by +/- 1 SD, clipped at 0.
+
+    `model_type` is passed in rather than read from a module constant so
+    that the label written to Result_Forecast is the one `--model`
+    actually selected. step5_prescriptive.py reads that column to build
+    its provenance string, so a stale constant here would mislabel every
+    downstream number."""
+    # 6 dp, not 3. A trailing mean's level is order 1-10, so rounding to 3
+    # was lossless in practice. TSB's level is a RATE (p_hat * z_hat) and
+    # can legitimately be 1e-4 or smaller, so round(level, 3) silently
+    # turned 30 of 58 positive forecasts into hard zeros - which reads
+    # downstream as "this SKU cannot be ordered" rather than "this SKU is
+    # forecast to sell very little". Rounding must not manufacture a
+    # category change. It is still rounding, not truncation to a
+    # threshold: a level genuinely too small to order stays too small,
+    # it just stops being reported as an exact zero.
+    # `level` may be a scalar (every flat model) or a HORIZON-length array
+    # (Prophet). Broadcasting here rather than at the call site means the
+    # 30 rows written are the model's ACTUAL day-by-day output: writing a
+    # Prophet forecast as its own mean would discard exactly the calendar
+    # shape the model was chosen for, and would be Prophet in name only.
+    curve = np.broadcast_to(np.asarray(level, dtype=float).ravel(),
+                            (HORIZON,)) if np.ndim(level) == 0 else \
+        np.asarray(level, dtype=float).ravel()
+    if curve.size != HORIZON:
+        raise ValueError(
+            f"model returned {curve.size} values for a {HORIZON}-day horizon")
+
     dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=HORIZON, freq="D")
-    for d in dates:
+    for d, y in zip(dates, curve):
         rows.append(dict(
             product_id=product_id, forecast_date=d.strftime("%Y-%m-%d"),
-            yhat=round(level, 3),
-            yhat_lower=round(max(level - spread, 0.0), 3),
-            yhat_upper=round(level + spread, 3),
-            model_type=MODEL_TYPE, is_heuristic=is_heuristic, snapshot_date=snapshot_date,
+            yhat=round(float(y), 6),
+            yhat_lower=round(max(float(y) - spread, 0.0), 6),
+            yhat_upper=round(float(y) + spread, 6),
+            model_type=model_type, is_heuristic=is_heuristic, snapshot_date=snapshot_date,
         ))
 
 
 def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("---")[0].strip())
+    ap.add_argument("--model", default=DEFAULT_MODEL, choices=sorted(MODELS),
+                    help="forecasting model (default: %(default)s). "
+                         "Use rolling_mean_30 to reproduce the previously "
+                         "published numbers.")
+    args = ap.parse_args()
+    model_type = args.model
+    make_model, model_desc = MODELS[model_type]
+
     con = sqlite3.connect(DB_PATH)
     create_result_tables(con)
 
@@ -328,7 +467,7 @@ def main():
         ["standard", "simplified"], default="minimal",
     )
 
-    model = rolling_mean_fit_predict(WINDOW)
+    model = make_model({"index": idx, "con": con})
     naive = naive_fit_predict()
     snapshot_date = fact["calendar_date"].max().strftime("%Y-%m-%d")
     last_date = idx[-1]
@@ -336,7 +475,7 @@ def main():
     forecast_rows, metric_rows, unscored = [], [], []
     by_product = dict(list(fact.groupby("product_id")))
 
-    print(f"Model: {MODEL_TYPE} (trailing {WINDOW}-day mean, flat over {HORIZON} days)")
+    print(f"Model: {model_type} ({model_desc})")
     print(f"Harness: {VALIDATION_METHOD} | horizon {HORIZON} | folds {MIN_FOLDS}-{MAX_FOLDS} "
           f"| min_train {MIN_TRAIN}  (identical to model_benchmark.py)\n")
 
@@ -348,7 +487,7 @@ def main():
         # ONE fold layout per SKU, handed to both methods, so neither can be
         # advantaged by a different split.
         folds = make_folds(values.size, HORIZON, MIN_FOLDS, MAX_FOLDS, MIN_TRAIN)
-        ev_m = walk_forward_evaluate(pid, values, model, MODEL_TYPE, folds=folds)
+        ev_m = walk_forward_evaluate(pid, values, model, model_type, folds=folds)
         scored = ev_m.sufficient
 
         if scored:
@@ -369,13 +508,18 @@ def main():
             ))
 
         # Production fit: the same callable, on the whole series.
-        level = float(model(values, HORIZON)[0])
+        out = np.asarray(model(values, HORIZON), dtype=float).ravel()
+        # Flat models are stored as their single level; a curve model keeps
+        # all 30 values. `reported` is only what this line prints.
+        level = out if model_type in CURVE_MODELS else float(out[0])
+        reported = float(np.mean(out))
         spread = float(np.std(values, ddof=1)) if values.size > 1 else 0.0
         append_forecast(pid, level, spread, 0 if scored else 1,
-                        last_date, snapshot_date, forecast_rows)
+                        last_date, snapshot_date, model_type, forecast_rows)
 
+        shape = "mean" if model_type in CURVE_MODELS else "flat"
         print(f"[{tier:10}] product_id={pid:4} sale_days={int(row['n_obs']):4} "
-              f"folds={ev_m.n_folds:3} yhat={level:8.3f}  {name}")
+              f"folds={ev_m.n_folds:3} yhat({shape})={reported:8.3f}  {name}")
 
     forecast_df = pd.DataFrame(forecast_rows)
     metrics_df = pd.DataFrame(metric_rows)
