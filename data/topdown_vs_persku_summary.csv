@@ -1,0 +1,8 @@
+arm,method,MAE,RMSE,MASE,WMAPE_pct,bias_pct,n_zero_yhat
+per-SKU,persku_rolling_mean_30,40.0216,89.476,8.8301,74.8247,3.0972,363
+top-down,topdown_RM6_180,41.5185,87.0416,9.1316,77.6235,-0.7535,318
+per-SKU,persku_tsb,42.3729,99.7243,8.7465,79.2209,1.8294,223
+top-down,topdown_rolling_mean_30,42.4303,90.2682,9.2677,79.3282,3.0972,318
+per-SKU,persku_ewma_a0.1,43.1342,104.6023,8.8183,80.6441,8.3943,223
+per-SKU,persku_rolling_mean_180,45.3192,90.2513,9.5704,84.7293,-0.7535,262
+top-down,topdown_tsb,45.9524,103.7326,9.3439,85.9132,2.6732,318

@@ -1,0 +1,102 @@
+batch_label,supplier_name,item_name,raw_item_name,total_quantity,amount_php,item_price_php,source_file,grain
+Total Sales February Batch,,Shirts,Shirts,237.0,85320.0,360.0,2023 total sales by batch (3).xlsx,batch_aggregate
+Total Sales February Batch,,Hoodies,Hoodies,41.0,46125.0,1125.0,2023 total sales by batch (3).xlsx,batch_aggregate
+Total Sales February Batch,,Tote Bag Black (230),Tote Bag Black (230),25.0,5750.0,230.0,2023 total sales by batch (3).xlsx,batch_aggregate
+Total Sales February Batch,,Tote Bag White (200),Tote Bag White (200),25.0,5000.0,200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+Total Sales February Batch,,Golf Umbrella,Golf Umbrella,5.0,2475.0,495.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales MARCH BATCH,NAPOLIZ ENTERPRISES,Shirts,Shirts,245.0,88200.0,360.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales MARCH BATCH,NAPOLIZ ENTERPRISES,Hoodies,Hoodies,53.0,59625.0,1125.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales MARCH BATCH,NAPOLIZ ENTERPRISES,Tote Bag Black (230),Tote Bag Black (230),17.0,3910.0,230.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales MARCH BATCH,NAPOLIZ ENTERPRISES,Tote Bag White (200),Tote Bag White (200),33.0,6600.0,200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales MARCH BATCH,NAPOLIZ ENTERPRISES,Golf Umbrella,Golf Umbrella,3.0,1485.0,495.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales MARCH BATCH,NAPOLIZ ENTERPRISES,GT 350,GT 350,15.0,3000.0,200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales MARCH BATCH,NAPOLIZ ENTERPRISES,VB JERSEY W/O SIG. @1000,VB JERSEY W/O SIG. @1000,17.0,13600.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales MARCH BATCH,NAPOLIZ ENTERPRISES,VB JERSEY W SIG. @1800,VB JERSEY W SIG. @1800,2.0,1600.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales MARCH BATCH,NAPOLIZ ENTERPRISES,VB JERSEY W/O SIG. @2000,VB JERSEY W/O SIG. @2000,0.0,0.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales MARCH BATCH,NAPOLIZ ENTERPRISES,VB JERSEY W SIG. @2800,VB JERSEY W SIG. @2800,0.0,0.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales MARCH BATCH,NAPOLIZ ENTERPRISES,Poloshirt 123456 @860,POLOSHIRT 123456 @860,20.0,12000.0,600.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,NAPOLIZ ENTERPRISES,Shirts,Shirts,524.0,188640.0,360.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,NAPOLIZ ENTERPRISES,Hoodies Breaker,Hoodies BREAKER,56.0,63000.0,1125.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,NAPOLIZ ENTERPRISES,Tote Bag Black (230),Tote Bag Black (230),10.0,2300.0,230.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,NAPOLIZ ENTERPRISES,Tote Bag White (200),Tote Bag White (200),18.0,3600.0,200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,NAPOLIZ ENTERPRISES,Golf Umbrella,Golf Umbrella,2.0,990.0,495.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,JYL ATHLETICA,GT 350,GT 350,32.0,6400.0,200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,JYL ATHLETICA,VB JERSEY W/O SIG. @1000,VB JERSEY W/O SIG. @1000,35.0,28000.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,JYL ATHLETICA,VB JERSEY W SIG. @1800,VB JERSEY W SIG. @1800,0.0,0.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,JYL ATHLETICA,VB JERSEY W/O SIG. @2000,VB JERSEY W/O SIG. @2000,10.0,8000.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,JYL ATHLETICA,VB JERSEY W SIG. @2800,VB JERSEY W SIG. @2800,2.0,1600.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,JYL ATHLETICA,jacket@1650,jacket@1650,15.0,18000.0,1200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,JYL ATHLETICA,Poloshirt 123456 @860,POLOSHIRT 123456 @860,21.0,12600.0,600.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,JUC,UST JUC Y/B,UST JUC Y/B,53.0,14840.0,280.0,2023 total sales by batch (3).xlsx,batch_aggregate
+total sales APRIL BATCH,JUC,TOTE BAG,TOTE BAG,56.0,6720.0,120.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,NAPOLIZ ENTERPRISES,Shirts,Shirts,320.0,115200.0,360.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,NAPOLIZ ENTERPRISES,Hoodies Breaker,Hoodies BREAKER,146.0,164250.0,1125.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,NAPOLIZ ENTERPRISES,Tote Bag Black (230),Tote Bag Black (230),35.0,8050.0,230.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,NAPOLIZ ENTERPRISES,Tote Bag White (200),Tote Bag White (200),42.0,8400.0,200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,NAPOLIZ ENTERPRISES,Golf Umbrella,Golf Umbrella,13.0,6435.0,495.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,JYL ATHLETICA,ADDITIONAL 50 NOT REMITTED MARCH APRIL,ADDITIONAL 50 NOT REMITTED MARCH APRIL,37.0,1850.0,50.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,JYL ATHLETICA,GT 350,GT 350,21.0,4200.0,200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,JYL ATHLETICA,VB JERSEY W/O SIG. @1000,VB JERSEY W/O SIG. @1000,55.0,44000.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,JYL ATHLETICA,jacket@1650,jacket@1650,12.0,14400.0,1200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,JYL ATHLETICA,Poloshirt 123456 @860,POLOSHIRT 123456 @860,35.0,21000.0,600.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,JUC,UST JUC Y/B,UST JUC Y/B,163.0,45640.0,280.0,2023 total sales by batch (3).xlsx,batch_aggregate
+TOTAL SALES MAY BATCH,JUC,TOTE BAG,TOTE BAG,31.0,3720.0,120.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,NAPOLIZ ENTERPRISES,Shirts,Shirts,295.0,106200.0,360.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,NAPOLIZ ENTERPRISES,Hoodies Breaker,Hoodies BREAKER,194.0,218250.0,1125.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,NAPOLIZ ENTERPRISES,Sling Bag 330,Sling Bag 330,80.0,14400.0,180.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,NAPOLIZ ENTERPRISES,Laptop Bag 1450,Laptop Bag 1450,1.0,840.0,840.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,NAPOLIZ ENTERPRISES,Back pack 1750,Back pack 1750,0.0,0.0,1036.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,NAPOLIZ ENTERPRISES,Tote Bag Black (230),Tote Bag Black (230),44.0,10120.0,230.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,NAPOLIZ ENTERPRISES,Tote Bag White (200),Tote Bag White (200),41.0,8200.0,200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,NAPOLIZ ENTERPRISES,Golf Umbrella,Golf Umbrella,114.0,56430.0,495.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,JYL ATHLETICA,GT 350,GT 350,21.0,5250.0,250.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,JYL ATHLETICA,VB JERSEY W/O SIG. @1000,VB JERSEY W/O SIG. @1000,10.0,8000.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,JYL ATHLETICA,VB JERSEY W SIG. @1800,VB JERSEY W SIG. @1800,1.0,800.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,JYL ATHLETICA,VB JERSEY W/O SIG. @2000,VB JERSEY W/O SIG. @2000,8.0,6400.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,JYL ATHLETICA,VB JERSEY W SIG. @2800,VB JERSEY W SIG. @2800,0.0,0.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,JYL ATHLETICA,Jacket,jacket,82.0,98400.0,1200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,JYL ATHLETICA,Poloshirt 123456 @860,POLOSHIRT 123456 @860,22.0,13200.0,600.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,JUC,UST JUC Y/B,UST JUC Y/B,85.0,23800.0,280.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,JUC,TOTE BAG,TOTE BAG,69.0,8280.0,120.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,Lanyard @190,LANYARD @190,51.0,5967.0,117.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,Lanyard @180,LANYARD @180,68.0,7480.0,110.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,LANYARD @175,LANYARD @175,0.0,0.0,110.0,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,Eco Bag @80,ECO BAG @80,700.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,Eco Bag @ 130,ECO BAG @ 130,17.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,Sticker @ 115,STICKER @ 115,120.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,Sticker @20,STICKER @20,173.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,Pen @ 50,PEN @ 50,106.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,Pen @25,PEN @25,159.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,Notebook @220,NOTEBOOK @220,18.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,Mug @170,MUG @170,92.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,Arch @320,ARCH @320,60.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,main,main,1.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+june  batch,TET EN DARS,tote 230,tote 230,9.0,2070.0,230.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,NAPOLIZ ENTERPRISES,Shirts,Shirts,397.0,142920.0,360.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,NAPOLIZ ENTERPRISES,Hoodies Breaker,Hoodies BREAKER,154.0,173250.0,1125.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,NAPOLIZ ENTERPRISES,Sling Bag 330,Sling Bag 330,0.0,0.0,180.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,NAPOLIZ ENTERPRISES,Laptop Bag 1450,Laptop Bag 1450,1.0,840.0,840.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,NAPOLIZ ENTERPRISES,Back pack 1750,Back pack 1750,0.0,0.0,1036.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,NAPOLIZ ENTERPRISES,Tote Bag Black (230),Tote Bag Black (230),1.0,230.0,230.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,NAPOLIZ ENTERPRISES,Tote Bag White (200),Tote Bag White (200),31.0,6200.0,200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,NAPOLIZ ENTERPRISES,Golf Umbrella,Golf Umbrella,7.0,3465.0,495.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,JYL ATHLETICA,GT 350,GT 350,25.0,6250.0,250.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,JYL ATHLETICA,VB JERSEY W/O SIG. @1000,VB JERSEY W/O SIG. @1000,7.0,5600.0,800.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,JYL ATHLETICA,Jacket,jacket,42.0,50400.0,1200.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,JYL ATHLETICA,Poloshirt 123456 @860,POLOSHIRT 123456 @860,24.0,14400.0,600.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,JUC,UST JUC Y/B,UST JUC Y/B,109.0,30520.0,280.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,JUC,TOTE BAG,TOTE BAG,20.0,2400.0,120.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,Lanyard @190,LANYARD @190,142.0,16614.0,117.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,Lanyard @180,LANYARD @180,401.0,44110.0,110.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,LANYARD @175,LANYARD @175,0.0,0.0,110.0,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,Eco Bag @80,ECO BAG @80,5.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,Eco Bag @ 130,ECO BAG @ 130,0.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,Sticker @ 115,STICKER @ 115,23.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,Sticker @20,STICKER @20,49.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,Pen @ 50,PEN @ 50,25.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,Pen @25,PEN @25,0.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,Notebook @220,NOTEBOOK @220,0.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,Mug @170,MUG @170,37.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,Arch @320,ARCH @320,4.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,main,main,2.0,0.0,,2023 total sales by batch (3).xlsx,batch_aggregate
+july-aug,TET EN DARS,tote 230,tote 230,0.0,0.0,230.0,2023 total sales by batch (3).xlsx,batch_aggregate

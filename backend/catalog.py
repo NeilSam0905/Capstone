@@ -90,12 +90,30 @@ def load_current_stock(con, name_by_id):
     return out
 
 
-def compute_stats(con):
-    """product_id -> measured stats dict. Mirrors generate_fixtures.py."""
+def compute_stats(con, date_range=None):
+    """product_id -> measured stats dict. Mirrors generate_fixtures.py.
+
+    `date_range` (one of the topbar's labels) windows the *sales* aggregates —
+    total_units, adus, avg_monthly, cv, first/last sale and the monthly series
+    — to the months that range covers.
+
+    It deliberately does NOT window current_stock or days_of_supply. Those
+    describe the stockroom as it is now, not a slice of history, so re-cutting
+    them per filter would make them wrong. fsn_class is likewise left alone:
+    it is a pipeline output over the full history, not something this request
+    recomputes.
+
+    None (the default) means the full history, so every existing caller —
+    /api/reorder and /api/fsn among them — behaves exactly as before.
+    """
     products = rows(con, "SELECT product_id, item_name FROM Dim_Product")
     name_by_id = {p["product_id"]: p["item_name"] for p in products}
 
-    agg = rows(con, """
+    cutoff = range_cutoff(date_range, months_seen(con))
+    where = "WHERE substr(d.calendar_date, 1, 7) >= ?"
+    args = (cutoff,)
+
+    agg_sql = """
         SELECT f.product_id,
                SUM(f.quantity_sold)                                   AS total_units,
                COUNT(DISTINCT f.date_id)                              AS observed_days,
@@ -105,15 +123,30 @@ def compute_stats(con):
                MIN(d.calendar_date)                                   AS first_sale,
                MAX(d.calendar_date)                                   AS last_sale
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        {where}
         GROUP BY f.product_id
-    """)
-
-    monthly = rows(con, """
+    """
+    monthly_sql = """
         SELECT f.product_id, substr(d.calendar_date, 1, 7) AS month,
                SUM(f.quantity_sold) AS units, COUNT(DISTINCT f.date_id) AS tally_days
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        {where}
         GROUP BY 1, 2 ORDER BY 1, 2
-    """)
+    """
+
+    # Two passes when a window is active, and they answer different questions.
+    # The full-history pass decides which products this map covers, and so
+    # which of them carry a stock reading and a days-of-supply. The windowed
+    # pass supplies the sales figures. Holding membership on the full history
+    # is what stops "Last 3 Months" from blanking the stock column for an item
+    # that simply did not sell in those three months.
+    full_agg = rows(con, agg_sql.format(where=""))
+    if cutoff:
+        win_agg = {a["product_id"]: a for a in rows(con, agg_sql.format(where=where), args)}
+        monthly = rows(con, monthly_sql.format(where=where), args)
+    else:
+        win_agg = {a["product_id"]: a for a in full_agg}
+        monthly = rows(con, monthly_sql.format(where=""))
     series = defaultdict(list)
     for m in monthly:
         series[m["product_id"]].append(m)
@@ -136,9 +169,15 @@ def compute_stats(con):
 
     stock = load_current_stock(con, name_by_id)
 
+    # A product outside the window sold nothing in it — which is a real zero,
+    # not missing data, and must not read as "no stats" to compute_catalog.
+    no_sales = {"total_units": 0, "observed_days": 0, "censored_days": 0,
+                "weighted_units": 0, "first_sale": None, "last_sale": None}
+
     stats = {}
-    for a in agg:
-        pid = a["product_id"]
+    for full in full_agg:
+        pid = full["product_id"]
+        a = win_agg.get(pid, no_sales)
         denom = a["observed_days"] - a["censored_days"]
         units_by_month = [m["units"] for m in series[pid]]
         sigma = statistics.pstdev(units_by_month) if len(units_by_month) > 1 else 0.0
@@ -164,15 +203,16 @@ def compute_stats(con):
     return stats, series
 
 
-def compute_catalog(con):
+def compute_catalog(con, date_range=None):
     """Dim_Product joined to its measured stats — mirrors dataService.js's
-    CATALOG constant."""
+    CATALOG constant. `date_range` is passed straight to compute_stats; see
+    there for exactly which fields it windows and which it leaves alone."""
     products = rows(con, """
         SELECT product_id, item_name, category, unit_price_php, supplier_name,
                payment_status, lead_time_days, fsn_class, is_hvl, entry_date, is_active
         FROM Dim_Product ORDER BY item_name
     """)
-    stats, _series = compute_stats(con)
+    stats, _series = compute_stats(con, date_range)
 
     catalog = []
     for p in products:
@@ -213,12 +253,35 @@ def months_seen(con):
     """)})
 
 
+RANGE_MONTHS = {"This Month": 1, "Last 3 Months": 3,
+                "Last 6 Months": 6, "Last 12 Months": 12}
+ALL_TIME = "All Time"
+
+
+def range_cutoff(date_range, months, default_n=None):
+    """First month ('YYYY-MM') the range admits, or None meaning "no window".
+
+    Counted in months that actually carry sales rather than calendar months,
+    so "Last 3 Months" means the last three months with data in them, and
+    "This Month" means the most recent month that has any. That is what makes
+    the shortest range useful: the calendar month you are standing in is
+    routinely still empty, and a range that renders an empty dashboard is a
+    range nobody picks twice.
+    """
+    if date_range == ALL_TIME or not months:
+        return None
+    n = RANGE_MONTHS.get(date_range, default_n)
+    if n is None:
+        return None
+    return months[max(0, len(months) - n)]
+
+
 def in_range(month, date_range, months):
-    if date_range == "All Time" or not months:
-        return True
-    n = {"Last 3 Months": 3, "Last 6 Months": 6, "Last 12 Months": 12}.get(date_range, 12)
-    cutoff_idx = max(0, len(months) - n)
-    return month >= months[cutoff_idx]
+    # default_n=12 preserves /api/sales/monthly's long-standing behaviour for a
+    # missing or unrecognised range. range_cutoff's own default is "no window",
+    # which is what the catalog needs so an un-filtered call stays full-history.
+    cutoff = range_cutoff(date_range, months, default_n=12)
+    return cutoff is None or month >= cutoff
 
 
 def quantile(sorted_vals, q):

@@ -85,9 +85,11 @@ TAIL_LINES = 40
 # minutes. Everything in the pipeline finishes in seconds to ~2 minutes.
 DEFAULT_TIMEOUT_S = 15 * 60
 # step4 used to need a budget measured in hours, because it fit a Prophet
-# model per Fast SKU with mcmc_samples=1000. It is now a rolling mean over
-# the same series - no sampler, no per-SKU refit cost - so the default
-# backstop is already orders of magnitude more than it needs.
+# model per Fast SKU with mcmc_samples=1000. It is a rolling mean over the
+# same series again - no sampler, no per-SKU refit cost - so the default
+# backstop is orders of magnitude more than it needs. Prophet is still
+# selectable (--model prophet) and takes ~5 minutes at MAP estimation; that
+# also fits, but anything that turns the sampler back on would not.
 
 # (id, script relative to repo root, label, optional, timeout seconds, rough runtime)
 STEPS = [
@@ -98,6 +100,15 @@ STEPS = [
     ("allocation", "scripts/proportional_allocation.py", "Allocate price-grouped rows to SKUs", False, DEFAULT_TIMEOUT_S, "~10 s"),
     ("step2", "scripts/step2_load_fact_sales.py", "Load Fact_Sales", False, DEFAULT_TIMEOUT_S, "~30 s"),
     ("step3", "scripts/step3_fsn_classification.py", "Classify Fast / Slow / Non-moving", False, DEFAULT_TIMEOUT_S, "~1 min"),
+    # step1b MUST run after step1. step1_apply_mapping.py opens with
+    # "DELETE FROM Dim_Product" and rebuilds the table from the source CSVs,
+    # which wipes both `forecast_category` and `category` back to the
+    # workbooks' storage groupings (APPAREL / NON-APPAREL). step1b is what
+    # re-derives them, and without it in this list a pipeline run silently
+    # un-categorises the whole catalogue - taking the Demand Forecast screen,
+    # which groups by category, down with it. It sits after step3 because it
+    # also writes the per-category daily series, which reads fsn_class.
+    ("step1b", "scripts/step1b_categorize_products.py", "Assign forecast categories", False, DEFAULT_TIMEOUT_S, "~15 s"),
     ("step4", "scripts/step4_forecast_model.py", "Forecast demand (rolling mean)", True, DEFAULT_TIMEOUT_S, "~10 s"),
     ("step5a", "scripts/step5a_set_lead_times.py", "Set supplier lead times", False, DEFAULT_TIMEOUT_S, "~5 s"),
     ("step5", "scripts/step5_prescriptive.py", "Compute ROP / EOQ / safety stock", False, DEFAULT_TIMEOUT_S, "~10 s"),
