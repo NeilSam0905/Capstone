@@ -1,0 +1,121 @@
+category,sub_group,origin,n_items,actual_30d,pred_30d,tier,fallback,capped
+Shirts & Tops,Fast,2025-07-13,5,1115.0,272.5224597609272,full,0,0
+Shirts & Tops,Slow,2025-07-13,18,272.0,59.76452025673801,full,0,0
+Shirts & Tops,NonMoving,2025-07-13,19,21.0,0.0,none,1,0
+Shirts & Tops,Fast,2025-08-12,5,1539.0,2312.9988164355336,full,0,0
+Shirts & Tops,Slow,2025-08-12,19,390.0,262.40837155604436,full,0,0
+Shirts & Tops,NonMoving,2025-08-12,18,0.0,0.0,none,1,0
+Shirts & Tops,Fast,2025-09-11,5,1583.0,3176.3871131423903,full,0,0
+Shirts & Tops,Slow,2025-09-11,19,367.0,388.03811992093335,full,0,0
+Shirts & Tops,NonMoving,2025-09-11,18,24.0,0.0,none,1,0
+Shirts & Tops,Fast,2025-10-11,5,665.0,1678.4792591434286,full,0,0
+Shirts & Tops,Slow,2025-10-11,20,157.0,363.61105063688063,full,0,0
+Shirts & Tops,NonMoving,2025-10-11,17,2.0,0.0,none,1,0
+Shirts & Tops,Fast,2025-11-10,6,1065.0,1475.7621042436979,full,0,0
+Shirts & Tops,Slow,2025-11-10,20,252.0,339.2897359541441,full,0,0
+Shirts & Tops,NonMoving,2025-11-10,16,10.0,0.0,none,1,0
+Shirts & Tops,Fast,2025-12-10,6,550.0,485.7521195655877,full,0,0
+Shirts & Tops,Slow,2025-12-10,21,176.0,111.92697047677486,full,0,0
+Shirts & Tops,NonMoving,2025-12-10,15,3.0,0.0,none,1,0
+Shirts & Tops,Fast,2026-01-09,6,852.0,1519.4431363706615,full,0,0
+Shirts & Tops,Slow,2026-01-09,23,375.0,389.87076538671084,full,0,0
+Shirts & Tops,NonMoving,2026-01-09,13,47.0,0.0,none,1,0
+Shirts & Tops,Fast,2026-02-08,6,497.0,704.1341472394749,full,0,0
+Shirts & Tops,Slow,2026-02-08,24,172.0,272.16872705113167,full,0,0
+Shirts & Tops,NonMoving,2026-02-08,12,53.0,0.0,none,1,0
+Shirts & Tops,Fast,2026-03-10,7,446.0,971.4336945665531,full,0,0
+Shirts & Tops,Slow,2026-03-10,28,178.0,303.32155876660744,full,0,0
+Shirts & Tops,NonMoving,2026-03-10,7,50.0,0.0,none,1,0
+Shirts & Tops,Fast,2026-04-09,8,334.0,802.0666189980533,full,0,0
+Shirts & Tops,Slow,2026-04-09,29,186.0,259.3296640678534,full,0,0
+Shirts & Tops,NonMoving,2026-04-09,5,33.0,0.0,none,1,0
+Shirts & Tops,Fast,2026-05-09,8,710.0,668.9597260394896,full,0,0
+Shirts & Tops,Slow,2026-05-09,32,476.0,307.0559508409835,full,0,0
+Shirts & Tops,NonMoving,2026-05-09,2,3.0,0.0,none,1,0
+Shirts & Tops,Fast,2026-06-08,9,692.0,930.7317438688572,full,0,0
+Shirts & Tops,Slow,2026-06-08,32,223.0,396.1263750077522,full,0,0
+Shirts & Tops,NonMoving,2026-06-08,1,9.0,0.0,none,1,0
+Lanyards & IDs,Fast,2025-07-13,2,703.0,93.96624696752977,full,0,0
+Lanyards & IDs,Slow,2025-07-13,5,343.0,105.6475756020668,full,0,0
+Lanyards & IDs,NonMoving,2025-07-13,5,0.0,0.0,none,1,0
+Lanyards & IDs,Fast,2025-08-12,2,811.0,1901.613502727713,full,0,0
+Lanyards & IDs,Slow,2025-08-12,5,305.0,359.68259678566505,full,0,0
+Lanyards & IDs,NonMoving,2025-08-12,5,0.0,0.0,none,1,0
+Lanyards & IDs,Fast,2025-09-11,2,531.0,1846.254984563607,full,0,0
+Lanyards & IDs,Slow,2025-09-11,5,420.0,473.82996702609637,full,0,0
+Lanyards & IDs,NonMoving,2025-09-11,5,134.0,0.0,none,1,0
+Lanyards & IDs,Fast,2025-10-11,2,375.0,654.3336438579734,full,0,0
+Lanyards & IDs,Slow,2025-10-11,8,287.0,391.25674659791446,full,0,0
+Lanyards & IDs,NonMoving,2025-10-11,2,7.0,0.0,none,1,0
+Lanyards & IDs,Fast,2025-11-10,3,784.0,1219.7107062174468,full,0,0
+Lanyards & IDs,Slow,2025-11-10,8,395.0,231.2789784276332,full,0,0
+Lanyards & IDs,NonMoving,2025-11-10,1,0.0,0.0,none,1,0
+Lanyards & IDs,Fast,2025-12-10,3,256.0,404.28608050692117,full,0,0
+Lanyards & IDs,Slow,2025-12-10,8,99.0,163.93316158076914,full,0,0
+Lanyards & IDs,NonMoving,2025-12-10,1,0.0,0.0,none,1,0
+Lanyards & IDs,Fast,2026-01-09,3,914.0,595.362392809858,full,0,0
+Lanyards & IDs,Slow,2026-01-09,8,624.0,637.8273078842071,full,0,0
+Lanyards & IDs,NonMoving,2026-01-09,1,0.0,0.0,none,1,0
+Lanyards & IDs,Fast,2026-02-08,3,328.0,307.77702704234,full,0,0
+Lanyards & IDs,Slow,2026-02-08,8,238.0,287.9371323041701,full,0,0
+Lanyards & IDs,NonMoving,2026-02-08,1,0.0,0.0,none,1,0
+Lanyards & IDs,Fast,2026-03-10,3,198.0,722.7251234199804,full,0,0
+Lanyards & IDs,Slow,2026-03-10,8,143.0,350.6513837870864,full,0,0
+Lanyards & IDs,NonMoving,2026-03-10,1,1.0,0.0,none,1,0
+Lanyards & IDs,Fast,2026-04-09,3,180.0,371.65790924823114,full,0,0
+Lanyards & IDs,Slow,2026-04-09,9,161.0,291.00328332323033,full,0,0
+Lanyards & IDs,Fast,2026-05-09,3,444.0,391.20808419425794,full,0,0
+Lanyards & IDs,Slow,2026-05-09,9,179.0,186.82772473562187,full,0,0
+Lanyards & IDs,Fast,2026-06-08,3,700.0,538.177010267576,full,0,0
+Lanyards & IDs,Slow,2026-06-08,9,340.0,256.5199248832734,full,0,0
+Home & Novelty,Fast,2025-09-10,1,5.0,195.3,none,1,0
+Home & Novelty,Slow,2025-09-10,3,8.0,50.4,none,1,0
+Home & Novelty,Fast,2025-10-10,1,3.0,122.4,none,1,0
+Home & Novelty,Slow,2025-10-10,3,1.0,38.25,none,1,0
+Home & Novelty,Fast,2025-11-09,1,2.0,150.33333333333331,none,1,0
+Home & Novelty,Slow,2025-11-09,3,49.0,47.882352941176464,none,1,0
+Home & Novelty,Fast,2025-12-09,1,20.0,94.28571428571429,none,1,0
+Home & Novelty,Slow,2025-12-09,3,10.0,268.39712064037644,reduced,0,0
+Home & Novelty,Fast,2026-01-08,1,4.0,200.66666666666666,none,1,0
+Home & Novelty,Slow,2026-01-08,3,26.0,62.143586261378175,reduced,0,0
+Home & Novelty,Fast,2026-02-07,1,0.0,127.5,none,1,0
+Home & Novelty,Slow,2026-02-07,3,6.0,48.49533820872138,reduced,0,0
+Home & Novelty,Fast,2026-03-09,1,0.0,157.5,none,1,0
+Home & Novelty,Slow,2026-03-09,3,13.0,163.18294918243473,reduced,0,0
+Home & Novelty,Fast,2026-04-08,1,10.0,150.0,none,1,0
+Home & Novelty,Slow,2026-04-08,3,83.0,66.12754370475699,reduced,0,0
+Home & Novelty,Fast,2026-05-08,1,2.0,146.15384615384616,none,1,0
+Home & Novelty,Slow,2026-05-08,3,20.0,249.5727154057774,reduced,0,0
+Home & Novelty,Fast,2026-06-07,1,8.0,158.27233989303593,reduced,0,0
+Home & Novelty,Slow,2026-06-07,3,105.0,123.93333333333334,none,1,0
+Uncategorised,Fast,2025-07-13,2,11.0,97.36666666666667,none,1,0
+Uncategorised,Slow,2025-07-13,8,9.0,52.9,none,1,0
+Uncategorised,NonMoving,2025-07-13,13,8.0,0.0,none,1,0
+Uncategorised,Fast,2025-08-12,3,15.0,85.10000000000001,none,1,0
+Uncategorised,Slow,2025-08-12,10,28.0,55.812281776118816,reduced,0,0
+Uncategorised,NonMoving,2025-08-12,10,13.0,0.0,none,1,0
+Uncategorised,Fast,2025-09-11,4,9.0,109.77600079573241,reduced,0,0
+Uncategorised,Slow,2025-09-11,13,86.0,61.65160288259221,reduced,0,0
+Uncategorised,NonMoving,2025-09-11,6,80.0,0.0,none,1,0
+Uncategorised,Fast,2025-10-11,4,33.0,85.0,none,1,0
+Uncategorised,Slow,2025-10-11,14,39.0,57.92425645150032,reduced,0,0
+Uncategorised,NonMoving,2025-10-11,5,10.0,0.0,none,1,0
+Uncategorised,Fast,2025-11-10,5,80.0,88.15221924136901,reduced,0,0
+Uncategorised,Slow,2025-11-10,16,70.0,145.5417450030364,full,0,0
+Uncategorised,NonMoving,2025-11-10,2,0.0,0.0,none,1,0
+Uncategorised,Fast,2025-12-10,5,45.0,37.89042158926585,reduced,0,0
+Uncategorised,Slow,2025-12-10,16,49.0,36.75529956346514,full,0,0
+Uncategorised,NonMoving,2025-12-10,2,0.0,0.0,none,1,0
+Uncategorised,Fast,2026-01-09,5,71.0,91.22952464943288,reduced,0,0
+Uncategorised,Slow,2026-01-09,16,26.0,73.03361662244424,full,0,0
+Uncategorised,NonMoving,2026-01-09,2,147.0,0.0,none,1,0
+Uncategorised,Fast,2026-02-08,5,88.0,85.37205933894171,reduced,0,0
+Uncategorised,Slow,2026-02-08,18,34.0,68.96258027021366,full,0,0
+Uncategorised,Fast,2026-03-10,5,54.0,127.55793971986596,reduced,0,0
+Uncategorised,Slow,2026-03-10,18,67.0,140.57827380136507,full,0,0
+Uncategorised,Fast,2026-04-09,5,55.0,91.16138849832052,reduced,0,0
+Uncategorised,Slow,2026-04-09,18,71.0,153.74993628820874,full,0,0
+Uncategorised,Fast,2026-05-09,5,52.0,35.398722597429725,reduced,0,0
+Uncategorised,Slow,2026-05-09,18,108.0,99.43706280661404,full,0,0
+Uncategorised,Fast,2026-06-08,5,60.0,75.72950479255073,reduced,0,0
+Uncategorised,Slow,2026-06-08,18,98.0,186.71884089080524,full,0,0
