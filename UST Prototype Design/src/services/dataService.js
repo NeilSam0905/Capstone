@@ -214,6 +214,13 @@ export const getFsnSensitivity = () => get('/fsn/sensitivity');
 export const getForecast = () => get('/forecast');
 export const getForecastMetrics = () => get('/forecast');
 export const getProductForecast = productId => get(`/forecast/${productId}`);
+
+// Category-level forecast: the sum of the per-SKU rows in that category, so
+// the category total on screen always equals the items listed under it.
+// encodeURIComponent because the names carry spaces and '&'
+// ("Shirts & Tops", "Umbrellas & Gear").
+export const getCategoryForecast = category =>
+  get(`/forecast/category/${encodeURIComponent(category)}`);
 export const getReorderAlerts = () => get('/reorder');
 export const getAdvisories = () => get('/advisories');
 

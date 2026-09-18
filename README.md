@@ -159,6 +159,8 @@ The README covers the pipeline and how to run it. Everything else lives in
 | Why an error-based acceptance criterion fails here | `docs/DEGENERATE_FORECAST.md` |
 | Why service level is a frontier, not a threshold | `docs/SERVICE_LEVEL_FRONTIER.md` |
 | Method comparison (10 methods, identical folds) | `docs/FORECAST_METHOD_COMPARISON.md` |
+| Fast-moving benchmark: 29 methods, raw vs cleaned, by category (incl. Prophet and the ML learners) | `docs/FAST_MOVING_BENCHMARK.md` |
+| Category-grain experiment: 27 methods aggregated, and why it does not ship | `docs/FAST_MOVING_BENCHMARK.md` §6.15, `docs/DIVERGENCE_REGISTER.md` #24 |
 | Where every number came from | `docs/DATA_PROVENANCE.md` |
 | Divergences from the manuscript | `docs/DIVERGENCE_REGISTER.md` |
 | The remediation plan and its status | `docs/REMEDIATION_MASTER_v2.md`, `docs/REMEDIATION_WAVE1_STATUS.md` |
@@ -205,7 +207,7 @@ wildly different costs:
 
 | Button | Steps | Time |
 |---|---|---|
-| **Run Pipeline (no forecast)** | everything except step 4 | **~40 s** |
+| **Run Pipeline (Without Forecast)** | everything except step 4 | **~40 s** |
 | **Run Full Pipeline + Forecast** | everything | **~50 s** (step 4 adds ~10 s) |
 
 Step 4 is the only step that can be opted out of (`pipeline.SKIPPABLE`),

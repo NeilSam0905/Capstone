@@ -13,6 +13,11 @@ replacement it named is itself unreachable — see #22); row **16** corrected a 
 ⚠⚠ — the closure flag is sound, the 15-date count was measuring something else); rows **22–23** are
 new.
 
+**2026-09-09 update (category-grain refactor):** rows **24–25** are new. Both come out of one
+question — *is the per-SKU grain itself the constraint?* — and the answer is recorded below under
+"#24 — the grain, measured both ways". Nothing in the production pipeline changed as a result; that
+is the finding, not an omission.
+
 | # | Chapter 3 says | System does | Where to explain |
 |---|---|---|---|
 | 1 ⚠ | Data scope 2023–2026 (§1.4.1, §3.1.1, Table 2) | Sales 2024-05-02 → **2026-07-31** (~~2026-06-30~~); inventory 2024-11-01 → 2026-04-01; 2023 = 6 undated batch aggregates, 1 of 34 labels matching a current SKU | Ch4 data description |
@@ -38,6 +43,8 @@ new.
 | **21** | §3.3.4's error-threshold acceptance criterion | Not merely unreachable on this data — **degenerate**. The optimum of the criterion is a forecast of zero: the MASE-minimising method prices 0 of 266 SKUs | Ch4 results **and** limitations |
 | **22** | §1.2's promised "EOQ-based optimization model ... subject to a cycle service level constraint" (never delivered as a constraint, only as a fixed target) | #21's replacement (service level ≥95%) checked against the data and found ALSO unreachable, for three separable reasons: (a) a defect in the benchmark's own risk-period formula, now fixed — remediation D1; (b) a hard arithmetic ceiling of 0.9490 — 584 folds / 103 SKUs have flat-zero training slices, 5.1% of demand structurally unservable before any model runs; (c) normal quantiles under-size the buffer on an 81%-zero series. The service/holding-cost frontier this produces (`tools/service_frontier.py`) **is** the constrained optimisation §1.2 already promised | Ch4 — **delivers §1.2's own promise** |
 | **23** | Store Closure/Suspension toggle updates `Dim_Date.is_store_closed` directly (§3.1.1) | Writes to a new `Closure_Log` table (mirrors `Event_Log`'s own pattern) and updates `Dim_Date` immediately; `populate_dim_date.py` reads `Closure_Log` back after a rebuild. Remediation D3: a bare `Dim_Date` write did not survive `populate_dim_date.py`'s DELETE+re-INSERT, silently erasing every staff-set closure on the next rebuild. Applies the manuscript's own `Event_Log` durability pattern to closures for the identical reason — found while fixing this, `Event_Log`'s own flag had the same unexercised gap (never noticed because `Event_Log` has stayed empty) and is fixed the same way | Ch4 — interface durability |
+| **24** | Objective 3 and §3.3.2 forecast **per SKU**; the grain is never questioned | A **category** grain was built and measured (`step1b_categorize_products.py`, `benchmark_category_level.py`). At category level pooled WMAPE is 49.3% against 74.8% per SKU. That gain is **arithmetic, not modelling**: RM6 is linear, so the category forecast is bit-identical to summing the per-SKU forecasts the existing pipeline already produces (0.00pp gap, verified). And it does **not** transfer downward either — disaggregating back to SKU by trailing-90d share scores 77.6% against per-SKU's 74.8% (`compare_topdown_vs_persku.py`, identical folds). **Production stays per-SKU, unchanged.** Ch4 should report the category result as evidence about the *data* — signal exists in aggregate, effectively none per item — and never as a model that ships | Ch4 — **the aggregation result**, and limitations |
+| **25** | §2.1.4 positions ARIMA as a principal comparator, and §1.2/§3.3.2 select Prophet | Neither was ever scorable per SKU — §2.1.4's own precondition (a near-continuous series, 50–100 clean observations) is not met by a ~90% zero series. Once aggregated they become viable and were scored: SARIMA(1,1,1)(1,0,1,7) placed **2nd of 27** (WMAPE 53.2%), ARIMA(2,1,2) 4th (54.9%), Prophet 5th (56.8%) — all beaten by a 180-day trailing mean (49.3%). The manuscript's preferred model classes were not wrong so much as **untestable at the grain the manuscript chose** | Ch4 benchmark — completes #9 |
 
 ---
 
@@ -205,3 +212,89 @@ which is not implemented.
 **The demand basis lands in a break.** An annualised *30-day* forecast anchors on 2026-07, inside the
 AY2526 summer term. 79 of 266 SKUs get a positive D at 30 days, against 141 at 90, 163 at 180 and
 208 at 365. Whether to widen the window is a Block 5 decision.
+
+---
+
+## #24 — the grain, measured both ways
+
+`docs/FAST_MOVING_BENCHMARK.md` closes with 37 methods across 10 families landing within 10% of each
+other, and the best MAE (40.02) sitting 2.0% above the arithmetic floor for *any* flat forecast. That
+is not a modelling failure with a modelling fix; it says the per-SKU series carries almost no
+learnable signal. So the remaining lever is the grain itself.
+
+**Step 1 — build the grain.** `scripts/step1b_categorize_products.py` derives
+`Dim_Product.forecast_category` from the item name (11 keyword rules, first match wins). It adds a
+**new column** rather than overwriting `category`, which `step1_apply_mapping.py` writes and
+`step5a_set_lead_times.py` / `step5_prescriptive.py` read — an overwrite would silently retier lead
+times and be reverted on the next ETL pass. 12 categories; 65 of 519 products (12.5%, 2.2% of units)
+fall to `Uncategorised`, of which **1** is Fast.
+
+**Step 2 — score it.** `scripts/benchmark_category_level.py`, 27 methods, same harness as the SKU
+benchmark (H=30, folds 3–12, min_train 60), identical-folds gate passed:
+
+| level | best method | MAE | RMSE | MAPE % | pooled WMAPE % |
+|---|---|---:|---:|---:|---:|
+| category | RM6_6month_180d | 183.42 | 233.86 | 131.2 | **49.30** |
+| category | sarima_weekly | 197.98 | 244.68 | 124.9 | 53.22 |
+| category | prophet_plain | 211.29 | 274.38 | 142.1 | 56.79 |
+| SKU | rolling_mean_30 | 40.02 | 89.48 | undefined on 52% of folds | **74.82** |
+
+MAE is **not** comparable across levels (a category sells more, so its absolute error is larger by
+construction); WMAPE is, and it moves 74.8% → 49.3%. `zero_targets` goes 361 → **0**, so MAPE is
+defined on every fold for the first time in this project.
+
+**Step 3 — check it transfers.** It does not. `scripts/compare_topdown_vs_persku.py` scores both arms
+at SKU level on identical folds (58 Fast SKUs × 12 origins = 696 pairs), allocating the category
+total by trailing-90d share computed strictly before each origin:
+
+| arm | method | MAE | RMSE | WMAPE % | bias % | zero forecasts |
+|---|---|---:|---:|---:|---:|---:|
+| per-SKU | rolling_mean_30 | **40.02** | 89.48 | **74.8** | +3.1 | 363 |
+| top-down | RM6_180 | 41.52 | **87.04** | 77.6 | **−0.8** | 318 |
+| per-SKU | tsb | 42.37 | 99.72 | 79.2 | +1.8 | 223 |
+| top-down | rolling_mean_30 | 42.43 | 90.27 | 79.3 | +3.1 | 318 |
+
+Top-down is 3.7% worse on WMAPE. **Production stays per-SKU.**
+
+**Three qualifications, because the headline understates the picture.**
+
+1. *The gap is not significant.* Paired over the 696 rows, top-down wins 161, loses 217, ties 318
+   (the ties are rows where both arms forecast into a zero actual). Wilcoxon signed-rank **p =
+   0.054** — this is a tie that fell the per-SKU way, not a defeat.
+2. *Top-down is better where it costs most.* On the worst decile of per-SKU errors, top-down averages
+   **178.1 units against 231.1** — 23% better on exactly the misses that cause stockouts. It also
+   carries near-zero pooled bias (−0.8% vs +3.1%) and lower RMSE. A criterion weighted to tail risk
+   rather than mean error would select the other arm.
+3. *The effect is category-dependent, and partly a window effect.* Top-down gains in `Bags` (+6.3pp)
+   and `Lanyards & IDs` (+5.1pp) — large, multi-SKU, concentrated-share categories — and loses badly
+   in `Outerwear` (−18.6pp) and `Uncategorised` (−9.6pp), both of which contain a **single** Fast SKU,
+   where "top-down" is just the same series under a 180-day window instead of 30. Those two rows
+   measure the window, not the grain.
+
+**Step 4 — check the gain is a gain at all. It is not.** A rolling mean is linear, so
+`mean(Σ series) = Σ mean(series)`: the RM6 category forecast is *arithmetically identical* to
+forecasting each Fast SKU with RM6 and adding the results. Scored on identical folds against
+identical actuals, direct and bottom-up agree to the bit — RM6_180 53.33% both ways,
+rolling_mean_30 57.68% both ways, ewma_a0.1 64.13% both ways. The 74.8% → 49.3% improvement is
+therefore **not a better model**; it is the same model scored on a sum rather than on its parts, and
+`step4_forecast_model.py` already produces every number needed to report it. The identity breaks
+only for non-linear methods (`croston` is 29pp better fitted directly, `tsb` 2pp worse), and neither
+beats RM6. **Chapter 4 must not present the category WMAPE as a modelling result** — it is a change
+of denominator, and the honest claim is about the data: this catalogue carries forecastable signal in
+aggregate and effectively none per item.
+
+**A defect this exposed, worth its own note.** The first cut forecast the *all-SKU* category total and
+allocated it only to Fast members — crediting every Fast SKU with its category's Slow and Non-moving
+demand (in `Outerwear`, 89% of the units). The conservation assertion in `step4b_category_forecast.py`
+caught the mirror-image half of it: two categories had a forecast and no Fast member to receive it,
+so 65 units/30d vanished. Fixed by forecasting a Fast-only series
+(`data/category_daily_series_fast.csv`) whenever the allocation targets Fast SKUs — the forecast
+population must match the allocation population.
+
+**Schema note.** Category output lives in `Result_Forecast_Category` and
+`Result_Forecast_Category_SKU`, **not** in `Result_Forecast`. Tagging two grains in one table with a
+`forecast_level` column was tried and reverted: six readers aggregate that table with a bare
+`SUM(yhat)` — `step5_prescriptive.py::load_forecast_totals` and four queries in `backend/app.py` —
+so a second grain silently inflates every reorder point (647 → 2,804 units on the first run).
+Separate tables make that unrepresentable, and also stop `step4_forecast_model.py`'s unconditional
+`DELETE FROM Result_Forecast` from wiping step4b's output on every run.
