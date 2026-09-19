@@ -23,6 +23,10 @@ import { num, FSN_TONE, FSN_LABEL } from '../lib/format';
  *     not an operating one.
  *   - The ADUS, CV% and Stockout columns, for the same reason.
  */
+/* Fast, Slow, Non-Moving — the reading order of the page, used for the item
+   list's default sort. Not alphabetical, which would give F, N, S. */
+const FSN_ORDER = { F: 0, S: 1, N: 2 };
+
 export default function Classification({ filters }) {
   const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
     { key: `classification:products:${filters.supplier}|${filters.category}|${filters.dateRange}` });
@@ -50,7 +54,7 @@ export default function Classification({ filters }) {
   const topSellers = useMemo(() => [...products]
     .filter(p => p.total_units > 0 && (bestBand === 'All' || p.fsn_class === bestBand))
     .sort((a, b) => b.total_units - a.total_units)
-    .slice(0, 15)
+    .slice(0, 10)
     .map(p => ({
       name: p.item_name,
       value: p.total_units,
@@ -64,6 +68,10 @@ export default function Classification({ filters }) {
     () => [...new Set(products.map(p => p.supplier_name))].sort(), [products]);
 
   const needle = q.trim().toLowerCase();
+  // Unsorted, the list opens in catalogue order, which puts no question the
+  // reader has at the top. The default is the order the page argues for: the
+  // groups in the order the three cards above name them, and inside each
+  // group the items that move the most. Any column heading still overrides it.
   const shown = useMemo(() => products.filter(p =>
     (!needle
       || p.item_name.toLowerCase().includes(needle)
@@ -72,6 +80,9 @@ export default function Classification({ filters }) {
     && (fsn === 'All' || p.fsn_class === fsn)
     && (category === ALL_CATEGORIES || p.category === category)
     && (supplier === ALL_SUPPLIERS || p.supplier_name === supplier)
+  ).sort((a, b) =>
+    (FSN_ORDER[a.fsn_class] ?? 9) - (FSN_ORDER[b.fsn_class] ?? 9)
+    || (b.avg_monthly ?? 0) - (a.avg_monthly ?? 0)
   ), [products, needle, fsn, category, supplier]);
 
   const columns = [
@@ -84,7 +95,7 @@ export default function Classification({ filters }) {
       render: v => (v ?? 0).toFixed(1),
     },
     {
-      key: 'fsn_class', label: 'How It Moves', width: '13%',
+      key: 'fsn_class', label: 'Classification', width: '13%',
       render: (v, row) => (
         <span style={{ display: 'inline-flex', gap: 5 }}>
           <span className={`tag tag--${FSN_TONE[v]}`}>{FSN_LABEL[v]}</span>
@@ -112,104 +123,119 @@ export default function Classification({ filters }) {
           onClick={() => setBand('N')} linkLabel="See the Non-Moving items" />
       </div>
 
-      {/* Replaces the two technical notices this page used to carry (the HVL
-          "confidence modifier" note and the "ADUS denominator" one) with the
-          same facts in plain words. Collapsible, open by default: it is the
-          legend for the badges in the table below. Collapsed by default so the
-          page opens on the data; expanding it is one click. */}
-      <details className="card card__pad collapse collapse--card">
-        <summary>
-          <span className="section-h">What These Groups Mean</span>
-        </summary>
-        <div className="explain" style={{ marginTop: 14 }}>
-          <div className="explain__row">
-            <span className="tag tag--ok">Fast</span>
-            <p>Sells regularly. Keep these in stock — running out costs the most sales.</p>
-          </div>
-          <div className="explain__row">
-            <span className="tag tag--warn">Slow</span>
-            <p>Sells now and then. Worth stocking, but in smaller quantities.</p>
-          </div>
-          <div className="explain__row">
-            <span className="tag tag--crit">Non-Moving</span>
-            <p>No sales recorded. Review before ordering more.</p>
-          </div>
-          {hvlCount > 0 && (
-            <div className="explain__row">
-              <span className="tag tag--hvl">Thin history</span>
-              <p>
-                {hvlCount} fast-selling item{hvlCount === 1 ? '' : 's'}{hvlCount === 1 ? ' has' : ' have'} only
-                been counted on a handful of days. {hvlCount === 1 ? 'It sells' : 'They sell'} quickly, but there is
-                less history behind that, so treat the figure as less certain.
-              </p>
-            </div>
-          )}
-        </div>
-        <div className="hint" style={{ marginTop: 12 }}>
-          Days when an item was out of stock are left out of the calculation, so an item is never
-          called slow-moving just because there was nothing on the shelf to sell.
-        </div>
-      </details>
-
-      <div className="card card__pad">
-        <div className="card-h">
-          <span className="section-h">Best Sellers</span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span className="hint">
-              top 15 by units sold{bestBand !== 'All' ? ` · ${FSN_LABEL[bestBand]} only` : ''}
+      {/* Best sellers and the legend for them, side by side. The legend is
+          the key to the badges in both the chart and the table below, so it
+          belongs next to what it explains rather than folded away above it -
+          a reader who does not already know what Fast means is exactly the
+          reader who will not think to open a collapsed panel. */}
+      <div className="grid-2-1">
+        <div className="card card__pad">
+          <div className="card-h">
+            <span className="section-h">Best Sellers</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span className="hint">
+                top 10 by units sold{bestBand !== 'All' ? ` · ${FSN_LABEL[bestBand]} only` : ''}
+              </span>
+              <select className="inline-select" value={bestBand}
+                      onChange={e => setBestBand(e.target.value)}
+                      aria-label="Filter best sellers by group">
+                <option value="All">All Groups</option>
+                <option value="F">{FSN_LABEL.F}</option>
+                <option value="S">{FSN_LABEL.S}</option>
+                <option value="N">{FSN_LABEL.N}</option>
+              </select>
             </span>
-            <select className="inline-select" value={bestBand}
-                    onChange={e => setBestBand(e.target.value)}
-                    aria-label="Filter best sellers by group">
-              <option value="All">All Groups</option>
-              <option value="F">{FSN_LABEL.F}</option>
-              <option value="S">{FSN_LABEL.S}</option>
-              <option value="N">{FSN_LABEL.N}</option>
-            </select>
-          </span>
+          </div>
+          {topSellers.length === 0
+            ? <div className="empty">No {FSN_LABEL[bestBand]?.toLowerCase() ?? ''} product has recorded sales.</div>
+            : <HBars data={topSellers} color="var(--ink)" valueFmt={num} />}
         </div>
-        {topSellers.length === 0
-          ? <div className="empty">No {FSN_LABEL[bestBand]?.toLowerCase() ?? ''} product has recorded sales.</div>
-          : <HBars data={topSellers} color="var(--ink)" valueFmt={num} />}
+
+        {/* Replaces the two technical notices this page used to carry (the HVL
+            "confidence modifier" note and the "ADUS denominator" one) with the
+            same facts in plain words. */}
+        <div className="card card__pad">
+          <div className="card-h">
+            <span className="section-h">FSN Classification Legend</span>
+          </div>
+          <div className="explain">
+            <div className="explain__row">
+              <span className="tag tag--ok">Fast</span>
+              <p>Sells regularly. Keep these in stock — running out costs the most sales.</p>
+            </div>
+            <div className="explain__row">
+              <span className="tag tag--warn">Slow</span>
+              <p>Sells now and then. Worth stocking, but in smaller quantities.</p>
+            </div>
+            <div className="explain__row">
+              <span className="tag tag--crit">Non-Moving</span>
+              <p>No sales recorded. Review before ordering more.</p>
+            </div>
+            {hvlCount > 0 && (
+              <div className="explain__row">
+                <span className="tag tag--hvl">Thin history</span>
+                <p>
+                  {hvlCount} fast-selling item{hvlCount === 1 ? '' : 's'}{hvlCount === 1 ? ' has' : ' have'} only
+                  been counted on a handful of days. {hvlCount === 1 ? 'It sells' : 'They sell'} quickly, but there is
+                  less history behind that, so treat the figure as less certain.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="card card__pad">
         <div className="card-h">
           <span className="section-h">FSN Classification Item List</span>
-          <span className="hint">
-            {filtered
-              ? <>showing {num(shown.length)} of {num(products.length)} products</>
-              : <>{num(products.length)} products</>}
+          {/* A count, as a figure rather than a sentence - it is the one
+              number on this header and it changes with every filter, so it
+              should be readable at a glance from across the card. */}
+          <span className="count-pill">
+            <b>{num(shown.length)}</b>
+            {filtered ? <> of {num(products.length)} products</> : <> products</>}
           </span>
         </div>
 
+        {/* Every control says what it filters. The tray had four unlabelled
+            boxes reading "All Groups / All Categories / All Suppliers", which
+            is three ways of saying "All" and no way of saying of what. */}
         <div className="filter-row">
-          <input
-            type="search"
-            value={q}
-            placeholder="Search Item, Supplier Or Category…"
-            onChange={e => setQ(e.target.value)}
-            aria-label="Search products"
-          />
-          <select value={fsn} onChange={e => setFsn(e.target.value)} aria-label="Filter by how it moves">
-            <option value="All">All Groups</option>
-            <option value="F">{FSN_LABEL.F}</option>
-            <option value="S">{FSN_LABEL.S}</option>
-            <option value="N">{FSN_LABEL.N}</option>
-          </select>
-          <select value={category} onChange={e => setCategory(e.target.value)} aria-label="Filter by category">
-            <option value={ALL_CATEGORIES}>{ALL_CATEGORIES}</option>
-            {categories.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select value={supplier} onChange={e => setSupplier(e.target.value)} aria-label="Filter by supplier">
-            <option value={ALL_SUPPLIERS}>{ALL_SUPPLIERS}</option>
-            {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <div className="filter-field filter-field--grow">
+            <label className="filter-field__label" htmlFor="cl-search">Search</label>
+            <input
+              id="cl-search"
+              type="search"
+              value={q}
+              placeholder="Item, supplier or category…"
+              onChange={e => setQ(e.target.value)}
+            />
+          </div>
+          <div className="filter-field">
+            <label className="filter-field__label" htmlFor="cl-group">Classification</label>
+            <select id="cl-group" value={fsn} onChange={e => setFsn(e.target.value)}>
+              <option value="All">All Groups</option>
+              <option value="F">{FSN_LABEL.F}</option>
+              <option value="S">{FSN_LABEL.S}</option>
+              <option value="N">{FSN_LABEL.N}</option>
+            </select>
+          </div>
+          <div className="filter-field">
+            <label className="filter-field__label" htmlFor="cl-category">Category</label>
+            <select id="cl-category" value={category} onChange={e => setCategory(e.target.value)}>
+              <option value={ALL_CATEGORIES}>{ALL_CATEGORIES}</option>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="filter-field">
+            <label className="filter-field__label" htmlFor="cl-supplier">Supplier</label>
+            <select id="cl-supplier" value={supplier} onChange={e => setSupplier(e.target.value)}>
+              <option value={ALL_SUPPLIERS}>{ALL_SUPPLIERS}</option>
+              {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
         </div>
 
-        <div className="hint" style={{ margin: '2px 0 10px' }}>
-          Click a column heading to sort. <b>Avg / Month</b> is the average number of units sold per month.
-        </div>
 
         {shown.length === 0
           ? <div className="empty">No product matches those filters.</div>
