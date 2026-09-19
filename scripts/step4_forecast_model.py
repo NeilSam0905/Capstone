@@ -2,13 +2,25 @@
 Phase 3 of ETL: demand forecasting for Fast SKUs, scored on 30-day aggregates.
 
 Every Fast SKU is forecast with the SAME model, selected by `--model`.
-The default is `rolling_mean_30` - the trailing 30-day mean. Whichever is
-chosen, it is literally the callable from `forecasting/` that
-`model_benchmark.py` and `scripts/benchmark_fast_raw_vs_clean.py` score
-under the same name, so their findings are findings about THIS model, not
-about a near relative.
+The default is `prophet` - weekly and yearly seasonality with the Dim_Date
+calendar regressors, which unlike the trailing averages produces a forecast
+that VARIES across the 30-day horizon. Whichever is chosen, it is literally
+the callable from `forecasting/` that `model_benchmark.py` and
+`scripts/benchmark_fast_raw_vs_clean.py` score under the same name, so their
+findings are findings about THIS model, not about a near relative.
 
---- Why rolling_mean_30 ---
+--- The default is Prophet; the benchmark still prefers the trailing mean ---
+
+These two facts sit side by side on purpose. `prophet` is the default
+because the forecast screen is to be served by it. The benchmark below is
+the measured result on this catalogue and it favours `rolling_mean_30`;
+switching the default does not change the measurement, and nothing in
+`docs/FAST_MOVING_BENCHMARK.md` or the numbers quoted in the section that
+follows has been edited to agree with the new default. A run under either
+model is reproducible with `--model`, and `Result_Forecast.model_type`
+records which one wrote every row.
+
+--- Why rolling_mean_30 scored best ---
 
 `docs/FAST_MOVING_BENCHMARK.md` scored 37 methods across 10 families on
 the 58 Fast SKUs over identical walk-forward folds - trailing averages,
@@ -38,19 +50,23 @@ It fit Prophet per SKU (logistic growth, five Dim_Date regressors, 25
 changepoints for a "standard" tier, a fixed linear trend for a
 "simplified" tier, MCMC(1000) production fits) and took 1-2 hours behind
 a cmdstan build. Then it briefly used a full-history (expanding) mean.
-Both are gone. Consequences worth stating plainly:
+That Prophet configuration is gone; the `prophet` entry in MODELS is the
+benchmark's own, fitted through `forecasting/prophet_model.py`. What is
+said below about a flat forecast describes the TRAILING-AVERAGE models,
+and is what you get under `--model rolling_mean_30` or `--model tsb`:
 
   - The forecast is a CONSTANT per SKU. No trend, no weekly seasonality,
     no calendar effects: enrollment periods, exam weeks, event days and
-    semestral breaks no longer move the prediction, because a mean has no
-    design matrix to put them in.
-  - Runtime is seconds, and no toolchain is required.
-  - Nothing in the repository imports prophet any more.
+    semestral breaks do not move the prediction, because a mean has no
+    design matrix to put them in. Under `--model prophet` they do.
+  - Runtime is seconds and no toolchain is required - which Prophet, with
+    its cmdstan backend, is not: see requirements/requirements-prophet.txt.
 
 --- The model ---
 
-Both available models emit a flat rate held across the horizon, so the
-row shape is identical and only `level` differs:
+`prophet` emits a per-day yhat with its own interval, straight from the
+fitted model. The two trailing averages emit a flat rate held across the
+horizon, so their row shape is identical and only `level` differs:
 
     tsb              level = p_hat * z_hat, where z_hat is the smoothed
                      demand SIZE (updated on days with a sale) and p_hat
@@ -214,7 +230,12 @@ MODELS = {
 # `prophet` stays in MODELS and is still selectable with --model prophet: it is
 # the comparison the manuscript's sections 2.1.4 and 3.3.2 need, and a measured
 # negative result is worth more than an untested claim.
-DEFAULT_MODEL = "rolling_mean_30"
+# Prophet by request: the Demand Forecast screen is to be served by Prophet,
+# so it is the default here and `--model rolling_mean_30` is now the flag.
+# The measured comparison above is unchanged and still says the trailing mean
+# scores better on this catalogue - that finding is not overturned by this
+# switch, and docs/FAST_MOVING_BENCHMARK.md remains the record of it.
+DEFAULT_MODEL = "prophet"
 
 # Prophet is the only model here whose forecast is not flat. Recorded as a
 # constant so append_forecast and the summary print agree about which
@@ -441,8 +462,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("---")[0].strip())
     ap.add_argument("--model", default=DEFAULT_MODEL, choices=sorted(MODELS),
                     help="forecasting model (default: %(default)s). "
-                         "Use rolling_mean_30 to reproduce the previously "
-                         "published numbers.")
+                         "Use rolling_mean_30 to reproduce the published "
+                         "benchmark numbers.")
     args = ap.parse_args()
     model_type = args.model
     make_model, model_desc = MODELS[model_type]

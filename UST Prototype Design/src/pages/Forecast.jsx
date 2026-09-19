@@ -6,7 +6,7 @@ import {
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
 import { LineChart, ForecastChart } from '../components/charts';
-import { num, shortMonth, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, shortMonth, usDate, modelLabel, FSN_TONE, FSN_LABEL } from '../lib/format';
 import { ALL_SUPPLIERS } from '../services/dataService';
 
 const ALL_ITEMS = '__all__';
@@ -99,37 +99,44 @@ export default function Forecast({ filters }) {
       <div className="card card__pad">
         <div className="card-h" style={{ marginBottom: 0 }}>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <div className="filter" style={{ gap: 10 }}>
-              <select
-                value={activeCategory}
-                onChange={e => { setCategory(e.target.value); setSelectedId(ALL_ITEMS); }}
-                style={{ minWidth: 210 }}
-                aria-label="Select category"
-              >
-                {categories.map(c => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-              <span className="filter__chev">▾</span>
+            <div className="filter-field">
+              <label className="filter-field__label" htmlFor="fc-category">Category</label>
+              <div className="filter">
+                <select
+                  id="fc-category"
+                  value={activeCategory}
+                  onChange={e => { setCategory(e.target.value); setSelectedId(ALL_ITEMS); }}
+                  style={{ minWidth: 210 }}
+                >
+                  {categories.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <span className="filter__chev">▾</span>
+              </div>
             </div>
-            <div className="filter" style={{ gap: 10 }}>
-              <select
-                value={selectedId}
-                onChange={e => setSelectedId(
-                  e.target.value === ALL_ITEMS ? ALL_ITEMS : Number(e.target.value))}
-                style={{ minWidth: 300 }}
-                aria-label="Select item within category"
-              >
-                <option value={ALL_ITEMS}>
-                  All items in {activeCategory} ({itemsInCategory.length})
-                </option>
-                {itemsInCategory.map(p => (
-                  <option key={p.product_id} value={p.product_id}>
-                    {p.item_name}{showSupplier ? ` — ${p.supplier_name}` : ''} ({num(p.total_units)} units)
-                  </option>
-                ))}
-              </select>
-              <span className="filter__chev">▾</span>
+            <div className="filter-field">
+              <label className="filter-field__label" htmlFor="fc-item">Item</label>
+              <div className="filter">
+                <select
+                  id="fc-item"
+                  value={selectedId}
+                  onChange={e => setSelectedId(
+                    e.target.value === ALL_ITEMS ? ALL_ITEMS : Number(e.target.value))}
+                  style={{ minWidth: 300 }}
+                >
+                  {/* Names the scope, not the category: the category select
+                      beside it already says which one, and repeating it made
+                      the option text grow with the longest category name. */}
+                  <option value={ALL_ITEMS}>All Items in Category</option>
+                  {itemsInCategory.map(p => (
+                    <option key={p.product_id} value={p.product_id}>
+                      {p.item_name}{showSupplier ? ` — ${p.supplier_name}` : ''} ({num(p.total_units)} units)
+                    </option>
+                  ))}
+                </select>
+                <span className="filter__chev">▾</span>
+              </div>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -142,15 +149,8 @@ export default function Forecast({ filters }) {
                     Supplier: <b style={{ color: 'var(--text-2)' }}>{product.supplier_name}</b>
                   </span>
                 )}
-                <span className="hint">
-                  ADUS {product.adus.toFixed(3)} · CV {product.cv.toFixed(0)}% · {product.active_tally_dates} tally dates
-                </span>
               </>
-            ) : (
-              <span className="hint">
-                Showing the whole category. Pick an item to narrow the forecast to it.
-              </span>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -203,57 +203,124 @@ function CategoryForecastPanel({ category, forecastMeta, onPickItem }) {
   }
 
   const fd = forecast.data;
+
+  return (
+    <>
+      <div className="card card__pad">
+        <div className="card-h">
+          <span className="section-h">30-Day Demand Forecast — {category}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="tag tag--gold" title={fd.model_type}>{modelLabel(fd.model_type)}</span>
+            <span className="hint">Generated {usDate(fd.snapshot_date)}</span>
+          </div>
+        </div>
+
+        <ForecastChart data={fd.forecast} />
+        <div className="legend" style={{ justifyContent: 'center', marginTop: 10 }}>
+          <span><i style={{ background: 'var(--accent)' }} />Forecast (ŷ)</span>
+          <span><i style={{ background: 'var(--accent)', opacity: 0.15 }} />Confidence band</span>
+        </div>
+      </div>
+
+      <CategoryTotalCard category={category} fd={fd} onPickItem={onPickItem} />
+    </>
+  );
+}
+
+/**
+ * The category total and the items behind it — its own card, because it
+ * answers a different question from the chart above it ("how much do we
+ * expect" rather than "what shape is the month") and was previously a plain
+ * heading and an unstyled table tacked onto the end of the chart card.
+ *
+ * Three things carry the caveat that this is a PARTIAL total, because a
+ * reader who misses it over-orders: the count, a coverage meter, and the
+ * sentence. The meter is the one that works at a glance - a sliver of fill
+ * says "most of this category is not in this number" before any of it is
+ * read.
+ */
+function CategoryTotalCard({ category, fd, onPickItem }) {
   const partial = fd.n_forecast < fd.n_products;
+  const covered = fd.n_products ? fd.n_forecast / fd.n_products : 0;
+
+  // Bars are scaled to the largest contributor, not to the total: at 30 items
+  // every bar would be a stub against the sum, and the column is here to rank
+  // the items against each other.
+  const peak = Math.max(...fd.contributors.map(r => r.yhat_30d || 0), 0) || 1;
 
   return (
     <div className="card card__pad">
       <div className="card-h">
-        <span className="section-h">30-Day Demand Forecast — {category}</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span className="tag tag--gold">{fd.model_type}</span>
-          <span className="hint">Generated {usDate(fd.snapshot_date)}</span>
-        </div>
+        <span className="section-h">Expected Demand — Next 30 Days</span>
+        <span className="hint">{category}</span>
       </div>
 
-      <ForecastChart data={fd.forecast} />
-      <div className="legend" style={{ justifyContent: 'center', marginTop: 10 }}>
-        <span><i style={{ background: 'var(--accent)' }} />Forecast (ŷ)</span>
-        <span><i style={{ background: 'var(--accent)', opacity: 0.15 }} />Confidence band</span>
-      </div>
-
-      <div style={{ marginTop: 14 }}>
-        <div className="card-h">
-          <span className="section-h">
-            Expected next 30 days: {num(Math.round(fd.total_30d))} units
-          </span>
-          <span className="hint">
-            {fd.n_forecast} of {fd.n_products} item{fd.n_products === 1 ? '' : 's'} forecast
-          </span>
+      <div className="ftotal">
+        <div className="ftotal__figure">
+          <div className="ftotal__val">{num(Math.round(fd.total_30d))}</div>
+          <div className="ftotal__unit">units forecast</div>
         </div>
 
-        {partial && (
-          <div className="notice notice--warn" style={{ marginBottom: 10 }}>
-            Only Fast-moving items are forecast. This total covers the{' '}
-            {fd.n_forecast} item{fd.n_forecast === 1 ? '' : 's'} listed below, not all{' '}
-            {fd.n_products} in {category}.
+        <div className="ftotal__coverage">
+          <div className="ftotal__coverage-head">
+            <span className="ftotal__coverage-lbl">Items covered</span>
+            <b>{num(fd.n_forecast)} <span>of</span> {num(fd.n_products)}</b>
           </div>
-        )}
+          <div className="meter" role="img"
+               aria-label={`${fd.n_forecast} of ${fd.n_products} items in ${category} are forecast`}>
+            <div className="meter__fill" style={{ width: `${Math.max(covered * 100, 1.5)}%` }} />
+          </div>
+          <p className="ftotal__note">
+            {partial ? (
+              <>Only Fast-moving items are forecast, so this total covers the{' '}
+                <b>{fd.n_forecast} item{fd.n_forecast === 1 ? '' : 's'}</b> listed below —
+                not all {num(fd.n_products)} in {category}.</>
+            ) : (
+              <>Every item in {category} is forecast, so this total covers the whole category.</>
+            )}
+          </p>
+        </div>
+      </div>
 
-        <table className="table">
+      <div className="tbl__scroll">
+        <table className="tbl" style={{ minWidth: 560 }}>
           <thead>
-            <tr><th>Item</th><th>Supplier</th><th style={{ textAlign: 'right' }}>30-day forecast</th></tr>
+            <tr>
+              <th>Item</th>
+              <th>Supplier</th>
+              <th className="num" colSpan={2}>30-day forecast</th>
+            </tr>
           </thead>
           <tbody>
-            {fd.contributors.map(r => (
-              <tr key={r.product_id}
-                  onClick={() => onPickItem(r.product_id)}
-                  style={{ cursor: 'pointer' }}
-                  title="Show this item on its own">
-                <td>{r.item_name}</td>
-                <td>{r.supplier_name}</td>
-                <td style={{ textAlign: 'right' }}>{num(Math.round(r.yhat_30d))}</td>
-              </tr>
-            ))}
+            {fd.contributors.map(r => {
+              const units = Math.round(r.yhat_30d || 0);
+              return (
+                <tr key={r.product_id}
+                    onClick={() => onPickItem(r.product_id)}
+                    className="is-clickable"
+                    title="Show this item on its own">
+                  <td className="strong">
+                    <span className="cell-trunc" style={{ '--trunc': '320px' }}>{r.item_name}</span>
+                  </td>
+                  <td>{r.supplier_name}</td>
+                  {/* The bar ranks the row against the biggest contributor.
+                      One hue for every row: these are the same kind of thing,
+                      and colour by rank would say they are not. It sits to the
+                      LEFT of the value so the fill grows towards the number it
+                      belongs to, and the right-aligned heading stays over the
+                      column it names. */}
+                  <td style={{ width: 130 }}>
+                    <span className="minibar">
+                      <span className="minibar__fill"
+                            style={{ width: `${(r.yhat_30d || 0) / peak * 100}%` }} />
+                    </span>
+                  </td>
+                  <td className="num" style={{ width: 80 }}>
+                    {units === 0 ? <span className="nodata">0</span> : num(units)}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -273,15 +340,11 @@ function ForecastPanel({ productId, forecastMeta }) {
   if (!forecastMeta?.available || !forecast?.available) {
     return (
       <>
-        {/* Both cards take their explanation from the API's `reason` (see
-            app.py's FORECAST_PENDING_REASON) rather than a string hardcoded
-            here, so the wording is changed in one place. */}
+        {/* The explanation comes from the API's `reason` (see app.py's
+            FORECAST_PENDING_REASON) rather than a string hardcoded here, so
+            the wording is changed in one place. */}
         <Pending
           title="No forecast has been generated for this SKU"
-          reason={forecast?.reason ?? forecastMeta?.reason}
-        />
-        <Pending
-          title="Reliability check pending"
           reason={forecast?.reason ?? forecastMeta?.reason}
         />
       </>
@@ -298,8 +361,8 @@ function ForecastPanel({ productId, forecastMeta }) {
         <div className="card-h">
           <span className="section-h">30-Day Demand Forecast — {fd.item_name}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="tag tag--gold">{fd.model_type}</span>
-            {fd.is_heuristic && <span className="tag tag--warn">Unvalidated</span>}
+            <span className="tag tag--gold" title={fd.model_type}>{modelLabel(fd.model_type)}</span>
+            <ReliabilityTag metrics={fd.metrics} isHeuristic={fd.is_heuristic} />
             <span className="hint">Generated {usDate(fd.snapshot_date)}</span>
           </div>
         </div>
@@ -315,62 +378,56 @@ function ForecastPanel({ productId, forecastMeta }) {
           </div>
         )}
       </div>
-
-      {/* Reliability — plain-language summary, no raw error metrics */}
-      <div className="card card__pad">
-        <div className="card-h">
-          <span className="section-h">How Reliable Is This Forecast?</span>
-        </div>
-        <ReliabilitySummary metrics={fd.metrics} isHeuristic={fd.is_heuristic} />
-      </div>
     </>
   );
 }
 
 /**
- * Translates Result_Forecast_Metrics into one plain-language badge and
- * sentence instead of a raw MAE/RMSE/MAPE table. MAPE is deliberately never
- * shown here: on this dataset it's undefined whenever a period had zero
- * actual sales (the common case) and reads as 100%+ even for a working
- * forecast, so surfacing it to a non-technical reader does more harm than
- * good (see docs/DEGENERATE_FORECAST.md, docs/SPARSE_DEMAND_EXPERIMENTS.md).
+ * Whether the forecast held up when it was checked against real sales, as one
+ * tag beside the model's own.
+ *
+ * This was a card of its own titled "How Reliable Is This Forecast?". A whole
+ * card to say one word pushed the observed-history chart below the fold, so
+ * the verdict now sits next to the model that produced it and the sentence
+ * behind it is the tag's tooltip.
+ *
+ * MAPE is deliberately never shown: on this dataset it is undefined whenever a
+ * period had zero actual sales (the common case) and reads as 100%+ even for a
+ * working forecast, so surfacing it to a non-technical reader does more harm
+ * than good (see docs/DEGENERATE_FORECAST.md, docs/SPARSE_DEMAND_EXPERIMENTS.md).
  */
-function ReliabilitySummary({ metrics, isHeuristic }) {
+function ReliabilityTag({ metrics, isHeuristic }) {
   if (isHeuristic) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span className="tag tag--warn">Not enough history yet</span>
-        <span className="hint">This item hasn&rsquo;t sold long enough to check this forecast against real results.</span>
-      </div>
+      <span className="tag tag--warn"
+            title="This item hasn't sold long enough to check this forecast against real results.">
+        Not enough history
+      </span>
     );
   }
 
   const overall = metrics?.find(m => m.period_scope === 'overall') ?? metrics?.[0];
   if (!overall || overall.mae == null) {
-    return <div className="hint">No accuracy check recorded for this SKU yet.</div>;
+    return (
+      <span className="tag tag--info" title="No accuracy check has been recorded for this item yet.">
+        Not checked
+      </span>
+    );
   }
 
   const reliable = !!overall.beats_naive_mae;
   const typicalOff = Math.round(overall.mae);
+  const checked = `Checked against ${overall.n_obs} past 30-day period${overall.n_obs === 1 ? '' : 's'} of real sales `
+    + `— actual sales were typically about ${typicalOff} unit${typicalOff === 1 ? '' : 's'} away from this forecast.`;
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span className={`tag tag--${reliable ? 'ok' : 'warn'}`}>
-          {reliable ? 'Reliable' : 'Rough estimate'}
-        </span>
-        <span className="hint">
-          {reliable
-            ? 'More accurate than just repeating last month’s number.'
-            : 'No more accurate than repeating last month’s number — use with caution.'}
-        </span>
-      </div>
-      <span className="hint">
-        Checked against {overall.n_obs} past 30-day period{overall.n_obs === 1 ? '' : 's'} of real sales —
-        actual sales were typically about {typicalOff} unit{typicalOff === 1 ? '' : 's'} away from this forecast.
+  return reliable
+    ? <span className="tag tag--ok" title={`More accurate than just repeating last month's number. ${checked}`}>
+        Reliable
       </span>
-    </div>
-  );
+    : <span className="tag tag--warn"
+            title={`No more accurate than repeating last month's number — use with caution. ${checked}`}>
+        Rough estimate
+      </span>;
 }
 
 function HistoryChart({ productId }) {

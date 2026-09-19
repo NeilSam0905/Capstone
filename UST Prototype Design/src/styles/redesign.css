@@ -149,7 +149,20 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
 .topbar__title { font-size: 18px; font-weight: 700; letter-spacing: -.01em; color: var(--text); white-space: nowrap; }
 .topbar > div:first-child { min-width: 0; }
 .topbar__crumb { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-bottom: 2px; }
-.topbar__right { display: flex; align-items: center; gap: 10px; }
+.topbar__right { display: flex; align-items: flex-end; gap: 10px; }
+/* The lone filter glyph has no label above it, so flex-end would drop it to
+   the bottom of the taller field. Nudge it back onto the select's own row. */
+.topbar__filter-icon { color: var(--muted); display: grid; place-items: center; padding-bottom: 9px; }
+
+/* A filter and the word for what it filters. The select alone shows only its
+   value - "All" says nothing about all of what - so every topbar control
+   carries its name above it. */
+.filter-field { display: flex; flex-direction: column; gap: 4px; }
+.filter-field__label {
+  font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink); font-weight: 700; padding-left: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 .filter {
   position: relative; display: flex; align-items: center;
@@ -173,9 +186,13 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
   border-radius: var(--r); box-shadow: var(--shadow);
 }
 .card__pad { padding: var(--pad); }
+/* Card and table titles. These were muted grey at 700 - the same colour as
+   the hints and counts sitting beside them, so nothing in a card header read
+   as its title. Ink and 800 makes the heading the first thing seen and the
+   supporting text second. */
 .section-h {
-  font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase;
-  color: var(--muted); font-weight: 700;
+  font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text); font-weight: 800;
 }
 .section-title { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
 
@@ -335,6 +352,49 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* Notice strip (data-quality callouts) */
 .notice { padding: 11px 14px; border-radius: var(--r-sm); font-size: 12.5px; line-height: 1.5; border: 1px solid; }
 .notice--warn { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-line); }
+
+/* ============ Forecast total: figure, coverage meter, row bars ============
+   The headline number and the share of the category it actually covers, read
+   as one unit. They are deliberately adjacent: the figure is only meaningful
+   next to the count of what it leaves out. */
+.ftotal {
+  display: flex; align-items: center; gap: 28px; flex-wrap: wrap;
+  padding: 4px 0 18px;
+}
+.ftotal__figure { display: flex; align-items: baseline; gap: 8px; flex: 0 0 auto; }
+.ftotal__val {
+  font-size: 40px; font-weight: 800; letter-spacing: -.025em; line-height: 1;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.ftotal__unit { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+
+.ftotal__coverage { flex: 1 1 280px; min-width: 240px; display: flex; flex-direction: column; gap: 7px; }
+.ftotal__coverage-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  font-size: 12px; color: var(--text-2);
+}
+.ftotal__coverage-lbl { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.ftotal__coverage-head b { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+.ftotal__coverage-head b span { color: var(--muted); font-weight: 500; }
+.ftotal__note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.ftotal__note b { color: var(--text-2); font-weight: 700; }
+
+/* Meter: the unfilled track is a lighter step of the fill's own ramp, so the
+   state reads across the whole bar rather than only where it is filled. */
+.meter { height: 8px; border-radius: 999px; background: var(--accent-wash); overflow: hidden; }
+.meter__fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width .2s; }
+
+/* Per-row share bar. Squared at the baseline it grows from, rounded at the
+   data end - the end is where the value is, so that is the end that is shaped. */
+.minibar {
+  display: block; height: 8px; border-radius: 999px;
+  background: var(--line-soft); overflow: hidden;
+}
+.minibar__fill {
+  display: block; height: 100%; background: var(--accent);
+  border-radius: 0 4px 4px 0; min-width: 0;
+}
+.tbl tbody tr.is-clickable { cursor: pointer; }
 .notice--ok   { color: var(--ok);   background: var(--ok-bg);   border-color: var(--ok-line); }
 /* Was missing, so `notice--crit` fell through to the bare .notice rule - which
    declares `border: 1px solid` with no colour and no background, leaving the
@@ -413,7 +473,7 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .topbar__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar__crumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar__right { flex: 0 1 auto; flex-wrap: nowrap; justify-content: flex-end; min-width: 0; }
-.topbar__right .filter { min-width: 0; }
+.topbar__right .filter-field { min-width: 0; }
 .topbar__right .filter select { min-width: 0; width: 100%; }
 
 /* Truncating cell — long supplier names must not push later columns out of
@@ -468,7 +528,7 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
   .form-grid { grid-template-columns: 1fr; }
   .filter select { min-width: 0; }
   .topbar__right { gap: 8px; }
-  .topbar__right .filter { flex: 1 1 130px; }
+  .topbar__right .filter-field { flex: 1 1 130px; }
   .topbar__right .filter select { width: 100%; }
 }
 @media (max-width: 720px) {
@@ -495,11 +555,11 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 /* Topbar: filters take their own full-width row before they get squeezed */
 @media (max-width: 1180px) {
   .topbar__right { flex: 1 1 100%; justify-content: flex-start; }
-  .topbar__right .filter { flex: 1 1 0; }
+  .topbar__right .filter-field { flex: 1 1 0; }
 }
 @media (max-width: 560px) {
   .topbar__right { flex-wrap: wrap; }
-  .topbar__right .filter { flex: 1 1 140px; }
+  .topbar__right .filter-field { flex: 1 1 140px; }
 }
 
 /* Batch report: each supplier's item table scrolls past 10 rows rather than
@@ -512,6 +572,30 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
   overflow-y: auto;
 }
 .report-items thead th { position: sticky; top: 0; z-index: 1; }
+.report-items thead th { background: var(--card); }
+.report-items tbody tr:hover { background: var(--bg); }
+.report-items tbody td { border-bottom-color: var(--line-soft); }
+
+/* Total to Order: the one highlighted thing on an otherwise plain table.
+   A tinted strip with a gold rule on top, not a solid gold bar - it reads as
+   the table's conclusion rather than as a second header competing with the
+   card's own. */
+.order-total {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-top: 12px;
+  padding: 12px 14px; border-radius: var(--r-sm);
+  background: var(--gold-wash); border: 1px solid var(--gold-line);
+}
+.order-total__label {
+  font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text); font-weight: 800;
+}
+.order-total__note { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--muted); }
+.order-total__val {
+  margin-left: auto; text-align: right;
+  font-size: 17px; font-weight: 800; color: var(--gold-deep);
+  font-variant-numeric: tabular-nums;
+}
 .report-items::-webkit-scrollbar { width: 9px; }
 .report-items::-webkit-scrollbar-thumb { background: #D8D4C9; border-radius: 6px; border: 2px solid var(--card); }
 
@@ -676,7 +760,7 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
    selects and the checkbox keep their natural width and wrap under it. */
 .modal-filters,
 .filter-row {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap;
   margin-bottom: 12px;
   /* A tinted tray rather than controls floating on the card: it groups the
      search and the selects into one object, and gives the white inputs
@@ -746,6 +830,25 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 }
 .modal-filters select,
 .filter-row select { min-width: 132px; }
+
+/* Labelled controls inside the filter tray. The wrapper carries the sizing
+   the bare control used to; the control fills it, so a label above a select
+   never leaves the two different widths. */
+.filter-row .filter-field { gap: 3px; min-width: 0; }
+.filter-row .filter-field > label { padding-left: 1px; }
+.filter-row .filter-field > input,
+.filter-row .filter-field > select { width: 100%; }
+.filter-row .filter-field--grow { flex: 1 1 220px; min-width: 170px; }
+.filter-row .filter-field > input[type="search"] { flex: none; min-width: 0; }
+
+/* Filtered count in a card header: a figure, not a sentence. */
+.count-pill {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  font-size: 11.5px; color: var(--muted);
+  background: var(--bg); border: 1px solid var(--line-soft);
+  border-radius: 999px; padding: 4px 11px;
+}
+.count-pill b { font-size: 13px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
 /* WebKit's own clear button ignores the font stack and sits badly next to a
    38px control; the value is clearable from the keyboard either way. */
 .modal-filters input[type="search"]::-webkit-search-cancel-button,
@@ -790,6 +893,19 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .donut__centre-val { font-size: 19px; font-weight: 800; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .donut__centre-lbl { font-size: 10px; color: var(--muted); font-weight: 600; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; }
 
+/* Legend. The cap is the height of the ring beside it, so a catalogue with
+   twelve categories makes the legend scroll rather than make the card - and
+   with it the chart sharing its grid row - grow to fit every last one. */
+.donut__legend {
+  display: flex; flex-direction: column; gap: 9px;
+  flex: 1 1 130px; min-width: 130px;
+  max-height: 208px; overflow-y: auto; overscroll-behavior: contain;
+  padding-right: 6px;
+}
+.donut__legend::-webkit-scrollbar { width: 7px; }
+.donut__legend::-webkit-scrollbar-thumb { background: #D8D4C9; border-radius: 6px; }
+.donut__legend::-webkit-scrollbar-track { background: transparent; }
+
 /* ------------------------------------------------------ clickable cards */
 /* A KPI tile or card that navigates. Buttons reset to card styling, then get
    the affordance: pointer, lift on hover, and a focus ring for keyboard use. */
@@ -809,6 +925,27 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .kpi__link {
   margin-top: 10px; font-size: 11px; font-weight: 700; color: var(--accent-deep);
   display: inline-flex; align-items: center; gap: 5px;
+}
+
+/* ---- Reorder priority list: rank badge ---- */
+/* Rank badges are a reading aid, not a highlight: the list is already in
+   urgency order, so the numbers only need to be legible. They were briefly
+   gold-filled for the top three, which put a row of bright chips down a card
+   that already carries a dark header and a gold total bar - three competing
+   loud elements in one card is one too many. Neutral, with weight alone
+   separating the first three. */
+.rank {
+  display: inline-grid; place-items: center; min-width: 22px; height: 22px;
+  padding: 0 6px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--muted); background: var(--bg); border: 1px solid var(--line);
+}
+.rank.is-top { color: var(--text); font-weight: 800; border-color: #D9D4C7; }
+
+/* The number to act on. Weight and ink, no fill: a tinted cell in every row
+   reads as a stripe down the table rather than as emphasis. */
+.tbl tbody td.report-order {
+  color: var(--text); font-weight: 800; font-variant-numeric: tabular-nums;
 }
 
 /* A whole card that collapses. .collapse was written for a section INSIDE a
@@ -911,8 +1048,9 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .explain__row { display: flex; align-items: flex-start; gap: 11px; }
 .explain__row > .tag { flex-shrink: 0; margin-top: 1px; min-width: 78px; justify-content: center; }
 .explain__row p {
-  margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--text-2);
+  margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--text-2);
 }
+.explain__row > .tag { font-size: 10.5px; }
 
 /* ------------------------------------------------------------ FSN bands */
 /* The call-to-action line is always in the DOM at full height and only fades
