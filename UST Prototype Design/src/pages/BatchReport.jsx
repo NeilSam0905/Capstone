@@ -200,7 +200,12 @@ export default function BatchReport({ filters, month, setMonth }) {
             <div className="card-h" style={{ marginBottom: 0, alignItems: 'flex-start' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <div className="hint" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                  <Icon name="file" size={12} /> Source: {meta?.source ?? 'ustore.db'} (live API)
+                  {/* The API reports its source as "ustore.db (live)", and this
+                      line used to append "(live API)" to it - so the footer read
+                      "ustore.db (live) (live API)". The file is what a reader
+                      needs; the parenthetical is stripped rather than the API
+                      changed, since the value is the API's to report. */}
+                  <Icon name="file" size={12} /> Source: {(meta?.source ?? 'ustore.db').replace(/\s*\(.*\)\s*$/, '')}
                 </div>
                 <div className="hint">Period: {selected ? longMonth(selected) : '—'}</div>
                 <div className="hint">Prepared for: UST Purchasing Office / Finance Department</div>

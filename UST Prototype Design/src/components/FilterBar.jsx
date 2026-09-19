@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { getSuppliers, getCategories } from '../services/dataService';
 import useData from '../hooks/useData';
 import Icon from './Icon';
@@ -33,17 +34,20 @@ export default function FilterBar({
       </div>
       {show.length > 0 && (
         <div className="topbar__right">
-          <span style={{ color: 'var(--muted)', display: 'grid', placeItems: 'center' }}>
+          <span className="topbar__filter-icon">
             <Icon name="filter" size={15} />
           </span>
           {show.includes('dateRange') && (
-            <Filter icon="cal" value={filters.dateRange} onChange={v => update('dateRange', v)} options={DATE_RANGES} />
+            <Filter label="Date Range" icon="cal" value={filters.dateRange}
+                    onChange={v => update('dateRange', v)} options={DATE_RANGES} />
           )}
           {show.includes('supplier') && (
-            <Filter value={filters.supplier} onChange={v => update('supplier', v)} options={suppliers} />
+            <Filter label="Supplier" value={filters.supplier}
+                    onChange={v => update('supplier', v)} options={suppliers} />
           )}
           {show.includes('category') && (
-            <Filter value={filters.category} onChange={v => update('category', v)} options={categories} />
+            <Filter label="Category" value={filters.category}
+                    onChange={v => update('category', v)} options={categories} />
           )}
         </div>
       )}
@@ -51,27 +55,37 @@ export default function FilterBar({
   );
 }
 
-function Filter({ value, onChange, options, icon }) {
+/* The label sits above the control rather than inside it as a placeholder:
+   a select shows its selected value, so "All" on its own never says all of
+   WHAT. The <label> is bound to the select by id, so it is also what a
+   screen reader announces. */
+function Filter({ value, onChange, options, icon, label }) {
+  const id = useId();
+
   // A selected value the list does not carry — a supplier held over from a
   // page with a wider list, or a list that has not loaded yet — would leave
   // the select displaying something other than the filter actually in force.
   const opts = value != null && !options.includes(value) ? [value, ...options] : options;
 
   return (
-    <div className="filter">
-      {icon && (
-        <span style={{ position: 'absolute', left: 10, color: 'var(--muted)', pointerEvents: 'none' }}>
-          <Icon name={icon} size={13} />
-        </span>
-      )}
-      <select
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        style={icon ? { paddingLeft: 30 } : undefined}
-      >
-        {opts.map(o => <option key={o} value={o}>{o}</option>)}
-      </select>
-      <span className="filter__chev">▾</span>
+    <div className="filter-field">
+      <label className="filter-field__label" htmlFor={id}>{label}</label>
+      <div className="filter">
+        {icon && (
+          <span style={{ position: 'absolute', left: 10, color: 'var(--muted)', pointerEvents: 'none' }}>
+            <Icon name={icon} size={13} />
+          </span>
+        )}
+        <select
+          id={id}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          style={icon ? { paddingLeft: 30 } : undefined}
+        >
+          {opts.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <span className="filter__chev">▾</span>
+      </div>
     </div>
   );
 }

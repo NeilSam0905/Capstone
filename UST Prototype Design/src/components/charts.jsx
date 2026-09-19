@@ -223,7 +223,10 @@ export function Donut({ data, size = 180 }) {
           <div className="donut__centre-lbl">{active ? active.name : 'total units'}</div>
         </div>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 9, minWidth: 130 }}>
+      {/* Capped and scrolled past the handful of categories that fit beside
+          the ring. A legend free to grow set the height of the whole grid
+          row, which left the chart next to it padded out with empty card. */}
+      <div className="donut__legend">
         {arcs.map((a, i) => (
           <div
             key={i}
@@ -234,7 +237,7 @@ export function Donut({ data, size = 180 }) {
               cursor: 'pointer', borderRadius: 4,
               background: hover === i ? 'var(--bg)' : 'transparent',
               opacity: hover == null || hover === i ? 1 : 0.5,
-              padding: '2px 4px', margin: '-2px -4px',
+              padding: '2px 4px',
               transition: 'opacity .12s, background .12s',
             }}
           >

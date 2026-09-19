@@ -48,3 +48,18 @@ export const usDateTime = d => {
 /** FSN presentation: tone maps onto the design system's status colours. */
 export const FSN_TONE = { F: 'ok', S: 'warn', N: 'crit' };
 export const FSN_LABEL = { F: 'Fast', S: 'Slow', N: 'Non-Moving' };
+
+
+/** Model provenance, as a reader's label.
+ *
+ *  The tag on the Forecast page shows Result_Forecast.model_type, which is a
+ *  pipeline identifier ("rolling_mean_30"), not a name. Unknown ids pass
+ *  through unchanged rather than being hidden - an unrecognised model is
+ *  exactly the thing a reader should still see. */
+const MODEL_LABEL = {
+  prophet: 'Prophet',
+  rolling_mean_30: '30-day average',
+  'ewma_a0.1': 'Weighted average',
+  tsb: 'TSB (intermittent)',
+};
+export const modelLabel = m => MODEL_LABEL[m] ?? m ?? '';
