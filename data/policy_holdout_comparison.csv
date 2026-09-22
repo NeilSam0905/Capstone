@@ -1,0 +1,6 @@
+scope,n_skus,n_blocks,demand,fill_rate,units_short,units_held,served_per_held
+TIERED (per-tier q),215,1078,11538.0,0.6851,3633.2,14750.7,0.536
+flat q=0.80 (pre-tiering),215,1078,11538.0,0.6188,4398.6,15122.2,0.472
+flat q=0.95,215,1078,11538.0,0.798,2330.7,32056.9,0.287
+normal z*sigma (retired),215,1078,11538.0,0.6022,4589.9,21029.2,0.33
+naive stocking (no model),215,1078,11538.0,0.4264,6618.0,3249.0,1.514

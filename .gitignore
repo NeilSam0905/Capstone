@@ -22,3 +22,7 @@ Copy of USTORE INVENTORY REPORT (1).xlsx
 # volumes) and deliberately not committed. step0 reads them locally; every step
 # after it reads only data/*.csv, which IS committed.
 rawdata/
+
+# assistant/editor scratch config - not project source
+CLAUDE.md
+.claude/

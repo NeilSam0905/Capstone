@@ -158,8 +158,52 @@ def empty_prescriptive_db(tmp_path):
             annual_demand REAL, sigma_demand REAL, sigma_source TEXT,
             z_value REAL, safety_stock REAL, reorder_point REAL, eoq REAL,
             cost_at_eoq REAL, cost_at_half_eoq REAL, cost_at_double_eoq REAL,
-            demand_method TEXT, is_provisional INTEGER, generated_at TEXT);
+            demand_method TEXT, is_provisional INTEGER, generated_at TEXT,
+            ordering_cost_scenario TEXT, ordering_cost_php REAL,
+            rate_source TEXT, buffer_quantile REAL, buffer_source TEXT,
+            safety_stock_normal_legacy REAL);
     """)
+    con.commit()
+    return con
+
+
+@pytest.fixture
+def all_flagged_prescriptive_db(tmp_path):
+    """A POPULATED Result_Prescriptive in which every SKU resolved to
+    `insufficient_data` - the degenerate state the non-degeneracy gate
+    exists to catch.
+
+    This is the shape of the failure that has no error-metric signature at
+    all: nothing is wrong, nothing is inconsistent, every legacy gate is
+    satisfied, and the system prices zero SKUs. `rolling_median_30` is the
+    same failure wearing a forecast's clothes - it wins MASE and prices 0 of
+    266 - and before the contract there was no check anywhere that would
+    have noticed.
+    """
+    db = tmp_path / "all_flagged.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE Dim_Product (product_id INTEGER PRIMARY KEY, fsn_class TEXT);
+        CREATE TABLE Dim_Parameters (parameter_id INTEGER PRIMARY KEY,
+                                     parameter_name TEXT, value REAL, unit TEXT,
+                                     last_updated TEXT);
+        CREATE TABLE Result_Prescriptive (
+            result_id INTEGER PRIMARY KEY, product_id INTEGER, fsn_class TEXT,
+            lead_time_days INTEGER, cost_ratio REAL, avg_daily_demand REAL,
+            annual_demand REAL, sigma_demand REAL, sigma_source TEXT,
+            z_value REAL, safety_stock REAL, reorder_point REAL, eoq REAL,
+            cost_at_eoq REAL, cost_at_half_eoq REAL, cost_at_double_eoq REAL,
+            demand_method TEXT, is_provisional INTEGER, generated_at TEXT,
+            ordering_cost_scenario TEXT, ordering_cost_php REAL,
+            rate_source TEXT, service_tier TEXT, buffer_quantile REAL,
+            buffer_source TEXT, safety_stock_normal_legacy REAL);
+    """)
+    con.executemany(
+        "INSERT INTO Result_Prescriptive (product_id, fsn_class, lead_time_days, "
+        "is_provisional, ordering_cost_scenario, ordering_cost_php, rate_source) "
+        "VALUES (?,?,?,?,?,?,?)",
+        [(i, "F" if i % 2 else "S", 18, 1, "not_priced", 0.0, "insufficient_data")
+         for i in range(1, 21)])
     con.commit()
     return con
 
@@ -207,6 +251,107 @@ def test_step5_gates_pass_on_the_real_database():
         pytest.skip("step5_prescriptive.py has not been run")
     assert step5_prescriptive.run_gates(con) == 0
     con.close()
+
+
+def test_the_non_degeneracy_gate_fails_when_nothing_is_priced(all_flagged_prescriptive_db):
+    """The gate that had no version before the contract.
+
+    Every legacy gate passes against this database - there are no N-class
+    rows, no wrong Z values, no EOQ ordering violations, nothing marked
+    non-provisional - because all of those are existence-negations and this
+    table contains no priced row to violate them. The table is NOT empty, so
+    the non-emptiness guard does not catch it either. Only a gate that
+    asserts a POSITIVE share of usable output can see this, which is exactly
+    the hole `rolling_median_30` walked through: best MASE in the benchmark,
+    0 of 266 SKUs priced.
+    """
+    import step5_prescriptive
+    con = all_flagged_prescriptive_db
+
+    # first, the shape of the trap: the table is populated, so "is non-empty"
+    # is satisfied and every existence-negation below passes vacuously
+    assert con.execute("SELECT COUNT(*) FROM Result_Prescriptive").fetchone()[0] == 20
+    for sql in (
+        "SELECT COUNT(*) FROM Result_Prescriptive WHERE fsn_class NOT IN ('F','S')",
+        "SELECT COUNT(*) FROM Result_Prescriptive WHERE cost_at_eoq >= cost_at_half_eoq",
+        "SELECT COUNT(*) FROM Result_Prescriptive WHERE is_provisional != 1",
+        "SELECT COUNT(*) FROM Result_Prescriptive WHERE reorder_point < safety_stock",
+    ):
+        assert con.execute(sql).fetchone()[0] == 0, "expected a vacuous pass here"
+
+    # ...and the gate function still refuses it
+    assert step5_prescriptive.run_gates(con) == 1, (
+        "run_gates passed a database that prices nothing - the non-degeneracy "
+        "gate is not gating")
+
+
+def test_the_non_degeneracy_gate_is_not_trivially_unsatisfiable(all_flagged_prescriptive_db):
+    """The complement, so the test above proves something about the gate's
+    AIM and not merely that it rejects everything: flip the same rows to a
+    priced state and the share gate must be satisfied."""
+    import step5_prescriptive
+    con = all_flagged_prescriptive_db
+    con.execute(
+        "UPDATE Result_Prescriptive SET rate_source='observed', "
+        "ordering_cost_scenario='low_admin_cost', ordering_cost_php=1250.0, "
+        "avg_daily_demand=1.0, annual_demand=365.0, reorder_point=20.0, "
+        "safety_stock=2.0, buffer_source='empirical_quantile', buffer_quantile=0.8")
+    con.commit()
+
+    n_skus = con.execute(
+        "SELECT COUNT(DISTINCT product_id) FROM Result_Prescriptive").fetchone()[0]
+    n_priced = con.execute(
+        "SELECT COUNT(DISTINCT product_id) FROM Result_Prescriptive "
+        "WHERE rate_source IS NOT 'insufficient_data'").fetchone()[0]
+    assert n_priced / n_skus >= step5_prescriptive.MIN_PRICED_SHARE
+
+
+def test_the_tier_gate_catches_a_not_stockable_row_holding_stock(all_flagged_prescriptive_db):
+    """A made-to-order SKU that still carries safety stock makes the tier
+    decorative.
+
+    The whole claim of the tiering is that stock stops being spent where it
+    does not convert. If a `not_stockable` row can still hold a buffer, the
+    tier is a label on the screen and nothing more - and every other gate
+    would pass, because holding stock is not otherwise an error.
+    """
+    import step5_prescriptive
+    con = all_flagged_prescriptive_db
+    con.execute(
+        "UPDATE Result_Prescriptive SET rate_source='observed', service_tier=?, "
+        "ordering_cost_scenario='low_admin_cost', ordering_cost_php=1250.0, "
+        "avg_daily_demand=1.0, annual_demand=365.0, reorder_point=20.0, "
+        "safety_stock=9.0, buffer_source='empirical_quantile', buffer_quantile=0.8",
+        (step5_prescriptive.NOT_STOCKABLE,))
+    con.commit()
+
+    # every legacy gate is satisfied - holding stock is not an error anywhere else
+    for sql in (
+        "SELECT COUNT(*) FROM Result_Prescriptive WHERE fsn_class NOT IN ('F','S')",
+        "SELECT COUNT(*) FROM Result_Prescriptive WHERE reorder_point < safety_stock",
+        "SELECT COUNT(*) FROM Result_Prescriptive WHERE is_provisional != 1",
+    ):
+        assert con.execute(sql).fetchone()[0] == 0, "expected a vacuous pass here"
+
+    assert step5_prescriptive.run_gates(con) == 1, (
+        "run_gates accepted a not_stockable row holding safety stock - the tier "
+        "is not gating anything")
+
+
+def test_the_tier_gate_passes_when_no_stock_is_committed(all_flagged_prescriptive_db):
+    """The complement, so the test above proves something about the gate's AIM
+    rather than that it rejects everything: the same rows with the buffer
+    actually dropped must satisfy it."""
+    import step5_prescriptive
+    con = all_flagged_prescriptive_db
+    con.execute(
+        "UPDATE Result_Prescriptive SET rate_source='observed', service_tier=?, "
+        "safety_stock=0.0, reorder_point=20.0",
+        (step5_prescriptive.NOT_STOCKABLE,))
+    con.commit()
+    assert con.execute(
+        "SELECT COUNT(*) FROM Result_Prescriptive WHERE service_tier = ? "
+        "AND safety_stock > 1e-9", (step5_prescriptive.NOT_STOCKABLE,)).fetchone()[0] == 0
 
 
 # ---- the invariant contract -----------------------------------------

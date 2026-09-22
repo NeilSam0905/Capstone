@@ -341,6 +341,30 @@ def get_fsn_sensitivity():
 # so "enough to last until the next count" means the same thing in both places.
 REVIEW_PERIOD_DAYS = 30
 
+# The forecast -> prescriptive contract's rate states and service tiers, as the
+# API sees them. Only the exceptional ones need names here: the screen has to
+# render "we do not know" and "deliberately not stocked" differently from "you
+# have enough", and before the contract all three were the same pixel. See
+# docs/PRESCRIPTIVE_CONTRACT.md.
+RATE_INSUFFICIENT = "insufficient_data"
+POLICY_STATE_PRICED = "priced"
+POLICY_STATE_INSUFFICIENT = "insufficient_data"
+TIER_NOT_STOCKABLE = "not_stockable"
+INSUFFICIENT_DATA_NOTE = (
+    "Insufficient data - manual review. This item has no demand in the trailing "
+    "365 days, so the pipeline cannot estimate a rate for it and deliberately "
+    "emits no reorder point. A blank here means \"not known\", NOT \"stock is "
+    "fine\": first-season designs, one-off drops and discontinued lines all land "
+    "here, and they need a person to decide, not a number."
+)
+NOT_STOCKABLE_NOTE = (
+    "Made-to-order candidate. This item's own history shows that every extra "
+    "unit of stock returns less service than the store's efficiency floor, so "
+    "the reorder point covers normal demand and buys no safety stock. Low "
+    "availability here is a deliberate choice, not an oversight - if it must be "
+    "available on demand, it needs a standing order, not a bigger buffer."
+)
+
 ORDER_QTY_NOTE = (
     "Suggested quantity brings stock up to the reorder point plus "
     f"{REVIEW_PERIOD_DAYS} days of demand at the observed rate. It is deliberately "
@@ -388,6 +412,14 @@ def get_reorder():
             "safety_stock": r["safety_stock"],
             "reorder_point": r["reorder_point"],
             "demand_method": r["demand_method"],
+            # The forecast -> prescriptive contract. rate_source is what the
+            # screen must branch on: 'insufficient_data' means this SKU has no
+            # learnable demand rate and carries NO reorder point.
+            "rate_source": r.get("rate_source"),
+            "service_tier": r.get("service_tier"),
+            "buffer_quantile": r.get("buffer_quantile"),
+            "buffer_source": r.get("buffer_source"),
+            "safety_stock_normal_legacy": r.get("safety_stock_normal_legacy"),
             "is_provisional": bool(r["is_provisional"]),
             "scenarios": {},
         })
@@ -409,12 +441,41 @@ def get_reorder():
     for item in by_product.values():
         st = stats.get(item["product_id"], {})
         stock = st.get("current_stock")
-        add = item["avg_daily_demand"] or 0.0
-        rop = item["reorder_point"] or 0.0
 
         item["current_stock"] = stock
         item["stock_as_of"] = st.get("stock_as_of")
         item["stock_source"] = st.get("stock_source")
+
+        # A SKU with no learnable demand rate has NO reorder point, and the old
+        # `item["reorder_point"] or 0.0` turned that NULL into 0.0 - which then
+        # rendered as needs_reorder=False, i.e. "you have enough stock". That is
+        # a recommendation the pipeline has no evidence for, and it is exactly
+        # the silent zero the contract exists to prevent. These SKUs get an
+        # explicit state instead, and every downstream number stays None rather
+        # than being computed off a fabricated zero.
+        if item.get("rate_source") == RATE_INSUFFICIENT or item["reorder_point"] is None:
+            item["rate_source"] = RATE_INSUFFICIENT
+            item["policy_state"] = POLICY_STATE_INSUFFICIENT
+            item["policy_note"] = INSUFFICIENT_DATA_NOTE
+            item["days_cover_remaining"] = None
+            item["needs_reorder"] = None
+            item["approaching_rop"] = None
+            item["order_up_to_level"] = None
+            item["suggested_order_qty"] = None
+            for scen in item["scenarios"].values():
+                scen["exceeds_annual_demand"] = None
+            continue
+
+        item["policy_state"] = POLICY_STATE_PRICED
+        # A not_stockable SKU has a reorder point covering normal demand and no
+        # safety stock at all. That is deliberate and the screen must say so,
+        # otherwise it reads as an under-stocked item somebody should "fix".
+        item["policy_note"] = (
+            NOT_STOCKABLE_NOTE if item.get("service_tier") == TIER_NOT_STOCKABLE
+            else None)
+        add = item["avg_daily_demand"] or 0.0
+        rop = item["reorder_point"]
+
         item["days_cover_remaining"] = round(stock / add, 1) if (stock is not None and add > 0) else None
         item["needs_reorder"] = stock is not None and stock <= rop
         item["approaching_rop"] = stock is not None and rop < stock <= rop * 1.2
@@ -439,9 +500,11 @@ def get_reorder():
             )
 
     items = sorted(by_product.values(), key=lambda i: i["item_name"])
+    priced = [i for i in items if i["policy_state"] == POLICY_STATE_PRICED]
+    flagged = [i for i in items if i["policy_state"] == POLICY_STATE_INSUFFICIENT]
     due = [i for i in items if i["needs_reorder"]]
     eoq_over = sum(
-        1 for i in items if i["scenarios"].get("low_admin_cost", {}).get("exceeds_annual_demand")
+        1 for i in priced if i["scenarios"].get("low_admin_cost", {}).get("exceeds_annual_demand")
     )
 
     return jsonify({
@@ -450,12 +513,20 @@ def get_reorder():
         "data": {
             "items": items,
             "summary": {
-                "priced_skus": len(items),
+                "priced_skus": len(priced),
+                # Reported, not hidden: these SKUs are IN the table and on the
+                # screen, carrying a state instead of a number.
+                "insufficient_data_skus": len(flagged),
+                "insufficient_data_note": INSUFFICIENT_DATA_NOTE,
+                "not_stockable_skus": sum(
+                    1 for i in priced if i.get("service_tier") == TIER_NOT_STOCKABLE),
+                "total_skus": len(items),
                 "with_stock_count": sum(1 for i in items if i["current_stock"] is not None),
                 "no_stock_count": sum(1 for i in items if i["current_stock"] is None),
                 "reorder_now": len(due),
                 "approaching_rop": sum(1 for i in items if i["approaching_rop"]),
                 "suggested_units_total": sum(i["suggested_order_qty"] for i in due),
+                "reorder_status_unknown": len(flagged),
                 "suppliers_affected": len({i["supplier_name"] for i in due if i["supplier_name"]}),
                 "review_period_days": REVIEW_PERIOD_DAYS,
                 "order_qty_note": ORDER_QTY_NOTE,

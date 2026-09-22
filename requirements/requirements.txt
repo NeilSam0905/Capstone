@@ -31,3 +31,12 @@ numpy==2.3.5
 scipy==1.16.3
 openpyxl==3.1.5
 rapidfuzz==3.14.5
+scikit-learn==1.9.1
+
+# scikit-learn moved here from requirements-ml-experimental.txt when the
+# behavioural-cluster fallback entered the DEPLOYED prescriptive path
+# (forecasting/policy.py -> forecasting/clustering.py -> KMeans). It is no
+# longer only an experiment dependency: scripts/step5_prescriptive.py cannot
+# resolve a thin SKU's demand rate without it, so a clean clone that installs
+# only this file must have it. The experimental file still lists xgboost and
+# lightgbm, which remain out of the runtime path.
