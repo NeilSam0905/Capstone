@@ -200,6 +200,8 @@ CREATE TABLE IF NOT EXISTS Result_Prescriptive (
     lead_time_days            INTEGER NOT NULL,
     lead_time_category        TEXT,     -- which garment tier set this SKU's lead time
     ordering_cost_scenario    TEXT    NOT NULL,  -- 'low_admin_cost' | 'high_goods_value'
+                                                --   | 'not_priced' (rate_source='insufficient_data':
+                                                --   one row, no EOQ to price under two readings)
     ordering_cost_php         REAL    NOT NULL,  -- S, PHP per order
     holding_cost_php_per_unit_year REAL NOT NULL, -- H, same across scenarios
     cost_ratio                REAL,     -- S/H, kept for continuity with the EOQ theory checks
@@ -217,6 +219,24 @@ CREATE TABLE IF NOT EXISTS Result_Prescriptive (
     demand_method              TEXT,    -- which forecast fed D
     is_provisional              INTEGER DEFAULT 1,
     generated_at                TEXT,
+    -- The forecast -> prescriptive contract (docs/PRESCRIPTIVE_CONTRACT.md).
+    -- rate_source is the load-bearing one: 'observed' | 'cluster_pooled' |
+    -- 'insufficient_data'. The third is a SKU with no learnable demand rate,
+    -- and it carries NULL reorder_point / eoq on purpose - a zero there would
+    -- read on the screen as "you have enough stock", which is a
+    -- recommendation this pipeline has no evidence for. Anything consuming
+    -- reorder_point must branch on rate_source, not coalesce the NULL away.
+    rate_source                 TEXT,
+    -- 'servable' | 'partial' | 'not_stockable': how much service this SKU's
+    -- demand will ACCEPT, measured on its own pre-origin folds before any
+    -- stock is committed. Drives buffer_quantile per SKU. A not_stockable row
+    -- covers expected lead-time demand and buys NO safety stock - it is a
+    -- made-to-order candidate, not a stocking failure. NULL where rate_source
+    -- is 'insufficient_data' (no rate, so nothing to tier).
+    service_tier                TEXT,
+    buffer_quantile             REAL,   -- q on the service/holding frontier (the dial)
+    buffer_source               TEXT,   -- 'empirical_quantile' | 'normal_z_sigma_fallback'
+    safety_stock_normal_legacy  REAL,   -- the retired z*sigma*sqrt(L) buffer, for comparison
     FOREIGN KEY (product_id) REFERENCES Dim_Product (product_id)
 );
 """)
