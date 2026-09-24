@@ -539,6 +539,10 @@ def build_batch_report(c, month, only_supplier=None):
         })
         line_total = row["units"] * p["unit_price_php"] if p["unit_price_php"] is not None else None
         entry["items"].append({
+            # product_id travels with the line so the XLSX renderer can join
+            # each row to its per-date quantities. Two suppliers can carry the
+            # same item_name, so the name is not a key.
+            "product_id": row["product_id"],
             "item_name": p["item_name"],
             "quantity": row["units"],
             "unit_price_php": p["unit_price_php"],
@@ -562,6 +566,69 @@ def build_batch_report(c, month, only_supplier=None):
         out.append(entry)
     out.sort(key=lambda e: e["subtotal"], reverse=True)
     return out
+
+
+def build_batch_daily(c, month):
+    """The month laid out day by day, for the TBS-shaped .xlsx export.
+
+    `build_batch_report` aggregates each item to a monthly total, which is
+    what the screen, the PDF and the CSV show. The store's own TBS workbook
+    is a grid instead - one column per calendar day - so this returns the
+    same Fact_Sales rows at day resolution. The two cannot disagree: the
+    row totals are SUM() formulas over these columns, and both read the
+    same table.
+
+    Dates come from Dim_Date rather than from Python's calendar so the
+    column set is the pipeline's own calendar, including the closure flags
+    the Tally Interface writes.
+    """
+    days = dbmod.rows(c, """
+        SELECT calendar_date, is_store_closed, is_event_day,
+               is_enrollment_period, is_exam_week, is_sem_break
+        FROM Dim_Date
+        WHERE substr(calendar_date, 1, 7) = ?
+        ORDER BY calendar_date
+    """, (month,))
+
+    qty_rows = dbmod.rows(c, """
+        SELECT f.product_id, d.calendar_date AS day, SUM(f.quantity_sold) AS units
+        FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        WHERE substr(d.calendar_date, 1, 7) = ?
+        GROUP BY 1, 2
+        HAVING SUM(f.quantity_sold) > 0
+    """, (month,))
+
+    by_product = {}
+    for row in qty_rows:
+        by_product.setdefault(row["product_id"], {})[row["day"]] = row["units"]
+
+    # One mark per day, so the export can shade the date columns the way the
+    # store colour-codes theirs. First match wins: a closed day is a closed
+    # day whatever else the calendar says about it, and an event during
+    # enrollment is read as the event. These are exactly the Dim_Date
+    # regressors the forecast is fitted on (see step4_forecast_model.py), so
+    # the sheet shows the same calendar the model sees.
+    MARKS = (("is_store_closed", "closed"), ("is_event_day", "event"),
+             ("is_enrollment_period", "enrollment"), ("is_exam_week", "exam"),
+             ("is_sem_break", "break"))
+
+    def mark(day):
+        for column, name in MARKS:
+            if day[column]:
+                return name
+        return None
+
+    marks = {d["calendar_date"]: mark(d) for d in days}
+
+    return {
+        "dates": [d["calendar_date"] for d in days],
+        "marks": {d: m for d, m in marks.items() if m},
+        "quantities": by_product,
+        # The store writes this in the legend block as "N DAYS". It counts
+        # days that actually sold, not days the store was open - an open day
+        # with no recorded sale is not a selling day on their sheet either.
+        "selling_days": len({r["day"] for r in qty_rows}),
+    }
 
 
 @app.get("/api/reports/batch")
@@ -590,8 +657,9 @@ def get_batch_report_pdf():
     if not month or not validation.ISO_MONTH_RE.match(month):
         return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
 
-    report = build_batch_report(con(), month, request.args.get("supplier") or None)
-    pdf_bytes = batch_pdf.render(report, month)
+    c = con()
+    report = build_batch_report(c, month, request.args.get("supplier") or None)
+    pdf_bytes = batch_pdf.render(report, month, build_batch_daily(c, month))
 
     disposition = "inline" if _bool_flag("inline") else "attachment"
     filename = f"USTore_Batch_Sales_Report_{month}.pdf"
@@ -621,14 +689,17 @@ def get_batch_report_csv():
 
 @app.get("/api/reports/batch.xlsx")
 def get_batch_report_xlsx():
-    """The batch sales report as an .xlsx workbook - same row shape and
-    same shared body as the CSV and PDF exports."""
+    """The batch sales report as an .xlsx workbook, laid out as the store's
+    own TBS sheet: supplier blocks, one column per calendar day, TOTAL
+    QUANTITY / ITEM PRICE / FOR REMITTANCE. Same build_batch_report() body
+    as the CSV, PDF and screen, plus build_batch_daily() for the grid."""
     month = request.args.get("month")
     if not month or not validation.ISO_MONTH_RE.match(month):
         return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
 
-    report = build_batch_report(con(), month, request.args.get("supplier") or None)
-    xlsx_bytes = batch_export.render_xlsx(report, month)
+    c = con()
+    report = build_batch_report(c, month, request.args.get("supplier") or None)
+    xlsx_bytes = batch_export.render_xlsx(report, month, build_batch_daily(c, month))
     filename = f"USTore_Batch_Sales_Report_{month}.xlsx"
     return Response(xlsx_bytes,
                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
