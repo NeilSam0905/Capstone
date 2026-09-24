@@ -44,6 +44,7 @@ export default function Classification({ filters }) {
     return c;
   }, [products]);
   const hvlCount = useMemo(() => products.filter(p => p.is_hvl).length, [products]);
+  const withSales = useMemo(() => products.filter(p => p.total_units > 0).length, [products]);
   const total = products.length || 1;
 
   // Ranked on units rather than revenue because only part of the catalogue
@@ -111,7 +112,16 @@ export default function Classification({ filters }) {
 
   return (
     <div className="stack">
-      <div className="grid-3">
+      {/* Total first, then the three bands it splits into. The three counts
+          only mean something against the size of the catalogue they came
+          from - 47 Fast is a different screen at 136 products than at 600. */}
+      <div className="grid-4">
+        <KPICard
+          label="Total Products"
+          value={num(products.length)}
+          sub={`${num(withSales)} with recorded sales · ${num(products.length - withSales)} without`}
+          icon="box"
+        />
         <KPICard label="Fast-Moving" value={fsnCounts.F} tone="ok" icon="zap" accent
           sub={`${Math.round(fsnCounts.F / total * 100)}% of products · sell regularly`}
           onClick={() => setBand('F')} linkLabel="See the Fast-Moving items" />
