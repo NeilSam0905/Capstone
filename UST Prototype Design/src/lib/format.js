@@ -57,9 +57,31 @@ export const FSN_LABEL = { F: 'Fast', S: 'Slow', N: 'Non-Moving' };
  *  through unchanged rather than being hidden - an unrecognised model is
  *  exactly the thing a reader should still see. */
 const MODEL_LABEL = {
+  // Item default (step4): half the category's 6-month level split by the item's
+  // recent share of it, half TSB, a smoothed recent-demand rate.
+  topdown_tsb: 'Category share + recent-sales blend',
   prophet: 'Prophet',
   rolling_mean_30: '30-day average',
+  RM6_6month_180d: '6-month average',
+  RM3_3month_90d: '3-month average',
   'ewma_a0.1': 'Weighted average',
   tsb: 'TSB (intermittent)',
 };
-export const modelLabel = m => MODEL_LABEL[m] ?? m ?? '';
+// A model id can carry modifiers after "+": "<model>[+calendar][+<shape>_shape]".
+// `calendar` lowers the 30-day total when the school calendar shows quieter days
+// ahead (forecasting/calendar_adjust.py); a shape spreads the total over the
+// days by a date-aware pattern (step4 / step4c). An unknown modifier makes the
+// whole id pass through unchanged, same rule as an unknown model.
+const MODIFIER_LABEL = {
+  calendar: 'calendar-adjusted',
+  prophet_shape: 'Prophet daily pattern',
+  weekday_shape: 'weekday pattern',
+};
+export const modelLabel = m => {
+  if (!m) return '';
+  if (MODEL_LABEL[m]) return MODEL_LABEL[m];
+  const [base, ...mods] = m.split('+');
+  if (!mods.length || mods.some(x => !MODIFIER_LABEL[x])) return m;
+  return [MODEL_LABEL[base] ?? base, ...mods.map(x => MODIFIER_LABEL[x])].join(' + ');
+};
+export const isCalendarAdjusted = m => /(^|\+)calendar(\+|$)/.test(m ?? '');

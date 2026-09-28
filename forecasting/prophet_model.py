@@ -89,11 +89,14 @@ def load_calendar(con, index):
 def prophet_fit_predict(index, calendar=None, name="prophet",
                         weekly=True, yearly=True,
                         changepoint_prior_scale=0.05,
-                        seasonality_prior_scale=10.0):
+                        seasonality_prior_scale=10.0,
+                        growth="linear"):
     """Build a `fit_predict(train, horizon)` bound to a shared calendar.
 
     `calendar` is a DataFrame aligned to `index` carrying the regressor
     columns; pass None for plain Prophet (trend + seasonality only).
+    `growth="flat"` drops the trend term (Prophet >= 1.1.5), which
+    scripts/test_item_forecast_methods.py scores against the default.
     """
     from prophet import Prophet
     _quiet()
@@ -116,7 +119,7 @@ def prophet_fit_predict(index, calendar=None, name="prophet",
             future_idx = pd.date_range(idx[n - 1] + pd.Timedelta(days=1),
                                        periods=horizon, freq="D")
 
-        m = Prophet(weekly_seasonality=weekly, yearly_seasonality=yearly,
+        m = Prophet(growth=growth, weekly_seasonality=weekly, yearly_seasonality=yearly,
                     daily_seasonality=False,
                     changepoint_prior_scale=changepoint_prior_scale,
                     seasonality_prior_scale=seasonality_prior_scale,

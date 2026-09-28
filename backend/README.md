@@ -50,15 +50,27 @@ See `UST Prototype Design/BACKEND_TODO.md` for the full contract this implements
 
 | | |
 |---|---|
-| Reads | `/api/meta`, `/api/products`, `/api/products/:id/history`, `/api/sales/monthly`, `/api/reports/batch`, `/api/fsn/sensitivity`, `/api/stock`, `/api/reorder`, `/api/calendar`, `/api/calendar/:date`, `/api/calendar/closed`, `/api/tally/recent`, `/api/tally?date=`, `/api/events`, `/api/forecast/:productId`, `/api/suppliers`, `/api/categories`, `/api/months` |
+| Reads | `/api/meta`, `/api/products`, `/api/products/:id/history`, `/api/sales/monthly`, `/api/reports/batch`, `/api/fsn/sensitivity`, `/api/stock`, `/api/reorder`, `/api/calendar`, `/api/calendar/:date`, `/api/calendar/closed`, `/api/tally/recent`, `/api/tally?date=`, `/api/events`, `/api/forecast/:productId`, `/api/forecast/category/:category`, `/api/forecast/categories`, `/api/suppliers`, `/api/categories`, `/api/months` |
 | Writes | `POST /api/tally`, `PUT /api/calendar/:date/closure`, `POST /api/events` |
 
 `/api/reorder` now returns real (provisional) ROP / Safety Stock / EOQ from `Result_Prescriptive`,
 grouped per SKU with both ordering-cost scenarios (`low_admin_cost`, `high_goods_value`) nested —
 `Dim_Parameters` and `Result_Prescriptive` were populated this session (see
 `docs/STATUS_AND_NEXT_STEPS.md`). `/api/forecast/:productId` returns real data:
-`step4_forecast_model.py` (rolling mean, no `cmdstan`, runs in seconds) has been run and
-`Result_Forecast` holds 1,740 rows across 58 Fast SKUs.
+`step4_forecast_model.py` (a 50/50 blend of the item's category share and TSB, its 30-day total
+spread over the days by the category's Prophet pattern; runs in about 10 seconds) has been run and
+`Result_Forecast` holds 1,740 rows across 58 Fast SKUs. `model_type` says what wrote them
+(`topdown_tsb+calendar+prophet_shape`).
+
+`/api/forecast/category/:category` is served from `Result_Category_Forecast`
+(`step4c_category_forecast.py`): the category's sales added up and forecast as one series, so it
+covers every item in the category, with its own walk-forward accuracy in `data.metrics`. The Fast
+items listed beside it (`contributors`) come from `Result_Forecast` and are a breakdown, not the
+parts of the total, so the two do not add up (`contributors_total_30d` carries the items' sum).
+`data.source` says which shape came back: `category_model`, or `sum_of_items` - the previous
+behaviour, kept as the fallback for a database where step4c has not run.
+`/api/forecast/categories` lists the categories that have a category forecast (it includes ones with
+no Fast item, which the per-item forecasts cannot reach).
 
 ## Files
 

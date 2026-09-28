@@ -1,12 +1,12 @@
 import { useState, useMemo } from 'react';
 import {
   getProducts, getForecast, getProductForecast, getProductHistory,
-  getCategoryForecast,
+  getCategoryForecast, getCategoryForecasts,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
 import { LineChart, ForecastChart } from '../components/charts';
-import { num, shortMonth, usDate, modelLabel, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, shortMonth, usDate, modelLabel, isCalendarAdjusted, FSN_TONE, FSN_LABEL } from '../lib/format';
 import { ALL_SUPPLIERS } from '../services/dataService';
 
 const ALL_ITEMS = '__all__';
@@ -17,20 +17,25 @@ const ALL_ITEMS = '__all__';
  * CATEGORY FIRST, item second. The 30-day chart shows the whole category's
  * forecast until an item is picked, then it shows that item alone.
  *
- * The category figure is the SUM of its items' forecasts (see
- * /api/forecast/category in app.py), not a separately fitted category model.
- * That is what lets a user drill from the category into an item without the
- * two numbers disagreeing on screen.
+ * The category figure comes from its own model (step4c_category_forecast.py,
+ * via /api/forecast/category in app.py): the whole category's sales, every
+ * item in it, forecast as one series. The items listed under it are the Fast
+ * items' individual forecasts and are a BREAKDOWN, not the parts of the total
+ * — they are forecast separately and cover only Fast items, so the two do not
+ * add up, and the card says so and shows both numbers. Where step4c has not run,
+ * the backend falls back to summing the item forecasts (`data.source ===
+ * 'sum_of_items'`) and the card words itself for that instead.
  *
- * When Result_Forecast exists (step4_forecast_model.py has run) this shows
- * the forecast with its confidence band and accuracy check. When it doesn't,
- * it shows the pending state and the real observed history — no fabricated
- * numbers either way.
+ * When the forecast tables exist this shows the forecast with its confidence
+ * band and accuracy check. When they don't, it shows the pending state and the
+ * real observed history — no fabricated numbers either way.
  */
 export default function Forecast({ filters }) {
   const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
     { key: `forecast:products:${filters.supplier}|${filters.category}` });
   const { data: forecastMeta } = useData(getForecast, []);
+  const { data: categoryList, loading: categoryListLoading } = useData(
+    getCategoryForecasts, [], null, { key: 'forecast:categories' });
   const [category, setCategory] = useState(null);
   const [selectedId, setSelectedId] = useState(ALL_ITEMS);
 
@@ -50,17 +55,29 @@ export default function Forecast({ filters }) {
     return filtered.sort((a, b) => b.total_units - a.total_units);
   }, [products, forecastableIds]);
 
-  // Categories that actually have something to show, biggest first. Derived
-  // from the forecastable set rather than from /api/categories so the list
-  // never offers a category that opens straight onto an empty state.
+  // Categories that actually have something to show, biggest first, so the
+  // list never offers one that opens straight onto an empty state.
+  //
+  // With category forecasts available, that is every category that has one AND
+  // has sales among the products currently shown (so a supplier filter still
+  // narrows the list). This is what brings back categories with no Fast item -
+  // Home & Novelty, Apparel Accessories - which the per-item forecasts cannot
+  // reach. Without them (step4c not run) it falls back to what it always did:
+  // the categories of the items that have their own forecast.
   const categories = useMemo(() => {
+    const modelled = categoryList?.available ? categoryList.data.categories : null;
+    const source = modelled ? products.filter(p => p.total_units > 0) : withHistory;
     const totals = new Map();
-    for (const p of withHistory) {
+    for (const p of source) {
       const c = p.category || 'Uncategorised';
       totals.set(c, (totals.get(c) || 0) + (p.total_units || 0));
     }
-    return [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
-  }, [withHistory]);
+    const keep = modelled ? new Set(modelled.map(r => r.category)) : null;
+    return [...totals.entries()]
+      .filter(([c]) => !keep || keep.has(c))
+      .sort((a, b) => b[1] - a[1])
+      .map(([c]) => c);
+  }, [categoryList, products, withHistory]);
 
   const activeCategory = category ?? categories[0] ?? null;
 
@@ -83,7 +100,7 @@ export default function Forecast({ filters }) {
   // list spans every supplier — with one selected the topbar already says it.
   const showSupplier = filters.supplier === ALL_SUPPLIERS;
 
-  if (loading) return <Loading label="Loading products…" />;
+  if (loading || categoryListLoading) return <Loading label="Loading products…" />;
   if (!activeCategory) {
     return (
       <div className="empty">
@@ -158,8 +175,7 @@ export default function Forecast({ filters }) {
       {/* 30-day forecast — category total, or the selected item */}
       {product
         ? <ForecastPanel productId={product.product_id} forecastMeta={forecastMeta} />
-        : <CategoryForecastPanel category={activeCategory} forecastMeta={forecastMeta}
-                                 onPickItem={setSelectedId} />}
+        : <CategoryForecastPanel category={activeCategory} onPickItem={setSelectedId} />}
 
       {/* Observed monthly history — per item only. There is no category-level
           history endpoint, and summing one client-side from a filtered product
@@ -179,13 +195,17 @@ export default function Forecast({ filters }) {
 }
 
 /**
- * The category view: one summed 30-day line plus the items behind it.
+ * The category view: one 30-day line for the whole category plus the items
+ * behind it.
  *
- * `n_forecast` vs `n_products` is stated explicitly because only Fast-moving
- * items are forecast — the total is for those items, not for everything the
- * category contains, and a reader who assumes otherwise would over-order.
+ * Two shapes come back from the API (`data.source`). 'category_model' is the
+ * category's own forecast, covering every item in it, with its accuracy check.
+ * 'sum_of_items' is the fallback when step4c has not run: the Fast items'
+ * forecasts added up, which covers only those items — `n_forecast` vs
+ * `n_products` is stated explicitly there because a reader who assumes it
+ * covers the whole category would over-order.
  */
-function CategoryForecastPanel({ category, forecastMeta, onPickItem }) {
+function CategoryForecastPanel({ category, onPickItem }) {
   const { data: forecast, loading } = useData(
     () => getCategoryForecast(category), [category], null,
     { key: `forecast:category:${category}` }
@@ -193,16 +213,12 @@ function CategoryForecastPanel({ category, forecastMeta, onPickItem }) {
 
   if (loading) return <Loading label="Loading category forecast…" />;
 
-  if (!forecastMeta?.available || !forecast?.available) {
-    return (
-      <Pending
-        title={`No forecast for ${category}`}
-        reason={forecast?.reason ?? forecastMeta?.reason}
-      />
-    );
+  if (!forecast?.available) {
+    return <Pending title={`No forecast for ${category}`} reason={forecast?.reason} />;
   }
 
   const fd = forecast.data;
+  const wholeCategory = fd.source === 'category_model';
 
   return (
     <>
@@ -211,7 +227,12 @@ function CategoryForecastPanel({ category, forecastMeta, onPickItem }) {
           <span className="section-h">30-Day Demand Forecast — {category}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="tag tag--gold" title={fd.model_type}>{modelLabel(fd.model_type)}</span>
-            <span className="hint">Generated {usDate(fd.snapshot_date)}</span>
+            {wholeCategory && <ReliabilityTag metrics={fd.metrics} isHeuristic={fd.is_heuristic} />}
+            <span className="hint">
+              {wholeCategory && fd.history_end
+                ? `Based on sales through ${usDate(fd.history_end)}`
+                : `Generated ${usDate(fd.snapshot_date)}`}
+            </span>
           </div>
         </div>
 
@@ -220,6 +241,19 @@ function CategoryForecastPanel({ category, forecastMeta, onPickItem }) {
           <span><i style={{ background: 'var(--accent)' }} />Forecast (ŷ)</span>
           <span><i style={{ background: 'var(--accent)', opacity: 0.15 }} />Confidence band</span>
         </div>
+        {/* A shaped forecast draws ups and downs, and a reader will take them for
+            predicted spikes. Say what they are: the 30-day total is the 6-month
+            average's; the shape only spreads it over the days using weekdays,
+            closures and the school calendar. Bulk orders are not in it. */}
+        {wholeCategory && /_shape$/.test(fd.model_type ?? '') && (
+          <p className="hint" style={{ textAlign: 'center', margin: '8px 0 0' }}>
+            The 30-day total comes from the 6-month average
+            {isCalendarAdjusted(fd.model_type) && ', lowered when the school calendar shows quieter days ahead (semester break, exams)'}.
+            The day-to-day pattern reflects
+            weekdays, store closures and the school calendar — one-off bulk orders can&rsquo;t
+            be predicted from dates.
+          </p>
+        )}
       </div>
 
       <CategoryTotalCard category={category} fd={fd} onPickItem={onPickItem} />
@@ -233,15 +267,29 @@ function CategoryForecastPanel({ category, forecastMeta, onPickItem }) {
  * expect" rather than "what shape is the month") and was previously a plain
  * heading and an unstyled table tacked onto the end of the chart card.
  *
- * Three things carry the caveat that this is a PARTIAL total, because a
- * reader who misses it over-orders: the count, a coverage meter, and the
- * sentence. The meter is the one that works at a glance - a sliver of fill
- * says "most of this category is not in this number" before any of it is
- * read.
+ * Two shapes (`fd.source`). For the category model the figure covers the
+ * whole category, so the caveats that matter are different: how far off it
+ * has typically been (in units AND as a share of a typical month, because a
+ * bare number makes a 60% miss look small), and that the items listed under
+ * it do not add up to it.
+ *
+ * For the sum-of-items fallback the total is PARTIAL, and three things carry
+ * that, because a reader who misses it over-orders: the count, a coverage
+ * meter, and the sentence. The meter is the one that works at a glance - a
+ * sliver of fill says "most of this category is not in this number" before
+ * any of it is read.
  */
 function CategoryTotalCard({ category, fd, onPickItem }) {
+  const wholeCategory = fd.source === 'category_model';
   const partial = fd.n_forecast < fd.n_products;
   const covered = fd.n_products ? fd.n_forecast / fd.n_products : 0;
+
+  // How far off the category forecast has typically been, from its own
+  // walk-forward check. Stated in units because that is what an order is in.
+  const overall = fd.metrics?.find(m => m.period_scope === 'overall') ?? fd.metrics?.[0];
+  const typicalOff = overall?.mae != null ? Math.round(overall.mae) : null;
+  const typicalPct = overall?.mae != null && overall.mean_actual_30d > 0
+    ? Math.round(100 * overall.mae / overall.mean_actual_30d) : null;
 
   // Bars are scaled to the largest contributor, not to the total: at 30 items
   // every bar would be a stub against the sum, and the column is here to rank
@@ -261,27 +309,76 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
           <div className="ftotal__unit">units forecast</div>
         </div>
 
-        <div className="ftotal__coverage">
-          <div className="ftotal__coverage-head">
-            <span className="ftotal__coverage-lbl">Items covered</span>
-            <b>{num(fd.n_forecast)} <span>of</span> {num(fd.n_products)}</b>
+        {wholeCategory ? (
+          <div className="ftotal__coverage">
+            <div className="ftotal__coverage-head">
+              <span className="ftotal__coverage-lbl">Covers</span>
+              <b>all {num(fd.n_products)} <span>items in</span> {category}</b>
+            </div>
+            <p className="ftotal__note">
+              Forecast from all of this category&rsquo;s sales taken together
+              ({modelLabel(fd.model_type)}), so it includes slow and
+              non-moving items too.
+              {typicalOff != null && (
+                <> Checked against {overall.n_obs} past 30-day period{overall.n_obs === 1 ? '' : 's'},
+                  it was typically off by about <b>{num(typicalOff)} units</b>
+                  {typicalPct != null && <> (roughly {typicalPct}% of a typical month)</>}.</>
+              )}
+            </p>
           </div>
-          <div className="meter" role="img"
-               aria-label={`${fd.n_forecast} of ${fd.n_products} items in ${category} are forecast`}>
-            <div className="meter__fill" style={{ width: `${Math.max(covered * 100, 1.5)}%` }} />
+        ) : (
+          <div className="ftotal__coverage">
+            <div className="ftotal__coverage-head">
+              <span className="ftotal__coverage-lbl">Items covered</span>
+              <b>{num(fd.n_forecast)} <span>of</span> {num(fd.n_products)}</b>
+            </div>
+            <div className="meter" role="img"
+                 aria-label={`${fd.n_forecast} of ${fd.n_products} items in ${category} are forecast`}>
+              <div className="meter__fill" style={{ width: `${Math.max(covered * 100, 1.5)}%` }} />
+            </div>
+            <p className="ftotal__note">
+              {partial ? (
+                <>Only Fast-moving items are forecast, so this total covers the{' '}
+                  <b>{fd.n_forecast} item{fd.n_forecast === 1 ? '' : 's'}</b> listed below —
+                  not all {num(fd.n_products)} in {category}.</>
+              ) : (
+                <>Every item in {category} is forecast, so this total covers the whole category.</>
+              )}
+            </p>
           </div>
-          <p className="ftotal__note">
-            {partial ? (
-              <>Only Fast-moving items are forecast, so this total covers the{' '}
-                <b>{fd.n_forecast} item{fd.n_forecast === 1 ? '' : 's'}</b> listed below —
-                not all {num(fd.n_products)} in {category}.</>
-            ) : (
-              <>Every item in {category} is forecast, so this total covers the whole category.</>
-            )}
-          </p>
-        </div>
+        )}
       </div>
 
+      {/* The items are a breakdown, not the parts of the total: say so, with
+          both numbers, rather than leave a reader to add the column up and
+          conclude one of them is wrong.
+          Three cases, not two: contributors can be empty either because the
+          category has no Fast item (n_fast === 0) or because it does but the
+          per-item forecast step hasn't run (n_fast > 0) - step4c runs on its
+          own and does not wait for step4, so that second case is a real,
+          reachable state, not a hypothetical. Saying "none is Fast-moving"
+          in that case would be false. */}
+      {wholeCategory && (
+        <div className="notice notice--info" style={{ marginTop: 14 }}>
+          {fd.contributors.length > 0 ? (
+            <>The {num(fd.n_forecast)} Fast-moving item{fd.n_forecast === 1 ? '' : 's'} below
+              {' '}{fd.n_forecast === 1 ? 'is' : 'are'} each forecast on {fd.n_forecast === 1 ? 'its' : 'their'} own,
+              so {fd.n_forecast === 1 ? 'it adds' : 'they add'} up to{' '}
+              <b>{num(Math.round(fd.contributors_total_30d))} units</b>, not the{' '}
+              {num(Math.round(fd.total_30d))} above. Use the category figure to plan the
+              category as a whole; use the items to see which ones drive it.</>
+          ) : fd.n_fast > 0 ? (
+            <>{category}&rsquo;s Fast-moving items don&rsquo;t have their own forecast yet —
+              run the pipeline's item forecast step to see them listed here. The figure
+              above is still the forecast to use for this category.</>
+          ) : (
+            <>None of the items in {category} is Fast-moving, so none has a forecast of its
+              own. The figure above is the forecast to use for this category.</>
+          )}
+        </div>
+      )}
+
+      {fd.contributors.length > 0 && (
       <div className="tbl__scroll">
         <table className="tbl" style={{ minWidth: 560 }}>
           <thead>
@@ -301,6 +398,16 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
                     title="Show this item on its own">
                   <td className="strong">
                     <span className="cell-trunc" style={{ '--trunc': '320px' }}>{r.item_name}</span>
+                    {/* No real "still stocked" flag exists in the data (see
+                        backend/app.py's DISCONTINUED_DAYS) — this marks an item
+                        with no sale in over a year so it isn't mistaken for a
+                        normal Fast mover just because it is sitting at 0. */}
+                    {r.likely_discontinued && (
+                      <span className="tag tag--warn" style={{ marginLeft: 8 }}
+                            title={`No sale since ${r.last_sale_date ?? 'sales records began'} — may no longer be stocked`}>
+                        Not currently stocked?
+                      </span>
+                    )}
                   </td>
                   <td>{r.supplier_name}</td>
                   {/* The bar ranks the row against the biggest contributor.
@@ -324,6 +431,7 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
@@ -353,6 +461,8 @@ function ForecastPanel({ productId, forecastMeta }) {
 
   // Forecast data is available — render it
   const fd = forecast.data;
+  const total30 = fd.forecast.reduce((a, r) => a + (r.yhat || 0), 0);
+  const shaped = /_shape$/.test(fd.model_type ?? '');
 
   return (
     <>
@@ -371,6 +481,36 @@ function ForecastPanel({ productId, forecastMeta }) {
           <span><i style={{ background: 'var(--accent)' }} />Forecast (ŷ)</span>
           <span><i style={{ background: 'var(--accent)', opacity: 0.15 }} />Confidence band</span>
         </div>
+
+        {/* Same reasoning as the category note: a shaped line draws ups and downs
+            that are not predicted spikes. An item's own days are too sparse to
+            carry a pattern, so it borrows its category's. */}
+        {shaped && (
+          <p className="hint" style={{ textAlign: 'center', margin: '8px 0 0' }}>
+            The 30-day total blends this item&rsquo;s recent sales with its category&rsquo;s 6-month
+            level{isCalendarAdjusted(fd.model_type) && ', lowered when the school calendar shows quieter days ahead'}.
+            The day-to-day pattern is the category&rsquo;s (weekdays, store closures, the
+            school calendar) — one-off bulk orders can&rsquo;t be predicted from dates.
+          </p>
+        )}
+
+        {/* An item that has stopped selling is forecast near zero, and 0 on its
+            own reads like a bug. `likely_discontinued` (no real sale in over a
+            year — backend/app.py's DISCONTINUED_DAYS) gets the stronger, more
+            specific notice; a merely-quiet item still gets the softer one. */}
+        {fd.likely_discontinued ? (
+          <div className="notice notice--warn" style={{ marginTop: 12 }}>
+            This item hasn&rsquo;t sold since{' '}
+            {fd.last_sale_date ? usDate(fd.last_sale_date) : 'sales records began'} and may no
+            longer be stocked. There is no "discontinued" flag in the data yet — this is a guess
+            from a year of no sales — so check with the store before ordering off this forecast.
+          </div>
+        ) : total30 < 0.5 && (
+          <div className="notice notice--info" style={{ marginTop: 12 }}>
+            This item hasn&rsquo;t sold recently, so the forecast is close to zero. It will
+            rise again if sales pick up.
+          </div>
+        )}
 
         {fd.is_heuristic && (
           <div className="notice notice--warn" style={{ marginTop: 12 }}>

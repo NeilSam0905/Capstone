@@ -10,22 +10,32 @@ CSV/db paths relative to cwd, not to its own file). Steps run with
 `sys.executable`, so they use whatever interpreter is running this Flask
 process — the same env the rest of the backend already depends on.
 
-step0_convert_sales_with_zeros.py and step4_forecast_model.py are marked
-optional:
+step0_convert_sales_with_zeros.py, step4_forecast_model.py and
+step4c_category_forecast.py are marked optional:
 
 - step0 reads the original TBS tally-sheet workbooks from a local
   rawdata/ folder (real client Excel files — large, sensitive, and
   deliberately not committed to the repo). Its output,
-  data/USTore_sales_long_with_zeros.csv, IS committed, and every step
+  data/USTore_sales_long_with_zeros.csv, IS committed (encrypted, in
+  vault/ - see scripts/vault.py), and every step
   after step0 reads only from data/*.csv — none of them touch rawdata/
   or openpyxl. So when rawdata/ isn't present, step0 fails and the
   pipeline falls back to that already-committed CSV instead of stopping
   the whole run: step1 onward "just reads the data folder" either way.
-- step4 forecasts every Fast SKU with a rolling mean. It is kept optional
-  for continuity rather than for cost: it used to fit Prophet per SKU and
-  ran for hours behind a ~20-30 minute cmdstan build, and callers (and the
+- step4 forecasts every Fast SKU, one model per item (by default a 50/50 blend
+  of the item's category share and TSB, lowered when the school calendar shows
+  quieter days ahead, its 30-day total spread over the days by the category's
+  Prophet pattern; --model selects others). It is kept optional
+  for continuity rather than for cost: it used to fit Prophet per SKU with MCMC
+  and ran for hours behind a ~20-30 minute cmdstan build, and callers (and the
   Tally Interface's checkbox) still expect to be able to opt out of it.
-  It now finishes in seconds and needs no toolchain.
+- step4c forecasts each category's combined sales (a trailing average,
+  lowered when the school calendar shows quieter days ahead, whose 30-day
+  total is spread over the days by a calendar-aware Prophet pattern),
+  which is what the Demand Forecast screen shows for a category. It runs in seconds
+  and is NOT covered by the Tally Interface's "skip forecast" checkbox: that
+  option exists to save time, and there is none to save here. If it fails the
+  screen falls back to summing the item forecasts.
 
 If either fails, the run is recorded as "skipped" for that step and the
 pipeline continues — /api/meta already reports forecast availability as
@@ -74,6 +84,8 @@ from pathlib import Path
 import db as dbmod
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import vault  # noqa: E402  (scripts/vault.py - keeps the encrypted copy in vault/ current)
 
 # How many lines of a step's stdout to keep for the live tail. Bounded because
 # step3/step4 print a row per SKU and this whole dict is JSON-serialised on
@@ -109,7 +121,14 @@ STEPS = [
     # which groups by category, down with it. It sits after step3 because it
     # also writes the per-category daily series, which reads fsn_class.
     ("step1b", "scripts/step1b_categorize_products.py", "Assign forecast categories", False, DEFAULT_TIMEOUT_S, "~15 s"),
-    ("step4", "scripts/step4_forecast_model.py", "Forecast demand (rolling mean)", True, DEFAULT_TIMEOUT_S, "~10 s"),
+    # step4 is per-item; step4c is per-category and is what the Demand Forecast
+    # screen shows for a category. Independent of each other (step4c reads
+    # Fact_Sales and Dim_Product, not Result_Forecast), so order is only about
+    # keeping the two forecast steps together. It sits after step1b because it
+    # needs forecast_category. Optional: without it the screen falls back to
+    # summing the item forecasts, so a failure here must not stop step5.
+    ("step4", "scripts/step4_forecast_model.py", "Forecast demand by item", True, DEFAULT_TIMEOUT_S, "~10 s"),
+    ("step4c", "scripts/step4c_category_forecast.py", "Forecast demand by category", True, DEFAULT_TIMEOUT_S, "~15 s"),
     ("step5a", "scripts/step5a_set_lead_times.py", "Set supplier lead times", False, DEFAULT_TIMEOUT_S, "~5 s"),
     ("step5", "scripts/step5_prescriptive.py", "Compute ROP / EOQ / safety stock", False, DEFAULT_TIMEOUT_S, "~10 s"),
 ]
@@ -143,6 +162,7 @@ def _fresh_steps(skip=()):
 _state = {
     "status": "idle", "started_at": None, "finished_at": None,
     "run_id": None, "steps": _fresh_steps(),
+    "vault": None,        # what the end-of-run re-encryption did (scripts/vault.py)
 }
 
 
@@ -350,6 +370,12 @@ def _run_all():
     ok_overall = True
     cancelled = False
 
+    # Start from the newest data: restore anything missing or updated in the
+    # vault (a teammate's pull), never overwriting local work.
+    note = vault.ensure_unlocked()
+    if note:
+        print(note, flush=True)
+
     for (sid, script, label, optional, timeout_s, _est), entry in zip(STEPS, _state["steps"]):
         if _cancel_requested.is_set():
             cancelled = True
@@ -419,6 +445,20 @@ def _run_all():
     dbmod.ensure_initialised(force=True)
     _finish_run_record(run_id, status, steps)
 
+    # Re-encrypt what the run changed, so vault/ (the only copy git carries)
+    # matches the data. Reported, never fatal: the run's own result stands.
+    vault_note = None
+    if vault.MANIFEST.exists():
+        try:
+            done = vault.lock(quiet=True)
+            vault_note = f"vault: encrypted {len(done)} changed file(s)"
+        except (vault.VaultError, sqlite3.Error, OSError) as e:
+            vault_note = f"vault: not updated ({e}) - run `python scripts/vault.py lock`"
+    with _lock:
+        _state["vault"] = vault_note
+    if vault_note:
+        print(vault_note, flush=True)
+
 
 def start_pipeline(skip=()):
     """Start a run. `skip` names steps to leave out (only SKIPPABLE ones are
@@ -434,6 +474,7 @@ def start_pipeline(skip=()):
         _state["started_at"] = datetime.now().isoformat(timespec="seconds")
         _state["finished_at"] = None
         _state["steps"] = _fresh_steps(skip)
+        _state["vault"] = None
         started_at = _state["started_at"]
     run_id = _open_run_record(started_at)
     with _lock:

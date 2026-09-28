@@ -171,8 +171,6 @@ def main():
             if d in pos:
                 arr[pos[d]] = q
         series[item] = arr
-    item_daily = per_sku.rename(columns={"calendar_date": "ds",
-                                         "quantity_sold": "y"})
 
     # ---- fold-scoped cluster assignment, chained for label stability ---
     detail_rows = []
@@ -194,8 +192,12 @@ def main():
             items = [sku for sku, lab in labels.items() if lab == cluster_label]
             if not items:
                 continue
-            bucket_daily = item_daily[item_daily["key"].isin(items)]
-            bucket_daily = bucket_daily.groupby("ds", as_index=False)["y"].sum()
+            # Zero-filled (see category_split_prophet.py's run_category for
+            # why): a cluster of rare, bulk-only sellers must keep its zero
+            # days, or the fallback below averages just "the last 30 times
+            # it sold something" and wildly overstates its true rate.
+            bucket_arr = sum(series[sku] for sku in items)
+            bucket_daily = pd.DataFrame({"ds": trading_clipped, "y": bucket_arr})
             train_df = bucket_daily[bucket_daily["ds"] <= cut]
             actual_bucket = float(bucket_daily.loc[
                 (bucket_daily["ds"] >= win_lo) & (bucket_daily["ds"] <= win_hi), "y"

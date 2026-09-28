@@ -206,6 +206,31 @@ volume-weighted figure is less alarming and more honest about where the money
 is. Divergence #6 already records the ≤20% target as unreachable on this data,
 and nothing here changes that.
 
+**Erratum (added on the `neil` branch; the figures in §6 are unchanged):** the
+"8 of 12 categories beat naive" reading of §6 does not survive a production-
+realistic re-scoring. Measured by `scripts/compare_category_forecast_methods.py`
+(same folds, same actuals, `data/category_forecast_method_comparison.csv`):
+
+- The MASE denominator here is built from 30 *rows* of the trading-day series
+  (about 43 calendar days) while errors are on 30-calendar-day windows, so it is
+  ~1.41x too large. Rescaled to the scored unit, the same Prophet output scores
+  **MASE 1.50 with 1 of 12 categories below 1**, not 0.99 and 8 of 12. A naive
+  "repeat last month" forecast scores 0.90 on the original denominator, which
+  is how you can tell it is not a naive benchmark.
+- Scoring over the trading days that actually occurred in each window is
+  hindsight; production cannot know next month's closures.
+- Training on sale-days only (dropping zero-sale trading days) makes the model
+  learn "units per selling day": the forecasts run **+34% high** pooled.
+- Against forecasts that need no foresight - repeat the last 30 days, or a
+  trailing 6-month average - this Prophet loses: pooled WMAPE 62.4% vs 55.7%
+  and 45.7%. It beats "repeat last 30 days" in 4 of 12 categories; the 6-month
+  average does in 12 of 12. Zero-filling the series helps it (52.1% with
+  hindsight days, 61.1% with expected trading days) but not enough.
+
+The dashboard therefore serves the 6-month category average
+(`scripts/step4c_category_forecast.py`); this script and its metrics table are
+left as they were.
+
 **Known gaps:** the May 2024 DSR workbook is skipped (superseded by TBS), so the
 series starts 2024-08-06 rather than 2024-05-02; July 2026 holds data only to
 the 8th; and the `day_status_vocabulary.csv` calls have not yet been reviewed by
