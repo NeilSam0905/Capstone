@@ -158,8 +158,6 @@ def run_category(category, sales, days, cal, trading, horizon, folds, min_train)
             if d in pos:
                 arr[pos[d]] = q
         series[item] = arr
-    item_daily = per_sku.rename(columns={"calendar_date": "ds",
-                                         "quantity_sold": "y"})
 
     detail_rows = []
     recon_actual, recon_pred, recon_scale = [], [], []
@@ -176,8 +174,16 @@ def run_category(category, sales, days, cal, trading, horizon, folds, min_train)
             items = [sku for sku, lab in labels.items() if lab == label_key]
             if not items:
                 continue
-            bucket_daily = item_daily[item_daily["item_name"].isin(items)]
-            bucket_daily = (bucket_daily.groupby("ds", as_index=False)["y"].sum())
+            # Built from the zero-filled per-SKU arrays, NOT a groupby of
+            # sale-only rows: a bucket with sales on only a handful of days
+            # must still carry every zero day in between, or len(train_df)
+            # undercounts its real history (misrouting it to a lower
+            # sufficiency tier than it has data for) and the tail(30)
+            # fallback below averages only "the last 30 times this bucket
+            # sold something" - which for a rare, bulky seller can span
+            # months and wildly overstate its true daily rate.
+            bucket_arr = sum(series[sku] for sku in items)
+            bucket_daily = pd.DataFrame({"ds": trading_clipped, "y": bucket_arr})
             train_df = bucket_daily[bucket_daily["ds"] <= cut]
             actual_bucket = float(bucket_daily.loc[
                 (bucket_daily["ds"] >= win_lo) & (bucket_daily["ds"] <= win_hi), "y"

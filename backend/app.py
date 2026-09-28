@@ -39,6 +39,12 @@ import validation
 app = Flask(__name__)
 CORS(app)
 
+# The plain data files are gitignored; after a fresh clone or a pull they come
+# from the encrypted vault/ (scripts/vault.py). Never overwrites local work.
+_vault_note = pipeline.vault.ensure_unlocked()
+if _vault_note:
+    print(_vault_note, flush=True)
+
 # Uploaded workbooks are archived here, so a spreadsheet imported through the
 # interface lands in the same folder step0 reads its source workbooks from.
 # Gitignored (real client data), and created on demand rather than assumed -
@@ -1307,6 +1313,39 @@ def _has_forecast_table(c):
         "SELECT COUNT(*) FROM Result_Forecast").fetchone()[0] > 0
 
 
+# No column in Dim_Product says whether an item is still stocked - `is_active`
+# is 1 for every one of the 519 products, and `payment_status` is "UNKNOWN" for
+# the items this would matter for, so neither is a usable signal. This infers
+# it instead: an item with no recorded sale in the last year is flagged as
+# likely no longer stocked, so the screen can say so instead of showing a
+# near-zero forecast with no explanation. It is a heuristic, not a confirmed
+# status - a slow, genuinely seasonal item could trip it too, which is why the
+# wording below says "likely" and gives the actual last-sale date to check.
+DISCONTINUED_DAYS = 365
+
+
+def _last_sale_date(c, product_id):
+    """The most recent date this product recorded a real (>0) sale, or None
+    if it never has."""
+    row = dbmod.one(c, """
+        SELECT MAX(d.calendar_date) AS d
+        FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        WHERE f.product_id = ? AND f.quantity_sold > 0
+    """, (product_id,))
+    return row["d"] if row else None
+
+
+def _discontinued_flags(last_sale_date, reference_date):
+    """(days_since_last_sale, likely_discontinued) as of `reference_date`
+    (a forecast's own snapshot_date/history_end, not wall-clock "now" - the
+    calendar here runs past the real date). Never having sold at all counts
+    as likely discontinued too, though that should not occur for a Fast item."""
+    if not last_sale_date or not reference_date:
+        return None, last_sale_date is None
+    days = (date.fromisoformat(reference_date) - date.fromisoformat(last_sale_date)).days
+    return days, days >= DISCONTINUED_DAYS
+
+
 # Wording is aimed at the person using the dashboard, not at whoever wrote the
 # ETL: from the frontend there is exactly one action that fixes this, and it is
 # the Tally Interface's pipeline runner.
@@ -1382,6 +1421,10 @@ def get_forecast(product_id):
         "SELECT item_name, fsn_class, is_hvl FROM Dim_Product WHERE product_id = ?",
         (product_id,))
 
+    snapshot_date = forecast_rows[0]["snapshot_date"]
+    last_sale_date = _last_sale_date(c, product_id)
+    days_since_last_sale, likely_discontinued = _discontinued_flags(last_sale_date, snapshot_date)
+
     return jsonify({
         "available": True,
         "reason": None,
@@ -1392,30 +1435,167 @@ def get_forecast(product_id):
             "is_hvl": product["is_hvl"] if product else 0,
             "model_type": forecast_rows[0]["model_type"],
             "is_heuristic": bool(forecast_rows[0]["is_heuristic"]),
-            "snapshot_date": forecast_rows[0]["snapshot_date"],
+            "snapshot_date": snapshot_date,
+            "last_sale_date": last_sale_date,
+            "days_since_last_sale": days_since_last_sale,
+            "likely_discontinued": likely_discontinued,
             "forecast": forecast_rows,
             "metrics": metrics,
         },
     })
 
 
+def _table_names(c):
+    return {r[0] for r in c.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+def _category_contributors(c, category):
+    """The category's Fast items that have their own forecast, biggest first.
+
+    `last_sale_date` rides along so the caller can flag an item that likely
+    is not stocked any more (see DISCONTINUED_DAYS / _discontinued_flags) -
+    computed here as one query rather than one round trip per contributor."""
+    return dbmod.rows(c, """
+        SELECT p.product_id, p.item_name, p.fsn_class, p.is_hvl,
+               COALESCE(p.supplier_name, ?) AS supplier_name,
+               SUM(f.yhat) AS yhat_30d,
+               (SELECT MAX(d.calendar_date) FROM Fact_Sales f2
+                JOIN Dim_Date d ON d.date_id = f2.date_id
+                WHERE f2.product_id = p.product_id AND f2.quantity_sold > 0) AS last_sale_date
+        FROM Result_Forecast f
+        JOIN Dim_Product p ON p.product_id = f.product_id
+        WHERE p.category = ?
+        GROUP BY p.product_id
+        ORDER BY yhat_30d DESC
+    """, (catalog.UNATTRIBUTED, category))
+
+
+def _flag_discontinued(contributors, reference_date):
+    """Adds days_since_last_sale / likely_discontinued to each contributor
+    row in place, as of the category's own reference date. Returns the same
+    list for a fluent call at the point contributors are built."""
+    for r in contributors:
+        r["days_since_last_sale"], r["likely_discontinued"] = \
+            _discontinued_flags(r.get("last_sale_date"), reference_date)
+    return contributors
+
+
+def _category_counts(c, category):
+    return dbmod.one(c, """
+        SELECT COUNT(*) AS n_products,
+               SUM(CASE WHEN fsn_class='F' THEN 1 ELSE 0 END) AS n_fast
+        FROM Dim_Product WHERE category = ?
+    """, (category,))
+
+
+@app.get("/api/forecast/categories")
+def get_forecast_categories():
+    """The categories that have a category-level forecast, biggest first.
+
+    The Demand Forecast screen builds its category picker from this. It used
+    to derive the picker from the Fast items that have a forecast, which left
+    out any category with no Fast item at all (Home & Novelty, Apparel
+    Accessories) even though those categories do sell."""
+    c = con()
+    rows = []
+    if "Result_Category_Forecast" in _table_names(c):
+        rows = dbmod.rows(c, """
+            SELECT forecast_category AS category, SUM(yhat) AS total_30d,
+                   MIN(model_type) AS model_type, MIN(snapshot_date) AS snapshot_date
+            FROM Result_Category_Forecast
+            GROUP BY forecast_category
+            ORDER BY total_30d DESC
+        """)
+    if not rows:
+        return jsonify({"available": False, "reason": FORECAST_PENDING_REASON, "data": None})
+    return jsonify({"available": True, "reason": None, "data": {"categories": rows}})
+
+
 @app.get("/api/forecast/category/<path:category>")
 def get_forecast_category(category):
     """The 30-day forecast for a whole category.
 
-    Built by SUMMING the per-SKU rows in Result_Forecast rather than from a
-    separately fitted category model. That is a deliberate choice: the
-    dashboard lets a user drill from the category straight into one of its
-    items, and a separately fitted category total would not equal the sum of
-    the items shown underneath it. Here it always does, so the two views can
-    never contradict each other on screen.
+    Served from Result_Category_Forecast (scripts/step4c_category_forecast.py):
+    the category's sales are added up FIRST and that total is forecast, which
+    covers every item in the category and measured more accurate than adding
+    up item forecasts (see that script's docstring for the comparison). The
+    response carries its own walk-forward `metrics` so the screen can say how
+    far off it has typically been.
 
-    Only Fast SKUs get a forecast, so a category's total covers the items in
-    `contributors` and no others - the response says how many that is, and
-    how many products the category holds in total, so the figure is never
-    read as covering the whole category when it does not.
+    `contributors` are the Fast items that have their own forecast, from
+    Result_Forecast. They are a breakdown, NOT the parts of the total: each
+    item is forecast on its own (step4), only Fast items are forecast at all,
+    and the category model uses a different window, so the two do not add up.
+    `contributors_total_30d` carries the items' own sum so the screen can show
+    both numbers, and `source` tells it which shape it is looking at.
+
+    When the category table is absent or has nothing for this category (the
+    pipeline has not run step4c, or an older database), this falls back to the
+    previous behaviour - the SUM of the Fast items' forecasts - and reports
+    `source: "sum_of_items"` so the screen can word it accordingly.
     """
     c = con()
+    tables = _table_names(c)
+    cat_rows = []
+    if "Result_Category_Forecast" in tables:
+        cat_rows = dbmod.rows(c, """
+            SELECT forecast_date, yhat, yhat_lower, yhat_upper
+            FROM Result_Category_Forecast
+            WHERE forecast_category = ?
+            ORDER BY forecast_date
+        """, (category,))
+    if not cat_rows:
+        return _category_forecast_from_items(c, category)
+
+    head = dbmod.one(c, """
+        SELECT model_type, is_heuristic, snapshot_date, history_end
+        FROM Result_Category_Forecast WHERE forecast_category = ? LIMIT 1
+    """, (category,))
+    metrics = []
+    if "Result_Category_Forecast_Metrics" in tables:
+        metrics = dbmod.rows(c, """
+            SELECT validation_method, period_scope, n_obs, mae, rmse, mape, mase,
+                   naive_mae, naive_mase, beats_naive_mae, mean_actual_30d
+            FROM Result_Category_Forecast_Metrics WHERE forecast_category = ?
+        """, (category,))
+    contributors = _category_contributors(c, category) if _has_forecast_table(c) else []
+    _flag_discontinued(contributors, head["history_end"])
+    meta = _category_counts(c, category)
+
+    return jsonify({
+        "available": True,
+        "reason": None,
+        "data": {
+            "category": category,
+            "source": "category_model",
+            "model_type": head["model_type"],
+            "snapshot_date": head["snapshot_date"],
+            "history_end": head["history_end"],
+            "is_heuristic": bool(head["is_heuristic"]),
+            "n_products": meta["n_products"] if meta else 0,
+            "n_fast": (meta["n_fast"] or 0) if meta else 0,
+            "n_forecast": len(contributors),
+            "total_30d": round(sum(r["yhat"] or 0 for r in cat_rows), 3),
+            "contributors_total_30d": round(sum(r["yhat_30d"] or 0 for r in contributors), 3),
+            "forecast": cat_rows,
+            "contributors": contributors,
+            "metrics": metrics,
+        },
+    })
+
+
+def _category_forecast_from_items(c, category):
+    """The category forecast built by SUMMING the per-SKU rows in
+    Result_Forecast - what this endpoint did before step4c existed, kept as
+    the fallback so a database without Result_Category_Forecast still works.
+
+    Only Fast SKUs get a forecast, so this total covers the items in
+    `contributors` and no others - the response says how many that is, and
+    how many products the category holds in total, so the figure is never
+    read as covering the whole category when it does not. It always equals the
+    sum of the items shown underneath it, which the category model does not.
+    """
     if not _has_forecast_table(c):
         return jsonify(_FORECAST_PENDING)
 
@@ -1445,22 +1625,8 @@ def get_forecast_category(category):
             "data": None,
         })
 
-    contributors = dbmod.rows(c, """
-        SELECT p.product_id, p.item_name, p.fsn_class, p.is_hvl,
-               COALESCE(p.supplier_name, ?) AS supplier_name,
-               SUM(f.yhat) AS yhat_30d
-        FROM Result_Forecast f
-        JOIN Dim_Product p ON p.product_id = f.product_id
-        WHERE p.category = ?
-        GROUP BY p.product_id
-        ORDER BY yhat_30d DESC
-    """, (catalog.UNATTRIBUTED, category))
-
-    meta = dbmod.one(c, """
-        SELECT COUNT(*) AS n_products,
-               SUM(CASE WHEN fsn_class='F' THEN 1 ELSE 0 END) AS n_fast
-        FROM Dim_Product WHERE category = ?
-    """, (category,))
+    contributors = _category_contributors(c, category)
+    meta = _category_counts(c, category)
 
     head = dbmod.one(c, """
         SELECT f.model_type, f.snapshot_date,
@@ -1469,21 +1635,27 @@ def get_forecast_category(category):
         JOIN Dim_Product p ON p.product_id = f.product_id
         WHERE p.category = ?
     """, (category,))
+    _flag_discontinued(contributors, head["snapshot_date"] if head else None)
 
+    total = round(sum(r["yhat_30d"] or 0 for r in contributors), 3)
     return jsonify({
         "available": True,
         "reason": None,
         "data": {
             "category": category,
+            "source": "sum_of_items",
             "model_type": head["model_type"] if head else None,
             "snapshot_date": head["snapshot_date"] if head else None,
+            "history_end": None,
             "is_heuristic": bool(head["any_heuristic"]) if head else False,
             "n_products": meta["n_products"] if meta else 0,
             "n_fast": (meta["n_fast"] or 0) if meta else 0,
             "n_forecast": len(contributors),
-            "total_30d": round(sum(r["yhat_30d"] or 0 for r in contributors), 3),
+            "total_30d": total,
+            "contributors_total_30d": total,
             "forecast": rows,
             "contributors": contributors,
+            "metrics": [],
         },
     })
 

@@ -14,12 +14,22 @@ months of data no SKU could reach the >=60 tier, and the sufficiency
 tiers the whole design rests on would collapse.
 
 **2. Walk-forward means walk-forward.**
-Section 3.3.4 and Figure 3 both promise walk-forward validation and then
-describe a single 80/20 chronological holdout. The manuscript cannot be
-edited, so the code delivers what the manuscript promises: rolling
-origins, expanding window, **minimum 3 folds**. An SKU that cannot
-support 3 folds is *reported as insufficient*, never quietly scored on
-one and listed beside SKUs that got three.
+Section 3.3.4 and Figure 3 both promise walk-forward validation. The
+manuscript cannot be edited, so the code delivers what the manuscript
+promises: rolling origins, expanding window, **minimum 3 folds**. An SKU
+that cannot support 3 folds is *reported as insufficient*, never quietly
+scored on one and listed beside SKUs that got three.
+
+**3. `gap`: the forecast is not actionable the instant it is made.**
+By default the test window starts the day right after training ends, as if a
+forecast could be acted on immediately. In this project a reorder placed today
+does not arrive for `lead_time_days` (14-28 days, `Dim_Product.lead_time_days`):
+the days that matter are the ones after that lead time, not the ones right
+after "today". `gap` inserts that many days between training and the test
+window (`Fold.test_start = train_end + gap`), so the harness can score the
+window the forecast is actually used for. It defaults to 0 (unchanged
+behaviour) everywhere except `scripts/test_lead_time_gap.py`, which is where
+this is tested and reported: see that script's docstring for the numbers.
 
 The leakage guarantee
 ---------------------
@@ -64,11 +74,16 @@ DEFAULT_MIN_TRAIN = 60      # days of history before the first origin
 @dataclass(frozen=True)
 class Fold:
     """One rolling origin. Train is [0, train_end), test is
-    [train_end, train_end + horizon) - both as positional indices into
-    the SKU's daily series."""
+    [train_end + gap, train_end + gap + horizon) - all as positional indices
+    into the SKU's daily series. `gap` (default 0) is the days between the
+    forecast being MADE and it being ACTIONABLE - see the module docstring's
+    point 3. It shifts the test window forward without touching the training
+    slice, so it does not change what the model is fit on, only which days
+    its forecast is scored against."""
     fold_index: int
     train_end: int          # exclusive; this IS the origin
     horizon: int
+    gap: int = 0
 
     @property
     def origin(self) -> int:
@@ -76,11 +91,11 @@ class Fold:
 
     @property
     def test_start(self) -> int:
-        return self.train_end
+        return self.train_end + self.gap
 
     @property
     def test_end(self) -> int:      # exclusive
-        return self.train_end + self.horizon
+        return self.test_start + self.horizon
 
     @property
     def n_train(self) -> int:
@@ -96,6 +111,8 @@ class Fold:
         """The invariant this whole module exists to protect."""
         if self.train_end <= 0:
             raise ValueError(f"fold {self.fold_index}: empty training window")
+        if self.gap < 0:
+            raise ValueError(f"fold {self.fold_index}: negative gap ({self.gap})")
         if self.test_end > n_total:
             raise ValueError(
                 f"fold {self.fold_index}: test window runs past the series "
@@ -132,22 +149,29 @@ def aggregate_blocks(values: Sequence[float], size: int) -> np.ndarray:
 def make_folds(n_total: int, horizon: int = DEFAULT_HORIZON,
                min_folds: int = DEFAULT_MIN_FOLDS,
                max_folds: Optional[int] = None,
-               min_train: int = DEFAULT_MIN_TRAIN) -> List[Fold]:
+               min_train: int = DEFAULT_MIN_TRAIN,
+               gap: int = 0) -> List[Fold]:
     """Rolling origins with an expanding training window.
 
     Origins are laid out from the END of the series backwards in steps of
-    `horizon`, so the test windows tile the most recent history without
-    overlapping. Returns [] if fewer than `min_folds` origins fit - the
-    caller is expected to record that as insufficient rather than score
-    what it can.
+    `horizon`, so the test windows (before any `gap`) tile the most recent
+    history without overlapping. `gap` (default 0) shifts every test window
+    `gap` days later than its origin without moving the origin itself, so
+    the step between origins - and so how many folds fit - is unchanged;
+    only the last origin moves earlier, by `gap`, to keep its test window
+    inside the series. See the module docstring's point 3. Returns [] if
+    fewer than `min_folds` origins fit - the caller is expected to record
+    that as insufficient rather than score what it can.
     """
     if horizon <= 0:
         raise ValueError("horizon must be positive")
     if min_folds <= 0:
         raise ValueError("min_folds must be positive")
+    if gap < 0:
+        raise ValueError("gap must not be negative")
 
     origins = []
-    origin = n_total - horizon          # last origin: test window ends at n_total
+    origin = n_total - gap - horizon    # last origin: test window ends at n_total
     while origin >= min_train:
         origins.append(origin)
         origin -= horizon
@@ -159,7 +183,7 @@ def make_folds(n_total: int, horizon: int = DEFAULT_HORIZON,
     if len(origins) < min_folds:
         return []
 
-    folds = [Fold(i, o, horizon) for i, o in enumerate(origins)]
+    folds = [Fold(i, o, horizon, gap) for i, o in enumerate(origins)]
     for f in folds:
         f.assert_no_leakage(n_total)
     return folds
@@ -172,16 +196,18 @@ def walk_forward_evaluate(sku, values: Sequence[float],
                           min_folds: int = DEFAULT_MIN_FOLDS,
                           max_folds: Optional[int] = None,
                           min_train: int = DEFAULT_MIN_TRAIN,
-                          folds: Optional[List[Fold]] = None) -> SkuEvaluation:
+                          folds: Optional[List[Fold]] = None,
+                          gap: int = 0) -> SkuEvaluation:
     """Score one method on one SKU across rolling origins.
 
     Pass `folds` to reuse a fold layout computed once - that is how every
-    method is guaranteed to be scored on identical windows.
+    method is guaranteed to be scored on identical windows. `gap` is only
+    used when `folds` is None (it is baked into a passed-in `folds` already).
     """
     v = np.asarray(values, dtype=float).ravel()
 
     if folds is None:
-        folds = make_folds(v.size, horizon, min_folds, max_folds, min_train)
+        folds = make_folds(v.size, horizon, min_folds, max_folds, min_train, gap)
 
     if not folds:
         return SkuEvaluation(
