@@ -43,7 +43,8 @@ that touches a CSV (see `docs/WORK_PLAN_STATUS_HISTORY.md` Block 1 for what it c
 | — | `scripts/proportional_allocation.py` | Splits price-grouped tally rows (a single row covering several SKUs sharing a price point) into per-SKU rows, weighted by each SKU's beginning-of-month stock. Reads step 1's *mapped* CSVs and joins on `canonical_item_name` (see Block 2.2 in `docs/WORK_PLAN_STATUS_HISTORY.md`); defaults now point at those files, so plain `python scripts/proportional_allocation.py` is correct. Outputs `data/USTore_sales_long_allocated.csv` (+ `data/allocation_audit.csv` documenting every split). Zero-quantity rows survive the split — a grouped row with 0 units on a given day emits 0 for every constituent instead of being dropped. |
 | 2 | `scripts/step2_load_fact_sales.py` | Loads the allocated CSV into `Fact_Sales` (84,399 rows: 68,541 zero-quantity + 15,858 positive; sums to **89,232** units — see Block 0 in `docs/WORK_PLAN_STATUS_HISTORY.md` for why that's not the older 88,481), routing unresolvable rows to `Exception_Log` instead of dropping them. Item names arrive canonical, so it joins straight to `Dim_Product` and applies no mapping of its own. Derives `cumulative_monthly_units`, `daily_depletion_rate`, `days_of_supply` and `is_censored` — the four rules behind those are settled in the script's docstring and summarised under Blocks 2.4/2.6 in `docs/WORK_PLAN_STATUS_HISTORY.md`. |
 | 3 | `scripts/step3_fsn_classification.py` | Computes ADUS (Average Daily Units Sold) per SKU, weighting imputed/allocated rows at 0.5, and classifies Fast/Slow/Non-moving at the 80th-percentile ADUS cutoff (currently F=58, S=228, N=233; it was S=230/N=231 before Block 2.2 in `docs/WORK_PLAN_STATUS_HISTORY.md`). Days flagged `is_censored` are dropped from the ADUS denominator — `EXCLUDE_CENSORED_DAYS = False` reverts that, see Block 2.4 in `docs/WORK_PLAN_STATUS_HISTORY.md`. Flags High-Velocity-Limited (HVL) items with thin history. Writes `fsn_class`/`is_hvl` back to `Dim_Product`. |
-| 4 | `scripts/step4_forecast_model.py` | Forecasts **every** Fast SKU with `rolling_mean_30` — literally `forecasting/baselines.py::rolling_mean_fit_predict(30)`, the same callable `model_benchmark.py` scores, so the benchmark's and `SERVICE_LEVEL_FRONTIER.md`'s findings apply to the production model directly. Flat over 30 days, ±1 SD band. Validated on `forecasting/evaluate.py`'s walk-forward harness at the benchmark's exact settings (**horizon 30, 3–12 folds, min_train 60**), so the scoring unit is a **30-day aggregate** — the quantity the pipeline serves — not a daily point. **58 of 58 SKUs scored, 12 folds each**; naive is scored on identical folds. **Takes seconds.** Sale-day tiers (38/10/10) are now descriptive labels only — they select neither model nor harness. Results: 35/58 beat naive (MAE 40.0 vs 104.2), 1/58 meets MAPE ≤20%, and **32/58 forecast zero** because their trailing window is empty — see `docs/ROLLING_MEAN_FORECAST.md` §4, that one is an open decision. Previously fit Prophet per SKU with full-MCMC production fits at 1–2 hours; renamed from `step4_prophet_forecast.py`. |
+| 4 | `scripts/step4_forecast_model.py` | Forecasts **every** Fast SKU (58) and writes `Result_Forecast` + `Result_Forecast_Metrics`. Default model `topdown_tsb+calendar+prophet_shape`: a **50/50 blend** of (a) the item's category 6-month average x the item's share of the category over the last 30 days and (b) **TSB** (alpha = beta = 0.05, a smoothed recent-sales rate that decays on items that stop selling), **lowered when the school calendar shows quieter days ahead** (semester break, exams; `forecasting/calendar_adjust.py`, never raised), with the 30-day total spread over the days by the item's **category's calendar-aware Prophet pattern** (weekday pattern as the fallback). Chosen by scoring 47 methods on the project's walk-forward harness (**horizon 30, 3–12 folds, min_train 60**, a **30-day aggregate** per fold; `scripts/test_item_forecast_methods.py`, `data/item_forecast_method_test.csv`): **mean MASE 1.71 against 2.52 for the Prophet it replaced**, better on 46 of 57 items; the calendar adjustment takes it to **1.67** (pooled WMAPE 64.1% to 60.3%, `scripts/test_calendar_adjustment.py`). On the 45 items that still sell it is 2.16 against 2.61 (13 "Fast" items have not sold in a year, and Prophet kept forecasting them). Still not accurate in absolute terms (MASE below 1 for 23 of 57 items), and with no seasonal term it under-forecasts busy months and over-forecasts quiet ones. The series ends at the last day any SKU sold, not at the last row of `Fact_Sales`: the panel is zero-filled to 2026-07-31 but the tallies stop at 2026-07-08, and those 23 padding days had dragged every trailing mean down (Fast-SKU forecasts summed to 647 units against 3,291 actually sold in the last 30 real days). `--model prophet`, `tsb`, `rolling_mean_30`, `ewma_a0.1`, `topdown_tsb` (flat) and `topdown_tsb+weekday_shape` stay selectable. Sale-day tiers (38/10/10) are descriptive labels only. **Takes ~10 seconds** (a few minutes with `--model prophet`). Previously fit Prophet per SKU with full-MCMC production fits at 1–2 hours; renamed from `step4_prophet_forecast.py`. |
+| 4c | `scripts/step4c_category_forecast.py` | Forecasts each **category's** combined sales (trailing 6-month average lowered when the school calendar shows quieter days ahead, `RM6_6month_180d+calendar`; macro MASE 1.14 to **1.09**, pooled WMAPE 45.2% to **41.8%**, MASE below 1 in 6 of 12 categories, `scripts/test_calendar_adjustment.py`) and writes `Result_Category_Forecast` + `Result_Category_Forecast_Metrics`; this is what the Demand Forecast screen shows for a category. Covers every item in the category, not just Fast ones. Validated on the same walk-forward harness as step 4 against a harder bar (repeat the last 30 days): **beats it in 12 of 12 categories, pooled WMAPE 45.2%**. Prophet was tested and lost - see the script's docstring and `data/category_forecast_method_comparison.csv` (`scripts/compare_category_forecast_methods.py`). The 30-day total is spread over the days by a calendar-aware Prophet pattern (`--shape`; weekday pattern as fallback) so the chart is not a flat line: **2.8% lower day-by-day error than flat**, almost all of it in months containing a semester break (`scripts/test_category_forecast_shape.py`). Takes ~15 seconds; optional in the pipeline (the screen falls back to summing item forecasts). |
 | 5a | `scripts/step5a_set_lead_times.py` | Sets `Dim_Product.lead_time_days` per product from a name-keyword classifier (jacket/windbreaker → 28d, embroidered → 18d, shirt/jersey/polo/tee → 14d, else → 18d default). Provisional, pending Block 5 (USTore site visit). |
 | 5 | `scripts/step5_prescriptive.py` | ROP / Safety Stock / EOQ per Fast+Slow SKU, using `step5a`'s real lead time and a holding cost derived from USTore's stated inventory value (arithmetic + every assumption written to `Dim_Parameters`, all flagged provisional). Ordering cost is genuinely ambiguous, so every SKU is priced under **two** scenarios (`low_admin_cost` / `high_goods_value`) rather than one guess — see `docs/STATUS_AND_NEXT_STEPS.md` for the numbers. Writes `Result_Prescriptive`. |
 
@@ -135,16 +136,45 @@ you're revisiting the vocabulary itself).
 
 ## Files intentionally not committed
 
-- `ustore.db` — binary and machine-specific. Rebuild it by running the pipeline
-  above from `scripts/create_schema.py`.
+- `ustore.db`, `data/*.csv`, `data/*.xlsx`, `docs/*.csv` and the workbooks in the
+  repo root — the store's sales, prices, stock and everything derived from them.
+  They are committed **only encrypted**, in `vault/` (see below).
 - `rawdata/*.xlsx` — the real client tally-sheet workbooks. Sensitive (supplier
   names, prices, sales volumes). Only step 0 reads them; every later step reads
-  `data/*.csv`, which **is** committed, so the pipeline runs without them.
+  `data/*.csv` (restored from `vault/`), so the pipeline runs without them.
+- `Copy of USTORE INVENTORY REPORT (1).xlsx` — 131 MB, over GitHub's file limit
+  even encrypted; local only.
 - Superseded vocabulary-mapping versions, to keep the repo readable.
 
-`data/*_mapped.csv` **are** committed: since Block 2.2 allocation reads them, so
-they are pipeline inputs rather than diagnostics. `vocab_mapping_FINAL_v5.csv`
-and `supplier_mapping.csv` are hand-maintained inputs and are committed too.
+## Data encryption (`vault/`)
+
+Scripts, the pipeline and the backend work on the plain files at their usual
+paths. Git never sees those: it carries `vault/`, an AES-256-GCM encrypted copy
+of each (`scripts/vault.py`).
+
+**Setup, once per clone:**
+
+1. Get the key from a teammate **privately** (never through git or a chat that
+   is saved) and add it to `backend/.env` as `USTORE_KEY=...`.
+2. `python scripts/vault.py unlock` — restores `ustore.db` and `data/`.
+3. `git config core.hooksPath .githooks` — turns on the pre-commit check.
+
+**Day to day:**
+
+| When | Do |
+|---|---|
+| After "Run Full Pipeline" in the app | nothing — the run re-encrypts what it changed |
+| After running scripts by hand | `python scripts/vault.py lock` |
+| After `git pull` | `python scripts/vault.py unlock` (the backend also does this when it starts) |
+| Before committing | `git add vault` — the hook refuses a commit if the vault is behind or a plain data file is staged |
+| Not sure | `python scripts/vault.py status` |
+
+`lock` and `unlock` never silently overwrite someone's work: if both your copy and
+the vault changed, they stop and ask for `--prefer-local` or `--prefer-vault`.
+
+**Lose the key and the vault cannot be opened.** Keep a copy in a password manager.
+Commits made before the vault existed still contain the plain files; this protects
+new commits only.
 
 ## Documentation
 

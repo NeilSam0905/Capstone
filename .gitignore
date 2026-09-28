@@ -22,3 +22,13 @@ Copy of USTORE INVENTORY REPORT (1).xlsx
 # volumes) and deliberately not committed. step0 reads them locally; every step
 # after it reads only data/*.csv, which IS committed.
 rawdata/
+
+# Store data is committed ONLY in encrypted form, under vault/ (scripts/vault.py).
+# The plain files below stay on each machine: `python scripts/vault.py unlock`
+# restores them from vault/, `lock` re-encrypts after changes.
+data/*.csv
+data/*.xlsx
+docs/*.csv
+/*.xlsx
+.vault_state.json
+*.vaulttmp
