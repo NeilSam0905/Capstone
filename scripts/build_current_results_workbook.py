@@ -17,8 +17,15 @@ USTore_Forecast_Testing_Summary.xlsx.)
   CICS Per Item      that comparison per Fast and Slow item
   CICS Mapping       which CICS section each of the 519 products was placed in
 
+  More History Test  accuracy when the models see only the last 3-18 months
+  What-If Scenarios  error if bulk orders / closures were known in advance
+  Grouping Search    whether fewer / re-mixed categories forecast better
+
 The three CICS tabs are read from data/cics_*.csv - run
-scripts/compare_cics_categorization.py first.
+scripts/compare_cics_categorization.py first. More History Test is read from
+data/history_length_*.csv - run scripts/test_history_length.py first, and
+What-If Scenarios from data/what_if_test.csv - run scripts/test_what_if.py, and
+Grouping Search from data/grouping_search_*.csv - run scripts/search_groupings.py.
 
 Scores are recomputed with the production code (the same walk-forward test
 step4 / step4c use, via scripts/test_calendar_adjustment.py) and checked
@@ -195,6 +202,12 @@ def sheet_readme(wb, summ, snapshot, fc_start, fc_end, first_win, last_win):
         ("CICS tabs", "CICS vs Current, CICS Per Item, CICS Mapping: the same models re-run with the store's own item list "
                       "(FOR CICS STUDENTS.xlsx) as the categories, to see whether it forecasts better. Includes the slow "
                       "items, which the app does not forecast, scored the same way for this comparison only."),
+        ("More History Test", "Whether more sales history makes the forecasts better: the same models re-run with only the "
+                              "last 3 to 18 months of real sales visible. No synthetic data."),
+        ("What-If Scenarios", "How low the error could go if the store logged bulk orders or scheduled closures in advance. "
+                              "Not what the app does; it shows which causes of error are outside any model's reach."),
+        ("Grouping Search", "Whether fewer or re-mixed categories forecast better: many groupings tried, chosen on older "
+                            "months and scored on newer ones the search never saw."),
     ]
     r = 4
     for a, b in lines:
@@ -436,9 +449,251 @@ def sheet_cics_mapping(wb, cics):
           rows, {2: "0"}, [44, 11, 11, 20, 36, 14, 60], fills)
 
 
+def load_history():
+    paths = [os.path.join(ROOT, "data", f) for f in ("history_length_test.csv", "history_length_series.csv")]
+    missing = [p for p in paths if not os.path.exists(p)]
+    if missing:
+        raise SystemExit(f"missing {missing} - run scripts/test_history_length.py first")
+    return pd.read_csv(paths[0]), pd.read_csv(paths[1])
+
+
+def sheet_history(wb, summ, per):
+    ws = wb.create_sheet("More History Test")
+    arms = list(dict.fromkeys(summ.arm))
+    cohorts = ["Categories", "Fast items", "Slow items"]
+    s = summ.set_index(["cohort", "arm"])
+    all_arm = arms[-1]
+
+    def wm(c, a):
+        return s.loc[(c, a), "wmape_pct"]
+    best = {c: min(arms, key=lambda a: (round(wm(c, a), 1), arms.index(a))) for c in cohorts}
+    r = title(ws, "Does More Sales History Improve the Forecasts? (Real Data Only)", [
+        "Each past 30-day window was forecast again, but the model was only allowed to see the last 3, 6, 9, 12 or 18 months "
+        "of sales before it, or all of it (what the app does).",
+        "Same windows, same actual sales, same models as the app - only the amount of history changes. No synthetic data is used.",
+        "Months actually used: the earliest test windows had only about 14 months of history in total, so the longer settings "
+        "average less than their label.",
+        "Lower MASE and lower error % are better. Green = the best setting for that group."])
+
+    headers = ["History given to the model", "Months actually used (average)"]
+    for c in cohorts:
+        headers += [f"{c}: average MASE", f"{c}: error % of units sold"]
+    rows, fills = [], {}
+    for i, a in enumerate(arms):
+        row = [a, s.loc[(cohorts[0], a), "months_used"]]
+        for j, c in enumerate(cohorts):
+            row += [s.loc[(c, a), "mean_mase"], wm(c, a)]
+            if a == best[c]:
+                fills[(i, 3 + 2 * j)] = GOOD_FILL
+        rows.append(row)
+    fmt = {1: "0.0"}
+    for j in range(len(cohorts)):
+        fmt[2 + 2 * j], fmt[3 + 2 * j] = "0.000", "0.0"
+    r = table(ws, r, headers, rows, fmt, [24, 13, 12, 12, 12, 12, 12, 12], fills)
+    ws.freeze_panes = None
+    ws.auto_filter.ref = None
+
+    def change(c, a, b):
+        return wm(c, b) - wm(c, a)
+    first = arms[0]
+    six = arms[1]
+    year = next(a for a in arms if a.startswith("12"))
+    findings = [
+        ("More history helps at first", f"Going from 3 to 6 months of history lowers the error from {wm('Categories', first):.1f}% "
+                                        f"to {wm('Categories', six):.1f}% for categories ({change('Categories', first, six):+.1f} points) "
+                                        f"and from {wm('Fast items', first):.1f}% to {wm('Fast items', six):.1f}% for fast items "
+                                        f"({change('Fast items', first, six):+.1f})."),
+        ("Then it levels off", f"Past about 9-12 months the numbers stop changing: 12 months, 18 months and all history give "
+                               f"{wm('Categories', year):.1f}% for categories either way. The models in use only look at the "
+                               "last 6 months (the average) and the last year (the calendar adjustment), so older sales "
+                               "cannot change their forecast."),
+        ("What more years would need", "To gain from several years of data, a model has to learn from it - for example a "
+                                       "yearly pattern such as 'this month last year'. That needs at least 2-3 years of real "
+                                       "sales, which the store does not have yet (about 26 months). Synthetic history cannot "
+                                       "stand in for it: it only repeats patterns already in the data (tested before, see "
+                                       "docs/SPARSE_DEMAND_EXPERIMENTS.md section 4)."),
+        ("In one line", "About a year of history is enough for the current models; more years pay off only together "
+                        "with a model that uses them."),
+    ]
+    r += 2
+    ws.cell(row=r, column=1, value="WHAT THIS SHOWS").font = Font(name=FONT, size=11, bold=True, color="1F4E78")
+    for head, text in findings:
+        r += 1
+        ca = ws.cell(row=r, column=1, value=head)
+        ca.font, ca.alignment = BOLD_FONT, Alignment(vertical="top", wrap_text=True)
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=8)
+        cb = ws.cell(row=r, column=2, value=text)
+        cb.font, cb.alignment = BODY_FONT, Alignment(vertical="top", wrap_text=True)
+        ws.row_dimensions[r].height = 15 * max(2, -(-len(text) // 95))
+
+    # Per category: MASE for each history length.
+    r += 2
+    ws.cell(row=r, column=1, value="Per category: MASE for each amount of history (green = best for that category)").font = BOLD_FONT
+    r += 1
+    cat = per[per.level == "category"].pivot(index="name", columns="arm", values="mase")[arms]
+    cat = cat.loc[per[(per.level == "category") & (per.arm == all_arm)].set_index("name").actual
+                  .sort_values(ascending=False).index]
+    for j, h in enumerate(["Category"] + arms, start=1):
+        c = ws.cell(row=r, column=j, value=h)
+        c.font, c.fill, c.border = HEAD_FONT, HEAD_FILL, BORDER
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for i, (k, vals) in enumerate(cat.iterrows(), start=1):
+        lo = vals.round(3).min()
+        c = ws.cell(row=r + i, column=1, value=k)
+        c.font, c.border = BODY_FONT, BORDER
+        for j, a in enumerate(arms, start=2):
+            c = ws.cell(row=r + i, column=j, value=float(vals[a]))
+            c.font, c.border, c.number_format = BODY_FONT, BORDER, "0.000"
+            if round(vals[a], 3) == lo:
+                c.fill = GOOD_FILL
+
+
+def sheet_what_if(wb, wi):
+    ws = wb.create_sheet("What-If Scenarios")
+    scen = list(dict.fromkeys(wi.scenario))
+    cohorts = ["Categories", "Fast items", "Slow items"]
+    s = wi.set_index(["cohort", "scenario"])
+    base = scen[0]
+    r = title(ws, "What-If: How Low Could the Error Go if the Store Removed Causes No Model Can Predict?", [
+        "These are NOT what the app does. Each row asks: if the store changed one thing about its operations, how much of "
+        "today's error would disappear? Same models, same 12 past windows.",
+        "Bulk orders known = large one-day purchases (organisation / bulk orders, pre-orders) are logged ahead and added to "
+        "the forecast exactly; the model forecasts only regular walk-in sales.",
+        "A 'bulk' day is one that sold more than 20x (strict) or 10x (broader) the item's usual selling day. Some of these are "
+        "enrollment rushes rather than orders, so treat the bulk rows as the most that logging orders could achieve.",
+        "Error % always counts ALL units sold, bulk included, so removing bulk days does not shrink the total the error is "
+        "measured against. Green = lower error than the app today."])
+    headers = ["Scenario", "Units treated as known in advance, % of all sold"]
+    for c in cohorts:
+        headers += [f"{c}: error % of units sold", f"{c}: change vs today (points)", f"{c}: average MASE"]
+    rows, fills = [], {}
+    for i, sc in enumerate(scen):
+        row = [sc, s.loc[(cohorts[0], sc), "units_known_in_advance_pct"]]
+        for j, c in enumerate(cohorts):
+            w, w0 = s.loc[(c, sc), "wmape_pct"], s.loc[(c, base), "wmape_pct"]
+            row += [w, w - w0, s.loc[(c, sc), "mean_mase"]]
+            if w < w0 - 0.05:
+                fills[(i, 2 + 3 * j)] = GOOD_FILL
+        rows.append(row)
+    fmt = {1: "0.0"}
+    for j in range(len(cohorts)):
+        fmt[2 + 3 * j], fmt[3 + 3 * j], fmt[4 + 3 * j] = "0.0", "+0.0;-0.0;0.0", "0.00"
+    r = table(ws, r, headers, rows, fmt, [38, 14] + [11, 11, 10] * len(cohorts), fills)
+    ws.freeze_panes = None
+    ws.auto_filter.ref = None
+
+    def w(c, sc):
+        return s.loc[(c, sc), "wmape_pct"]
+    strict = next(x for x in scen if "20x" in x)
+    broad = next(x for x in scen if "10x" in x and "closures" not in x)
+    closed = next(x for x in scen if x.startswith("Closures"))
+    findings = [
+        ("Biggest cause of error", f"Large one-day purchases. They are {s.loc[(cohorts[0], strict), 'units_known_in_advance_pct']:.0f}% "
+                                   f"(strict) to {s.loc[(cohorts[0], broad), 'units_known_in_advance_pct']:.0f}% (broader) of all "
+                                   "units sold and come with no warning in the sales history, so no model could have predicted them."),
+        ("If the store logged them", f"Category error would fall from {w('Categories', base):.1f}% to {w('Categories', strict):.1f}% "
+                                     f"(strict) or {w('Categories', broad):.1f}% (broader); fast items from "
+                                     f"{w('Fast items', base):.1f}% to {w('Fast items', strict):.1f}% or {w('Fast items', broad):.1f}%. "
+                                     f"Average category MASE would drop from {s.loc[('Categories', base), 'mean_mase']:.2f} to "
+                                     f"{s.loc[('Categories', strict), 'mean_mase']:.2f} - clearly better than the simple guess."),
+        ("Store closures", f"Knowing closures in advance helps very little ({w('Categories', closed) - w('Categories', base):+.1f} "
+                           "points for categories): the store closes rarely, about 12 days in the test year."),
+        ("Recommendation", "Record bulk / organisation orders and pre-orders separately from walk-in sales. The model then "
+                           "forecasts walk-in demand, and known orders are added on top."),
+    ]
+    r += 2
+    ws.cell(row=r, column=1, value="WHAT THIS SHOWS").font = Font(name=FONT, size=11, bold=True, color="1F4E78")
+    for head, text in findings:
+        r += 1
+        ca = ws.cell(row=r, column=1, value=head)
+        ca.font, ca.alignment = BOLD_FONT, Alignment(vertical="top", wrap_text=True)
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=11)
+        cb = ws.cell(row=r, column=2, value=text)
+        cb.font, cb.alignment = BODY_FONT, Alignment(vertical="top", wrap_text=True)
+        ws.row_dimensions[r].height = 15 * max(2, -(-len(text) // 120))
+
+
+def sheet_grouping_search(wb, cand, path):
+    ws = wb.create_sheet("Grouping Search")
+    r = title(ws, "Would Fewer or Different Categories Forecast Better?", [
+        f"Many groupings were tried: hand-made ones, and a search that merged categories step by step "
+        f"({int(path.n_groups.max())} small groups down to 1).",
+        "Scored on item accuracy - every grouping forecasts the same items, so the comparison is fair. Each item's forecast borrows "
+        "its category's sales, which is where the grouping matters.",
+        "To avoid picking a lucky winner, groupings were CHOSEN on the older 6 past months and are SCORED here on the newer 6, "
+        "which the search never saw.",
+        "Lower MASE is better. Green = best on the unseen months. Category error % always falls with fewer groups (bigger totals "
+        "are smoother), so it cannot decide how many groups to have."])
+    base = cand.set_index("grouping").loc["Current categories"]
+    headers = ["Grouping", "Number of groups", "Chosen-on months: item MASE", "Unseen months: item MASE (all)",
+               "Unseen: fast items MASE", "Unseen: slow items MASE", "Change vs current (unseen, all items)",
+               "Unseen: category error % of units", "Unseen: category average MASE"]
+    rows, fills = [], {}
+    best = cand.test_all_mase.min()
+    for i, x in enumerate(cand.itertuples()):
+        rows.append([x.grouping, int(x.n_groups), x.sel_all_mase, x.test_all_mase, x.test_fast_mase,
+                     x.test_slow_mase, x.test_all_mase - base.test_all_mase, x.test_cat_wmape, x.test_cat_mase])
+        if abs(x.test_all_mase - best) < 1e-12:
+            fills[(i, 3)] = GOOD_FILL
+    r = table(ws, r, headers, rows, {2: "0.000", 3: "0.000", 4: "0.000", 5: "0.000", 6: "+0.000;-0.000;0.000",
+                                     7: "0.0", 8: "0.00"},
+              [34, 9, 12, 12, 11, 11, 12, 12, 12], fills)
+    ws.freeze_panes = None
+    ws.auto_filter.ref = None
+
+    pick = cand.iloc[-1]
+    findings = [
+        ("Answer", "No. Reducing or re-mixing the categories did not make the item forecasts better on the months the search "
+                   "did not see. The current categories scored best, though every sensible grouping is within a narrow band."),
+        ("The search result", f"The best grouping on the older months ({int(pick.n_groups)} groups) looked clearly better there "
+                              f"({pick.sel_all_mase:.2f} vs {base.sel_all_mase:.2f}), but on the newer months it was slightly worse "
+                              f"({pick.test_all_mase:.3f} vs {base.test_all_mase:.3f}; the 95% range of the difference, "
+                              f"{pick.test_vs_current_ci_lo:+.3f} to {pick.test_vs_current_ci_hi:+.3f}, includes zero). Its "
+                              "advantage was luck, which is exactly what testing on unseen months is for."),
+        ("Fewer groups", "Two groups (apparel / non-apparel) or one for the whole store make item forecasts worse, and the "
+                         "dashboard would lose detail. Their lower category error % only reflects bigger, smoother totals."),
+        ("Worth considering", "The store's own sections with the tiny ones folded in (11 groups) forecast items about as well as "
+                              "the current categories and use the store's own names - an option if the client prefers them."),
+    ]
+    r += 2
+    ws.cell(row=r, column=1, value="WHAT THIS SHOWS").font = Font(name=FONT, size=11, bold=True, color="1F4E78")
+    for head, text in findings:
+        r += 1
+        ca = ws.cell(row=r, column=1, value=head)
+        ca.font, ca.alignment = BOLD_FONT, Alignment(vertical="top", wrap_text=True)
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=9)
+        cb = ws.cell(row=r, column=2, value=text)
+        cb.font, cb.alignment = BODY_FONT, Alignment(vertical="top", wrap_text=True)
+        ws.row_dimensions[r].height = 15 * max(2, -(-len(text) // 110))
+
+    r += 2
+    ws.cell(row=r, column=1, value=f"The step-by-step search: accuracy as categories are merged ({int(path.n_groups.max())} groups down to 1)").font = BOLD_FONT
+    r += 1
+    heads = ["Number of groups", "Chosen-on months: item MASE", "Unseen months: item MASE", "Unseen: category error % of units"]
+    for j, h in enumerate(heads, start=1):
+        c = ws.cell(row=r, column=j, value=h)
+        c.font, c.fill, c.border = HEAD_FONT, HEAD_FILL, BORDER
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[r].height = 45
+    for i, x in enumerate(path.itertuples(), start=1):
+        for j, (v, f) in enumerate(((int(x.n_groups), "0"), (x.sel_all_mase, "0.000"),
+                                    (x.test_all_mase, "0.000"), (x.test_cat_wmape, "0.0")), start=1):
+            c = ws.cell(row=r + i, column=j, value=v)
+            c.font, c.border, c.number_format = BODY_FONT, BORDER, f
+
+
 # ---------------------------------------------------------------- main
 def main():
     cics = load_cics()
+    hist_summ, hist_per = load_history()
+    wi_path = os.path.join(ROOT, "data", "what_if_test.csv")
+    if not os.path.exists(wi_path):
+        raise SystemExit(f"missing {wi_path} - run scripts/test_what_if.py first")
+    what_if = pd.read_csv(wi_path)
+    gs = [os.path.join(ROOT, "data", f) for f in ("grouping_search_candidates.csv", "grouping_search_path.csv")]
+    if not all(os.path.exists(p) for p in gs):
+        raise SystemExit("missing data/grouping_search_*.csv - run scripts/search_groupings.py first")
+    gs_cand, gs_path = pd.read_csv(gs[0]), pd.read_csv(gs[1])
     con = sqlite3.connect("file:%s?mode=ro" % DB_PATH, uri=True)
     cat = pd.DataFrame(tca.category_rows(con))
     item = pd.DataFrame(tca.item_rows(con))
@@ -495,6 +750,9 @@ def main():
     sheet_cics_summary(wb, cics)
     sheet_cics_items(wb, cics)
     sheet_cics_mapping(wb, cics)
+    sheet_history(wb, hist_summ, hist_per)
+    sheet_what_if(wb, what_if)
+    sheet_grouping_search(wb, gs_cand, gs_path)
     wb.save(OUT)
 
     for s in summ:
