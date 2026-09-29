@@ -70,31 +70,54 @@ RESIDUE = "Uncategorised"
 # leading \b refuses to match inside them. The suffix form catches
 # T-Shirt, Poloshirt and Sweatshirt alike. "embro" (embroidered) is a
 # garment marker throughout these tally sheets, never a non-apparel one.
+#
+# The second line of several rules below (marked "store list") was added from
+# the store's own item list, FOR CICS STUDENTS.xlsx: names that matched no rule
+# and fell into the residue, placed where that list puts them
+# (scripts/compare_cics_categorization.py has the item-by-item mapping).
+# Tally shorthand: "OS" = oversized, "VL" = Varsity Lifestyle Co., "GT" =
+# Growling Tigers, "Baller" = the rubber wristband. Kits, bundles and vouchers
+# have no home among the other categories, so they get their own.
 CATEGORY_RULES = [
     ("Outerwear",          r"(\b(hoodies?|jackets?|windbreakers?|sweaters?|pullovers?|bombers?)\b"
-                           r"|\bsweat\s*shirts?\b|\bsweatshirts?\b)"),
+                           r"|\bsweat\s*shirts?\b|\bsweatshirts?\b"
+                           r"|\bmachete\b|\btaslan\b)"),                          # store list
     ("Shirts & Tops",      r"(\w*t-?shirts?\b|\w*shirts?\b|\bpolos?\b|\bpolo\s*shirts?\b"
                            r"|\bjerseys?\b|\btees?\b|\bsubli\w*|\boversized\b"
-                           r"|\bcrew\s*neck\b|\buniforms?\b|\bdri-?\s*fit\b|\bembro\w*)"),
+                           r"|\bcrew\s*neck\b|\buniforms?\b|\bdri-?\s*fit\b|\bembro\w*"
+                           r"|\bos\b|^go uste\b|\bvl ust\b|^gt\b|golden tigresses|happy tiger"  # store list
+                           r"|\bshorts?\b"
+                           r"|tiger pattern|\bquiana\b|\bquina\b|\bathletic\b|\bbasketball v\.\d"
+                           r"|\barchitecture\b|\bcollar\b|\bline design\b)"),
     ("Bags",               r"(\btote\s*bags?\b|\btotebags?\b|\btotes?\b|\beco\s*bags?\b"
-                           r"|\bbags?\b|\bpouch\w*|\bsling\b|\bbackpacks?\b)"),
-    ("Drinkware",          r"(\b(mugs?|tumblers?|bottles?|sippers?|jugs?)\b|\w*flasks?\b)"),
+                           r"|\bbags?\b|\bpouch\w*|\bsling\b|\bbackpacks?\b"
+                           r"|\bback\s*packs?\b)"),                                # store list
+    ("Drinkware",          r"(\b(mugs?|tumblers?|bottles?|sippers?|jugs?)\b|\w*flasks?\b"
+                           r"|\bcups?\b)"),                                        # store list
     ("Lanyards & IDs",     r"(\blanyards?\b|\blaces?\b|\bid\s*cases?\b|\bid\s*holders?\b"
-                           r"|\bribbons?\b)"),
+                           r"|\bribbons?\b"
+                           r"|\bi\.d\s*cases?\b|\bretractable\b)"),                # store list
     ("Keychains & Charms", r"(\bkey\s*chains?\b|\bkeychains?\b|\bcharms?\b|\bclickers?\b"
-                           r"|\bfidgets?\b|\bpins?\b)"),
+                           r"|\bfidgets?\b|\bpins?\b"
+                           r"|\bbrooch\w*)"),                                      # store list
     ("Stationery",         r"(\bball\s*pens?\b|\bpens?\b|\bpencils?\b|\bnotebooks?\b|\bnb\b"
                            r"|\bnotelets?\b|\bstickers?\b|\bplanners?\b|\bbookmarks?\b"
-                           r"|\bfolders?\b|\bpapers?\b|\berasers?\b|\brulers?\b)"),
+                           r"|\bfolders?\b|\bpapers?\b|\berasers?\b|\brulers?\b"
+                           r"|\bpaperweights?\b)"),                                # store list
     ("Plush & Souvenirs",  r"(\bplushi?e?s?\b|\bplush\b|\bstuff(ed)?\s*toys?\b|\btoys?\b"
                            r"|\bclappers?\b|\barch\b|\bfigurines?\b|\btokens?\b"
-                           r"|\bw/?\s*box\b|\btiger\s*w\b)"),
+                           r"|\bw/?\s*box\b|\btiger\s*w\b"
+                           r"|\bcars?\b|^(big|small) tiger\b|\bmain building\b)"),  # store list
     ("Apparel Accessories", r"(\bscarf\b|\bscarves\b|\bsash\b|\bhead\s*bands?\b"
-                            r"|\bwrist\s*bands?\b|\bbracelets?\b|\bgloves?\b)"),
+                            r"|\bwrist\s*bands?\b|\bbracelets?\b|\bgloves?\b"
+                            r"|\bballer\b|\btiger claw\b|\bblankets?\b|\bhair\s*bands?\b"  # store list
+                            r"|\bcostumes?\b|\bcustome\b)"),
     ("Umbrellas & Gear",   r"(\bumbrellas?\b|\bumb\b|\bcanopy\b|\bcaps?\b|\bhats?\b"
                            r"|\bsocks?\b|\btowels?\b|\bfans?\b|\bshoes?\b)"),
     ("Home & Novelty",     r"(\bclocks?\b|\butensils?\b|\bmouse\s*pads?\b|\blamps?\b"
-                           r"|\bframes?\b|\bmagnets?\b|\bcoasters?\b|\bpower\s*banks?\b)"),
+                           r"|\bframes?\b|\bmagnets?\b|\bcoasters?\b|\bpower\s*banks?\b"
+                           r"|\bchargers?\b)"),                                    # store list
+    ("Bundles & Vouchers", r"(\bkits?\b|\bbundle\b|\bvouchers?\b)"),              # store list
 ]
 
 
