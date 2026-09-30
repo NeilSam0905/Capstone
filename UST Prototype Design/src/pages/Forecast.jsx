@@ -5,7 +5,7 @@ import {
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
-import { LineChart, ForecastChart } from '../components/charts';
+import { LineChart, ScrollForecastChart } from '../components/charts';
 import { num, shortMonth, usDate, modelLabel, FSN_TONE, FSN_LABEL } from '../lib/format';
 import { ALL_SUPPLIERS } from '../services/dataService';
 
@@ -155,31 +155,20 @@ export default function Forecast({ filters }) {
         </div>
       </div>
 
-      {/* 30-day forecast — category total, or the selected item */}
+      {/* 30-day forecast and the monthly history leading up to it — category
+          total, or the selected item */}
       {product
-        ? <ForecastPanel productId={product.product_id} forecastMeta={forecastMeta} />
+        ? <ForecastPanel productId={product.product_id} itemName={product.item_name}
+                         forecastMeta={forecastMeta} />
         : <CategoryForecastPanel category={activeCategory} forecastMeta={forecastMeta}
                                  onPickItem={setSelectedId} />}
-
-      {/* Observed monthly history — per item only. There is no category-level
-          history endpoint, and summing one client-side from a filtered product
-          list would quietly exclude the non-Fast items the category contains,
-          producing a total that does not match anything. */}
-      {product ? (
-        <div className="card card__pad">
-          <div className="card-h">
-            <span className="section-h">Observed Monthly Units — {product.item_name}</span>
-            <span className="hint">actual tallied history · no fitted line, no projection</span>
-          </div>
-          <HistoryChart productId={product.product_id} />
-        </div>
-      ) : null}
     </div>
   );
 }
 
 /**
- * The category view: one summed 30-day line plus the items behind it.
+ * The category view: one chart of the summed history and forecast, plus the
+ * items behind it.
  *
  * `n_forecast` vs `n_products` is stated explicitly because only Fast-moving
  * items are forecast — the total is for those items, not for everything the
@@ -206,21 +195,10 @@ function CategoryForecastPanel({ category, forecastMeta, onPickItem }) {
 
   return (
     <>
-      <div className="card card__pad">
-        <div className="card-h">
-          <span className="section-h">30-Day Demand Forecast — {category}</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="tag tag--gold" title={fd.model_type}>{modelLabel(fd.model_type)}</span>
-            <span className="hint">Generated {usDate(fd.snapshot_date)}</span>
-          </div>
-        </div>
-
-        <ForecastChart data={fd.forecast} />
-        <div className="legend" style={{ justifyContent: 'center', marginTop: 10 }}>
-          <span><i style={{ background: 'var(--accent)' }} />Forecast (ŷ)</span>
-          <span><i style={{ background: 'var(--accent)', opacity: 0.15 }} />Confidence band</span>
-        </div>
-      </div>
+      <ForecastCard key={category} title={category} fd={fd}
+                    scope={fd.n_forecast < fd.n_products
+                      ? `the ${fd.n_forecast} forecast item${fd.n_forecast === 1 ? '' : 's'} only`
+                      : null} />
 
       <CategoryTotalCard category={category} fd={fd} onPickItem={onPickItem} />
     </>
@@ -328,7 +306,7 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
   );
 }
 
-function ForecastPanel({ productId, forecastMeta }) {
+function ForecastPanel({ productId, itemName, forecastMeta }) {
   const { data: forecast, loading } = useData(
     () => getProductForecast(productId), [productId], null,
     { key: `forecast:${productId}` }
@@ -347,6 +325,15 @@ function ForecastPanel({ productId, forecastMeta }) {
           title="No forecast has been generated for this SKU"
           reason={forecast?.reason ?? forecastMeta?.reason}
         />
+        {/* Without a forecast there is no month to predict, but the real
+            history is still worth showing on its own. */}
+        <div className="card card__pad">
+          <div className="card-h">
+            <span className="section-h">Observed Monthly Units — {itemName}</span>
+            <span className="hint">actual tallied history · no fitted line, no projection</span>
+          </div>
+          <HistoryChart productId={productId} />
+        </div>
       </>
     );
   }
@@ -356,29 +343,54 @@ function ForecastPanel({ productId, forecastMeta }) {
 
   return (
     <>
-      {/* Forecast chart */}
-      <div className="card card__pad">
-        <div className="card-h">
-          <span className="section-h">30-Day Demand Forecast — {fd.item_name}</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="tag tag--gold" title={fd.model_type}>{modelLabel(fd.model_type)}</span>
-            <ReliabilityTag metrics={fd.metrics} isHeuristic={fd.is_heuristic} />
-            <span className="hint">Generated {usDate(fd.snapshot_date)}</span>
-          </div>
-        </div>
-        <ForecastChart data={fd.forecast} />
-        <div className="legend" style={{ justifyContent: 'center', marginTop: 10 }}>
-          <span><i style={{ background: 'var(--accent)' }} />Forecast (ŷ)</span>
-          <span><i style={{ background: 'var(--accent)', opacity: 0.15 }} />Confidence band</span>
-        </div>
-
+      <ForecastCard key={productId} title={fd.item_name} fd={fd}
+                    tags={<ReliabilityTag metrics={fd.metrics} isHeuristic={fd.is_heuristic} />}>
         {fd.is_heuristic && (
           <div className="notice notice--warn" style={{ marginTop: 12 }}>
             Not enough sales history yet to double-check this forecast — treat it as a rough estimate.
           </div>
         )}
-      </div>
+      </ForecastCard>
     </>
+  );
+}
+
+/**
+ * The one forecast chart: a light monthly preview of past demand running
+ * into the next 30 days' forecast in full daily detail, on a timeline that
+ * opens on the forecast and scrolls left through the history (see
+ * ScrollForecastChart).
+ *
+ * `fd.history` comes from the same response as the forecast and covers the
+ * same items (for a category, only the forecast contributors), so the history
+ * and the forecast are totals of the same thing. `scope` names that when it is
+ * narrower than the whole category.
+ *
+ * Callers key this on the item/category, so switching either reopens the
+ * chart on the forecast instead of wherever the last one was scrolled to.
+ */
+function ForecastCard({ title, fd, scope, tags, children }) {
+  return (
+    <div className="card card__pad">
+      <div className="card-h">
+        <span className="section-h">Demand Forecast — {title}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span className="tag tag--gold" title={fd.model_type}>{modelLabel(fd.model_type)}</span>
+          {tags}
+          <span className="hint">Generated {usDate(fd.snapshot_date)}</span>
+        </div>
+      </div>
+      {scope && <div className="hint" style={{ marginTop: -6, marginBottom: 6 }}>Totals cover {scope}.</div>}
+
+      <ScrollForecastChart history={fd.history} forecast={fd.forecast} />
+      <div className="legend" style={{ justifyContent: 'center', marginTop: 10 }}>
+        <span><i style={{ background: 'var(--text-2)', opacity: 0.7 }} />Past months · average sold per day</span>
+        <span><i style={{ background: 'var(--accent)' }} />Forecast per day</span>
+        <span><i style={{ background: 'var(--accent)', opacity: 0.25 }} />Likely range</span>
+      </div>
+
+      {children}
+    </div>
   );
 }
 

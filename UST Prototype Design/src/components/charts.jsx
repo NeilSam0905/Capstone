@@ -5,7 +5,7 @@
  * value axis can be units as well as pesos.
  */
 
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { num, DONUT_COLORS } from '../lib/format';
 
@@ -485,6 +485,364 @@ export function ForecastChart({ data, height = 260 }) {
         />
       </div>
     )}
+    </div>
+  );
+}
+
+/* ---------- Scrollable timeline: monthly history, then the daily forecast ---------- */
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const ymIndex = ym => +ym.slice(0, 4) * 12 + (+ym.slice(5, 7) - 1);
+const fmtYm = k => `${MONTH_ABBR[k % 12]} ${Math.floor(k / 12)}`;
+const fmtIsoDay = s => `${MONTH_ABBR[+s.slice(5, 7) - 1]} ${+s.slice(8, 10)}, ${s.slice(0, 4)}`;
+
+/** A "nice" axis ceiling and step for a maximum, four-ish ticks. */
+function niceAxis(v) {
+  const rawStep = (v || 1) / 4;
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const norm = rawStep / mag;
+  const step = Math.max(1, (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag);
+  return { max: Math.ceil((v || 1) / step) * step, step };
+}
+
+/** The months before the forecast as a light line, one point per month, then
+ *  the forecast month in full, day by day - on one horizontally scrolling
+ *  timeline that opens on the forecast.
+ *
+ *  The two parts share the value axis, so the history is plotted as each
+ *  month's AVERAGE UNITS PER DAY (units / tally_days) rather than its total:
+ *  a month's total is ~30x a day's forecast, and on one axis either the
+ *  history would tower over the forecast or the forecast would lie on the
+ *  floor. The month total is still in the tooltip.
+ *
+ *  `history` is [{ month, units, tally_days }] - a month missing from it was
+ *  never tallied and breaks the line rather than dipping to zero.
+ *  `forecast` is the Result_Forecast rows [{ forecast_date, yhat, yhat_lower,
+ *  yhat_upper }]. */
+export function ScrollForecastChart({ history, forecast, height = 290, monthW = 56, dayW = 22 }) {
+  const scrollRef = useRef(null);
+  const dragRef = useRef(null);
+  const frameRef = useRef(0);
+  const [hover, setHover] = useState(null);
+  const [atStart, setAtStart] = useState(false);
+  const [atEnd, setAtEnd] = useState(true);
+  const [dragging, setDragging] = useState(false);
+
+  // One slot per calendar month from the first to the last with history, so
+  // an untallied month still takes its place on the timeline.
+  const model = useMemo(() => {
+    const byMonth = new Map((history ?? []).map(r => [ymIndex(r.month), r]));
+    const keys = [...byMonth.keys()];
+    const months = [];
+    if (keys.length) {
+      for (let k = Math.min(...keys); k <= Math.max(...keys); k++) {
+        const r = byMonth.get(k);
+        months.push({
+          k,
+          units: r ? r.units : null,
+          tallyDays: r ? r.tally_days : 0,
+          perDay: r && r.tally_days ? r.units / r.tally_days : null,
+        });
+      }
+    }
+    const days = (forecast ?? []).map(r => ({
+      date: r.forecast_date,
+      yhat: r.yhat,
+      lo: r.yhat_lower ?? r.yhat,
+      hi: r.yhat_upper ?? r.yhat,
+    }));
+    const total = days.reduce((s, d) => s + (d.yhat ?? 0), 0);
+    const peak = Math.max(0, ...months.map(m => m.perDay ?? 0), ...days.map(d => d.hi ?? 0));
+    return { months, days, total, peak };
+  }, [history, forecast]);
+
+  const { months, days, total, peak } = model;
+  const padX = 12, padR = 20, padT = 34, padB = 44, AX = 50;
+  const H = height;
+  const X0 = padX + months.length * monthW;          // where the forecast begins
+  const W = X0 + days.length * dayW + padR;
+  const mx = i => padX + i * monthW + monthW / 2;
+  const dx = j => X0 + j * dayW + dayW / 2;
+  const { max: yMax, step } = niceAxis(peak);
+  const plotBottom = H - padB;
+  const y = v => padT + (1 - v / yMax) * (plotBottom - padT);
+  const ticks = [];
+  for (let v = 0; v <= yMax + 1e-9; v += step) ticks.push(v);
+
+  const measure = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setAtStart(el.scrollLeft <= 2);
+    setAtEnd(el.scrollLeft + el.clientWidth >= el.scrollWidth - 2);
+  }, []);
+
+  // Open on the forecast: scrolled all the way to the right.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth;
+    measure();
+  }, [measure, W]);
+
+  useEffect(() => {
+    window.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('resize', measure);
+      cancelAnimationFrame(frameRef.current);
+    };
+  }, [measure]);
+
+  if (!days.length && months.length < 2) {
+    return <div className="empty">Not enough data to plot.</div>;
+  }
+
+  function onScroll() {
+    cancelAnimationFrame(frameRef.current);
+    frameRef.current = requestAnimationFrame(measure);
+    if (hover) setHover(null);
+  }
+
+  function toForecast() {
+    const el = scrollRef.current;
+    el?.scrollTo({ left: el.scrollWidth, behavior: 'smooth' });
+  }
+
+  function onKeyDown(e) {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); el.scrollBy({ left: -3 * monthW, behavior: 'smooth' }); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); el.scrollBy({ left: 3 * monthW, behavior: 'smooth' }); }
+    else if (e.key === 'Home') { e.preventDefault(); el.scrollTo({ left: 0, behavior: 'smooth' }); }
+    else if (e.key === 'End') { e.preventDefault(); toForecast(); }
+  }
+
+  // Click-and-drag panning for a mouse: without it, a mouse user's only way
+  // sideways is the thin scrollbar or Shift+wheel. Touch and trackpads already
+  // scroll natively, so only the mouse is captured.
+  function onPointerDown(e) {
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    dragRef.current = { x: e.clientX, left: scrollRef.current.scrollLeft };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function onPointerMove(e) {
+    const drag = dragRef.current;
+    if (drag) {
+      const delta = e.clientX - drag.x;
+      if (Math.abs(delta) > 3 && !dragging) setDragging(true);
+      scrollRef.current.scrollLeft = drag.left - delta;
+      return;
+    }
+    const el = scrollRef.current;
+    const svg = el?.querySelector('svg');
+    if (!svg) return;
+    const lx = e.clientX - svg.getBoundingClientRect().left;
+    let target = null;
+    if (lx >= X0 && days.length) {
+      const j = Math.min(days.length - 1, Math.max(0, Math.floor((lx - X0) / dayW)));
+      target = { kind: 'day', i: j, cx: dx(j) };
+    } else if (lx < X0 && months.length) {
+      const i = Math.min(months.length - 1, Math.max(0, Math.floor((lx - padX) / monthW)));
+      if (months[i].perDay != null) target = { kind: 'month', i, cx: mx(i) };
+    }
+    if (!target) { setHover(null); return; }
+    if (hover?.kind === target.kind && hover?.i === target.i) return;
+    // Keep the tip inside the visible window: centred normally, pinned to
+    // its left or right edge when the point is near either side.
+    const rel = target.cx - el.scrollLeft;
+    target.align = rel < 90 ? 'left' : rel > el.clientWidth - 90 ? 'right' : 'center';
+    setHover(target);
+  }
+  function endDrag() {
+    dragRef.current = null;
+    if (dragging) setDragging(false);
+  }
+
+  // History line, broken wherever a month was never tallied.
+  const segs = [];
+  let cur = [];
+  months.forEach((m, i) => {
+    if (m.perDay == null) { if (cur.length) segs.push(cur); cur = []; return; }
+    cur.push(`${cur.length ? 'L' : 'M'}${mx(i).toFixed(1)},${y(m.perDay).toFixed(1)}`);
+  });
+  if (cur.length) segs.push(cur);
+  const histPath = segs.map(sg => sg.join(' ')).join(' ');
+
+  const band = days.length
+    ? days.map((d, j) => `${j === 0 ? 'M' : 'L'}${dx(j).toFixed(1)},${y(d.hi).toFixed(1)}`).join(' ')
+      + ' ' + [...days].reverse().map((d, k) => `L${dx(days.length - 1 - k).toFixed(1)},${y(d.lo).toFixed(1)}`).join(' ')
+      + ' Z'
+    : '';
+  const fcLine = days.map((d, j) => `${j === 0 ? 'M' : 'L'}${dx(j).toFixed(1)},${y(d.yhat).toFixed(1)}`).join(' ');
+  const lastMonth = months.length ? months[months.length - 1] : null;
+
+  let tip = null;
+  if (hover?.kind === 'month') {
+    const m = months[hover.i];
+    tip = { label: fmtYm(m.k), value: `${num(m.units)} units`,
+            sub: `about ${num(m.perDay)} a day · ${m.tallyDays} tally day${m.tallyDays === 1 ? '' : 's'}` };
+  } else if (hover?.kind === 'day') {
+    const d = days[hover.i];
+    tip = { label: `${fmtIsoDay(d.date)} · forecast`, value: num(Math.round(d.yhat)),
+            sub: `likely ${num(Math.round(d.lo))} – ${num(Math.round(d.hi))} units` };
+  }
+
+  const fcMonthLabel = days.length ? fmtYm(ymIndex(days[0].date.slice(0, 7))) : '';
+
+  return (
+    <div className="sfc">
+      <div className="sfc__bar">
+        <span className="hint">
+          {atEnd ? '← Scroll or drag left to see past months' : 'Past months · average units sold per day'}
+        </span>
+        {!atEnd && (
+          <button type="button" className="btn btn--ghost btn--sm" onClick={toForecast}>
+            Back to forecast →
+          </button>
+        )}
+      </div>
+
+      <div className="sfc__body">
+        {/* Pinned value axis: stays put while the timeline scrolls under it */}
+        <svg width={AX} height={H} className="sfc__axis" aria-hidden="true">
+          <text x={AX - 8} y={padT - 14} textAnchor="end" fontSize="9.5" fill="var(--muted)">units/day</text>
+          {ticks.map(v => (
+            <text key={v} x={AX - 8} y={y(v) + 3.5} textAnchor="end" fontSize="10" fill="var(--muted)">{num(v)}</text>
+          ))}
+        </svg>
+
+        <div className="sfc__viewport">
+          <div
+            ref={scrollRef}
+            className={`sfc__scroll${dragging ? ' is-dragging' : ''}`}
+            tabIndex={0}
+            role="region"
+            aria-label="Demand timeline. Use the left and right arrow keys to move through past months."
+            onScroll={onScroll}
+            onKeyDown={onKeyDown}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+            onMouseLeave={() => setHover(null)}
+          >
+            <div style={{ position: 'relative', width: W }}>
+              <svg width={W} height={H} style={{ display: 'block' }}>
+                {/* Forecast region */}
+                {days.length > 0 && (
+                  <g>
+                    <rect x={X0} y={4} width={W - X0} height={plotBottom - 4}
+                          fill="var(--accent)" fillOpacity="0.09" rx="6" />
+                    <line x1={X0} y1={4} x2={X0} y2={plotBottom}
+                          stroke="var(--accent)" strokeWidth="1.5" strokeDasharray="4 4" />
+                    <text x={X0 + 10} y={20} fontSize="11" fontWeight="700" fill="var(--accent-deep)">
+                      Forecast · next {days.length} days · {num(Math.round(total))} units
+                    </text>
+                    {X0 > 150 && (
+                      <text x={X0 - 10} y={20} textAnchor="end" fontSize="11" fontWeight="600" fill="var(--muted)">
+                        Past months
+                      </text>
+                    )}
+                  </g>
+                )}
+
+                {/* Horizontal gridlines */}
+                {ticks.map(v => (
+                  <line key={v} x1={0} y1={y(v)} x2={W} y2={y(v)} stroke="var(--line)" strokeWidth="1" />
+                ))}
+
+                {/* Untallied months: shaded, so the break in the line reads
+                    as missing data rather than as a drop in sales */}
+                {months.map((m, i) => (m.perDay == null ? (
+                  <g key={m.k}>
+                    <rect x={mx(i) - monthW / 2} y={padT} width={monthW} height={plotBottom - padT}
+                          fill="var(--muted)" fillOpacity="0.07" />
+                    <text x={mx(i)} y={plotBottom - 8} textAnchor="middle" fontSize="9"
+                          fontStyle="italic" fill="var(--muted)">no tally</text>
+                  </g>
+                ) : null))}
+
+                {/* Hover guide */}
+                {hover && (
+                  <line x1={hover.cx} y1={padT} x2={hover.cx} y2={plotBottom}
+                        stroke={hover.kind === 'day' ? 'var(--accent)' : 'var(--text-2)'}
+                        strokeWidth="1" strokeDasharray="3 3" />
+                )}
+
+                {/* Past months: the light preview line */}
+                <path d={histPath} fill="none" stroke="var(--text-2)" strokeOpacity="0.7" strokeWidth="2"
+                      strokeLinejoin="round" strokeLinecap="round" />
+                {months.map((m, i) => (m.perDay == null ? null : (
+                  <circle key={m.k} cx={mx(i)} cy={y(m.perDay)}
+                          r={hover?.kind === 'month' && hover.i === i ? 5 : 3}
+                          fill={hover?.kind === 'month' && hover.i === i ? 'var(--text-2)' : 'var(--card)'}
+                          stroke="var(--text-2)" strokeWidth="1.8" />
+                )))}
+
+                {/* Hand-off from the last month into the first forecast day */}
+                {lastMonth?.perDay != null && days.length > 0 && (
+                  <line x1={mx(months.length - 1)} y1={y(lastMonth.perDay)} x2={dx(0)} y2={y(days[0].yhat)}
+                        stroke="var(--accent)" strokeWidth="1.8" strokeDasharray="4 4" strokeOpacity="0.8" />
+                )}
+
+                {/* The forecast month, in detail */}
+                {days.length > 0 && (
+                  <g>
+                    <path d={band} fill="var(--accent)" fillOpacity="0.18" />
+                    <path d={fcLine} fill="none" stroke="var(--accent)" strokeWidth="2.5"
+                          strokeLinejoin="round" strokeLinecap="round" />
+                    {days.map((d, j) => (
+                      <circle key={d.date} cx={dx(j)} cy={y(d.yhat)}
+                              r={hover?.kind === 'day' && hover.i === j ? 5 : 3}
+                              fill={hover?.kind === 'day' && hover.i === j ? 'var(--accent)' : 'var(--card)'}
+                              stroke="var(--accent)" strokeWidth="2" />
+                    ))}
+                  </g>
+                )}
+
+                {/* X axis - history: month, with the year under each January,
+                    the first month and the last (the one on screen at open);
+                    forecast: day numbers, then the month */}
+                {months.map((m, i) => (
+                  <g key={m.k}>
+                    <text x={mx(i)} y={plotBottom + 14} textAnchor="middle" fontSize="10" fill="var(--muted)">
+                      {MONTH_ABBR[m.k % 12]}
+                    </text>
+                    {(i === 0 || i === months.length - 1 || m.k % 12 === 0) && (
+                      <text x={mx(i)} y={plotBottom + 32} textAnchor="middle" fontSize="11" fontWeight="700"
+                            fill="var(--text-2)">{Math.floor(m.k / 12)}</text>
+                    )}
+                  </g>
+                ))}
+                {days.map((d, j) => {
+                  const dom = +d.date.slice(8, 10);
+                  return (j === 0 || [1, 8, 15, 22, 29].includes(dom)) ? (
+                    <text key={d.date} x={dx(j)} y={plotBottom + 14} textAnchor="middle" fontSize="10"
+                          fill="var(--accent-deep)">{dom}</text>
+                  ) : null;
+                })}
+                {days.length > 0 && (
+                  <text x={X0 + 6} y={plotBottom + 32} fontSize="11" fontWeight="700" fill="var(--accent-deep)">
+                    {fcMonthLabel} · day by day
+                  </text>
+                )}
+              </svg>
+
+              {tip && (
+                <div className="charttip-wrap"
+                     style={{
+                       left: `${hover.cx}px`,
+                       transform: hover.align === 'left' ? 'translateX(-12px)'
+                         : hover.align === 'right' ? 'translateX(calc(-100% + 12px))' : undefined,
+                     }}>
+                  <ChartTip label={tip.label} value={tip.value} sub={tip.sub} />
+                </div>
+              )}
+            </div>
+          </div>
+          {/* Edge fades: more timeline lies that way */}
+          {!atStart && <div className="sfc__fade sfc__fade--l" />}
+          {!atEnd && <div className="sfc__fade sfc__fade--r" />}
+        </div>
+      </div>
     </div>
   );
 }
