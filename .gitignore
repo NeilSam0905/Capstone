@@ -3,6 +3,13 @@ ustore.db
 # only while something has it open, and are machine-local like the db itself.
 ustore.db-wal
 ustore.db-shm
+# Any copy of the database under another name - `ustore.db.pre_contract`,
+# `ustore.db.pre_rebuild-2026-09-30`, whatever the next one is called. The bare
+# `ustore.db` above does not match these, so before this line a backup left
+# anywhere in the tree was stageable: `git add -A -- data/` picked up 10 MB of
+# real sales, prices and supplier names. No slash, so it matches at any depth,
+# which is where these actually get left (data/pre_contract/).
+ustore.db.*
 __pycache__/
 *.pyc
 .venv/
