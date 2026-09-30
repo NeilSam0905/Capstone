@@ -196,6 +196,7 @@ The README covers the pipeline and how to run it. Everything else lives in
 | Method comparison (10 methods, identical folds) | `docs/FORECAST_METHOD_COMPARISON.md` |
 | Fast-moving benchmark: 29 methods, raw vs cleaned, by category (incl. Prophet and the ML learners) | `docs/FAST_MOVING_BENCHMARK.md` |
 | Category-grain experiment: 27 methods aggregated, and why it does not ship | `docs/FAST_MOVING_BENCHMARK.md` §6.15, `docs/DIVERGENCE_REGISTER.md` #24 |
+| Would synthetic data for the missing 2023–24 months help? (no) | `docs/SYNTHETIC_MISSING_MONTHS.md` |
 | Where every number came from | `docs/DATA_PROVENANCE.md` |
 | Divergences from the manuscript | `docs/DIVERGENCE_REGISTER.md` |
 | The remediation plan and its status | `docs/REMEDIATION_MASTER_v2.md`, `docs/REMEDIATION_WAVE1_STATUS.md` |
