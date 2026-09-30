@@ -18,7 +18,7 @@ USTore_Forecast_Testing_Summary.xlsx.)
   CICS vs Current    the store's own item list ("FOR CICS STUDENTS.xlsx") as the
                      grouping, against the current 12 categories
   CICS Per Item      that comparison per Fast and Slow item
-  CICS Mapping       which CICS section each of the 519 products was placed in
+  CICS Mapping       which CICS section each product was placed in
 
   More History Test  accuracy when the models see only the last 3-18 months
   What-If Scenarios  error if bulk orders / closures were known in advance
@@ -246,8 +246,8 @@ def sheet_readme(wb, f):
         ("Walk-forward test", f"Pretend it is an earlier date, forecast the next 30 days using only sales before it, then "
                               f"compare with what really sold. Repeated for 12 past 30-day windows ({f['first_win']} to "
                               f"{f['last_win']})."),
-        ("Fair warning", f"The methods were picked by comparing many options on these same 12 months (47 for items), and "
-                         f"the calendar rule was set after seeing two of them, so these scores are slightly flattering. "
+        ("Fair warning", f"The methods were picked by comparing many options on nearly the same past months (47 for "
+                         f"items), and the calendar rule was set after seeing two of them, {f['cal_effect']}. "
                          f"Without the calendar rule, items are off by {f['item_base']:.1f}% instead of "
                          f"{item['wmape']:.1f}%, and categories by {f['cat_base']:.1f}% instead of {cat['wmape']:.1f}%."),
         ("Items that stopped selling", f"{item['n'] - live['n']} of the {item['n']} items have not sold in a year. They "
@@ -502,7 +502,7 @@ def load_history():
     return pd.read_csv(paths[0]), pd.read_csv(paths[1])
 
 
-def sheet_history(wb, summ, per):
+def sheet_history(wb, summ, per, span_months):
     ws = wb.create_sheet("More History Test")
     arms = list(dict.fromkeys(summ.arm))
     cohorts = ["Categories", "Fast items", "Slow items"]
@@ -554,7 +554,7 @@ def sheet_history(wb, summ, per):
                                "barely change their forecast."),
         ("What more years would need", "To gain from several years of data, a model has to learn from it - for example a "
                                        "yearly pattern such as 'this month last year'. That needs at least 2-3 years of real "
-                                       "sales, which the store does not have yet (about 26 months). Synthetic history cannot "
+                                       f"sales, which the store does not have yet (about {span_months} months). Synthetic history cannot "
                                        "stand in for it: it only repeats patterns already in the data (tested before, see "
                                        "docs/SPARSE_DEMAND_EXPERIMENTS.md section 4)."),
         ("In one line", "About 6 to 12 months of history is enough for the current models; more years pay off only "
@@ -688,13 +688,16 @@ def sheet_grouping_search(wb, cand, path):
     ws.auto_filter.ref = None
 
     pick = cand.iloc[-1]
+    lo, hi = pick.test_vs_current_ci_lo, pick.test_vs_current_ci_hi
+    ci_note = ("includes zero" if lo < 0 < hi else
+               "is entirely above zero, so it is genuinely worse there" if lo >= 0 else "is entirely below zero")
     findings = [
         ("Answer", "No. Reducing or re-mixing the categories did not make the item forecasts better on the months the search "
                    "did not see. The current categories scored best, though every sensible grouping is within a narrow band."),
         ("The search result", f"The best grouping on the older months ({int(pick.n_groups)} groups) looked clearly better there "
                               f"({pick.sel_all_mase:.2f} vs {base.sel_all_mase:.2f}), but on the newer months it was slightly worse "
                               f"({pick.test_all_mase:.3f} vs {base.test_all_mase:.3f}; the 95% range of the difference, "
-                              f"{pick.test_vs_current_ci_lo:+.3f} to {pick.test_vs_current_ci_hi:+.3f}, includes zero). Its "
+                              f"{lo:+.3f} to {hi:+.3f}, {ci_note}). Its "
                               "advantage was luck, which is exactly what testing on unseen months is for."),
         ("Fewer groups", "Two groups (apparel / non-apparel) or one for the whole store make item forecasts worse, and the "
                          "dashboard would lose detail. Their lower category error % only reflects bigger, smoother totals."),
@@ -894,6 +897,9 @@ def main():
     last = pd.read_sql_query("""SELECT f.product_id AS key, MAX(d.calendar_date) AS last_sale FROM Fact_Sales f
         JOIN Dim_Date d ON d.date_id = f.date_id WHERE f.quantity_sold > 0 GROUP BY 1""", con).set_index("key")
     n_products = con.execute("SELECT COUNT(*) FROM Dim_Product").fetchone()[0]
+    first_sale, last_sale = con.execute("""SELECT MIN(d.calendar_date), MAX(d.calendar_date) FROM Fact_Sales f
+        JOIN Dim_Date d ON d.date_id = f.date_id WHERE f.quantity_sold > 0""").fetchone()
+    span_months = round((pd.Timestamp(last_sale) - pd.Timestamp(first_sale)).days / 30.44)
 
     cs, its = score(cat), score(item)
     check_against_db(cs, cstored, "Categories")
@@ -928,6 +934,11 @@ def main():
                  bulk_lo=min(bulk), bulk_hi=max(bulk), ex_item=example["item"],
                  item_base=wmape(item_all[item_all.version == "base"]),
                  cat_base=wmape(cat_all[cat_all.version == "base"]))
+    # Whether the calendar rule helps on these windows decides how the Read Me words its caveat.
+    helps = [facts[b] > s["wmape"] for b, s in (("item_base", summ[1]), ("cat_base", summ[0]))]
+    facts["cal_effect"] = ("so these scores are slightly flattering" if all(helps) else
+                           "yet on these windows the rule makes the forecasts worse, not better" if not any(helps) else
+                           "and on these windows it helps one level and hurts the other")
 
     cat = cat.sort_values(["key", "fold"]).assign(lead=lambda d: [(k,) for k in d.key])
     item = item.assign(avg=item.key.map(its.avg_actual)).sort_values(["avg", "key", "fold"], ascending=[False, True, True])
@@ -946,7 +957,7 @@ def main():
     sheet_cics_summary(wb, cics)
     sheet_cics_items(wb, cics)
     sheet_cics_mapping(wb, cics)
-    sheet_history(wb, hist_summ, hist_per)
+    sheet_history(wb, hist_summ, hist_per, span_months)
     sheet_what_if(wb, what_if, n_closed)
     sheet_grouping_search(wb, gs_cand, gs_path)
     wb.save(OUT)
