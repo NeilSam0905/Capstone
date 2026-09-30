@@ -145,7 +145,14 @@ export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', 
 }
 
 /* ---------- Donut ---------- */
-export function Donut({ data, size = 180 }) {
+// Round to 1dp below 1% so a tiny-but-real category is not shown as 0%.
+const sharePct = frac => (frac >= 0.01 ? Math.round(frac * 100) : Math.round(frac * 1000) / 10);
+
+/** `groupBelow` (a fraction, e.g. 0.1) folds every slice smaller than that
+ *  share into one grey "Others" slice, drawn last; hovering it lists the
+ *  categories inside with their own share of the total. A lone small slice
+ *  is left as itself - an "Others" of one only hides its name. */
+export function Donut({ data, size = 180, groupBelow = 0 }) {
   // One hover index drives both the ring and the legend, so pointing at either
   // highlights the other - the legend is the label for the slice, and reading
   // a donut means pairing them.
@@ -155,14 +162,25 @@ export function Donut({ data, size = 180 }) {
 
   const total = data.reduce((s, d) => s + d.value, 0);
   if (!total) return <div className="empty">No data.</div>;
+  const small = groupBelow > 0 ? data.filter(d => d.value / total < groupBelow) : [];
+  let slices = data;
+  if (small.length > 1) {
+    const members = [...small]
+      .sort((a, b) => b.value - a.value)
+      .map(d => ({ name: d.name, value: d.value, pct: sharePct(d.value / total) }));
+    slices = [
+      ...data.filter(d => d.value / total >= groupBelow),
+      { name: 'Others', value: members.reduce((s, m) => s + m.value, 0), members },
+    ];
+  }
   const R = size / 2, r = R * 0.6, cx = R, cy = R;
   const p = (ang, rad) => [cx + Math.cos(ang) * rad, cy + Math.sin(ang) * rad];
   // start angle of each slice, accumulated without mutating across the map
-  const starts = data.reduce(
+  const starts = slices.reduce(
     (acc, d) => [...acc, acc[acc.length - 1] + (d.value / total) * Math.PI * 2],
     [-Math.PI / 2]
   );
-  const arcs = data.map((d, i) => {
+  const arcs = slices.map((d, i) => {
     const frac = d.value / total;
     const a0 = starts[i], a1 = starts[i + 1];
     const large = frac > 0.5 ? 1 : 0;
@@ -189,16 +207,27 @@ export function Donut({ data, size = 180 }) {
     return {
       dStr,
       full: frac >= 0.9999,
-      color: DONUT_COLORS[i % DONUT_COLORS.length],
+      color: d.members ? 'var(--muted)' : DONUT_COLORS[i % DONUT_COLORS.length],
       ...d,
-      // Round to 1dp below 1% so a tiny-but-real category is not shown as 0%.
-      pct: frac >= 0.01 ? Math.round(frac * 100) : Math.round(frac * 1000) / 10,
+      pct: sharePct(frac),
     };
   });
   const active = hover != null ? arcs[hover] : null;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+      {/* "Others" breakdown: each grouped category's share of the total */}
+      {active?.members && (
+        <div className="charttip donut__others" style={{ left: size - 16 }}>
+          <div className="charttip__label">Others · {active.members.length} categories</div>
+          {active.members.map(m => (
+            <div key={m.name} className="donut__others-row">
+              <span>{m.name}</span>
+              <b>{m.pct}%</b>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ position: 'relative', flexShrink: 0 }}>
         <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
           {arcs.map((a, i) => (
@@ -565,7 +594,7 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthMax 
   }, []);
 
   const { months, days, total, peak } = model;
-  const padX = 12, padR = 20, padT = 34, padB = 44, AX = 50;
+  const padX = 12, padR = 20, padT = 34, padB = 28, AX = 50;
   const H = height;
   // History gets about a third of the view (never more than `monthMax` a
   // month, never less than 12px); the forecast gets the rest, at least
@@ -715,17 +744,6 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthMax 
             sub: `likely ${num(Math.round(d.lo))} – ${num(Math.round(d.hi))} units` };
   }
 
-  // The horizon need not be a calendar month (the category model starts the
-  // day after its last sale), so name its actual span when it crosses one.
-  let fcLabel = '';
-  if (days.length) {
-    const first = days[0].date, last = days[days.length - 1].date;
-    fcLabel = first.slice(0, 7) === last.slice(0, 7)
-      ? fmtYm(ymIndex(first.slice(0, 7)))
-      : `${MONTH_ABBR[+first.slice(5, 7) - 1]} ${+first.slice(8, 10)} – `
-        + `${MONTH_ABBR[+last.slice(5, 7) - 1]} ${+last.slice(8, 10)}, ${last.slice(0, 4)}`;
-  }
-
   return (
     <div className="sfc">
       <div className="sfc__bar">
@@ -855,11 +873,6 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthMax 
                     </text>
                   ) : null;
                 })}
-                {days.length > 0 && (
-                  <text x={X0 + 6} y={plotBottom + 32} fontSize="11" fontWeight="700" fill="var(--accent-deep)">
-                    {fcLabel} · day by day
-                  </text>
-                )}
               </svg>
 
               {tip && (
