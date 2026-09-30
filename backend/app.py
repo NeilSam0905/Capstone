@@ -1446,7 +1446,8 @@ def _forecastable_ids(c):
     if not _has_forecast_table(c):
         return set()
     return {r["product_id"] for r in dbmod.rows(
-        c, "SELECT DISTINCT product_id FROM Result_Forecast")}
+        c, "SELECT DISTINCT product_id FROM Result_Forecast "
+           "WHERE model_type IS NOT 'policy_rate'")}
 
 
 def _monthly_history(c, product_ids, until=None):
@@ -1660,7 +1661,7 @@ def _category_contributors(c, category):
                 WHERE f2.product_id = p.product_id AND f2.quantity_sold > 0) AS last_sale_date
         FROM Result_Forecast f
         JOIN Dim_Product p ON p.product_id = f.product_id
-        WHERE p.category = ?
+        WHERE p.category = ? AND f.model_type IS NOT 'policy_rate'
         GROUP BY p.product_id
         ORDER BY yhat_30d DESC
     """, (catalog.UNATTRIBUTED, category))
@@ -1809,7 +1810,7 @@ def _category_forecast_from_items(c, category):
                SUM(f.yhat_upper) AS yhat_upper
         FROM Result_Forecast f
         JOIN Dim_Product p ON p.product_id = f.product_id
-        WHERE p.category = ?
+        WHERE p.category = ? AND f.model_type IS NOT 'policy_rate'
         GROUP BY f.forecast_date
         ORDER BY f.forecast_date
     """, (category,))
@@ -1836,7 +1837,7 @@ def _category_forecast_from_items(c, category):
                MAX(f.is_heuristic) AS any_heuristic
         FROM Result_Forecast f
         JOIN Dim_Product p ON p.product_id = f.product_id
-        WHERE p.category = ?
+        WHERE p.category = ? AND f.model_type IS NOT 'policy_rate'
     """, (category,))
     _flag_discontinued(contributors, head["snapshot_date"] if head else None)
 
@@ -1887,7 +1888,8 @@ def get_advisories():
         rows = dbmod.rows(c, f"""
             SELECT p.product_id, p.item_name, p.fsn_class, p.category,
                    COALESCE(p.supplier_name, ?) AS supplier_name,
-                   {"(SELECT SUM(yhat) FROM Result_Forecast rf WHERE rf.product_id = p.product_id)"
+                   {"(SELECT SUM(yhat) FROM Result_Forecast rf WHERE rf.product_id = p.product_id"
+                    " AND rf.model_type IS NOT 'policy_rate')"
                     if has_forecast else "NULL"} AS forecast_30d,
                    (SELECT r.reorder_point FROM Result_Prescriptive r
                      WHERE r.product_id = p.product_id LIMIT 1) AS reorder_point
