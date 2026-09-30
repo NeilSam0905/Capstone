@@ -93,12 +93,47 @@ step 4's default matching exactly. Per `CLAUDE.md` the assertion is reported,
 not relaxed: whoever owns that script decides whether the check should read
 `step4`'s rows only.
 
-### 10. `scripts/vault.py`'s `cryptography` dependency is undeclared
-It imports `cryptography.hazmat`, which appears in none of the four files under
-`requirements/`. `python scripts/vault.py unlock` therefore fails with
-`ModuleNotFoundError` on a clean clone even with the key in hand — the precise
-failure mode `requirements/requirements.txt`'s own header says the file exists
-to prevent ("`rapidfuzz` is in here precisely because it was such a case").
+### 10. The vault pre-commit hook still cannot be enabled
+`.githooks/pre-commit` shells out to `python scripts/vault.py check-commit`,
+which refuses any commit that stages a plain protected file. That is the guard
+against exactly what happened on `origin/gambe` (issue 11), and it is **not
+enabled in this clone**: `core.hooksPath` is unset and `.git/hooks/` holds
+nothing but samples. Enabling it is one command —
+
+```bash
+git config core.hooksPath .githooks
+```
+
+— but doing that today would block **every** commit, for two independent
+reasons. Both have to clear first:
+
+1. **The key.** `check_commit()` calls `load_keys()` before it checks anything,
+   so with no `USTORE_KEY` it raises before reaching the staged-file test. Fixed
+   as far as it can be: `cryptography` was undeclared in all four
+   `requirements/` files, so `vault.py` died with `ModuleNotFoundError` rather
+   than saying what was wrong — the precise failure mode
+   `requirements/requirements.txt`'s own header exists to prevent
+   ("`rapidfuzz` is in here precisely because it was such a case"). Now pinned
+   at `cryptography==50.0.1`, and `vault.py status` reports the real blocker:
+   *"no USTORE_KEY found in the environment or backend/.env"*.
+2. **Nine tracked files the hook would refuse.** `vault.py`'s `PROTECTED` list
+   is `["ustore.db", "data/*.csv", "data/*.xlsx", "docs/*.csv", "*.xlsx"]`, and
+   this branch tracks nine files matching it in plain form:
+   `data/cold_start_donor{,_origins}.csv`,
+   `data/inventory_{simulation,stock_depth,synthetic_cover}.csv`,
+   `data/policy_holdout_{comparison,frontier,origins}.csv` and
+   `docs/SESSION_RESULTS_2026-09-23.csv`. That is deliberate — they were
+   committed before the merge brought in the `.gitignore` that ignores them,
+   because the alternative was losing them — but it means the hook and the
+   index currently disagree. Once the key arrives they need
+   `python scripts/vault.py lock`, then untracking with
+   `git rm --cached`, before the hook can go on.
+
+Related and now closed: `.gitignore` carried `ustore.db` but no `ustore.db.*`,
+so a database copy under any other name was stageable anywhere in the tree —
+`git add -A -- data/` picked up 10 MB of real sales, prices and supplier names
+from `data/pre_contract/` before it was caught. The pattern is in place and
+`git add -A -- data/` now stages nothing.
 
 ### 11. The client tally-sheet workbooks are still committed on `origin/gambe`
 All five raw workbooks — supplier names, item prices, daily sales volumes — sit
