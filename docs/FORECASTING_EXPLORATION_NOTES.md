@@ -184,6 +184,19 @@ date-aware shape (`step4c_category_forecast.py --shape`).
   kept as the default because it was asked for and is never worse than flat;
   `--shape weekday` is the dependency-free option and the automatic fallback.
 
+**Changed 2026-09-30: `weekday` is now the default shape, in both `step4c` and
+`step4`.** Nothing measured here moved — this is a dependency decision, recorded
+rather than made silently. The shape only redistributes a 30-day total and the
+harness scores the total, so on the primary metric the two are identical; they
+differ only in the daily curve, where the table above puts Prophet at 0.972
+overall against weekday's 0.977, and weekday **ahead** in ordinary months (0.981
+against 0.995). Prophet keeps the edge in break-heavy months (0.921 against
+0.966), which is the case for keeping it selectable, not for making a `cmdstan`
+toolchain a precondition for running the pipeline at all. `step4`'s default is
+`topdown_tsb+calendar+weekday_shape` and `step4c`'s is `--shape weekday`;
+`topdown_tsb+calendar+prophet_shape` and `--shape prophet` are unchanged and
+still there, and `requirements/requirements-prophet.txt` is what installs them.
+
 ### 2.7 The item forecast was Prophet, and a simple blend beats it (changed)
 
 `scripts/test_item_forecast_methods.py` scores 47 methods on the 58 Fast items over
