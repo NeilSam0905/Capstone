@@ -139,9 +139,21 @@ zero days, and is 45.2% with them trimmed. Both forecast steps now end their
 history at the last day any SKU sold, and the forecast window starts the day
 after (07-09 to 08-07).
 
-- Not fixed: `step5_prescriptive.py::load_series` still spans the padded panel.
-  Its window is 365 days so the effect is ~6% understatement of annual demand,
-  not 5x. Root cause is upstream in the step0/step2 zero-fill to month end.
+- Fixed 2026-09-30: `step5_prescriptive.py::load_series` spanned the padded
+  panel. Its window is 365 days so the effect was ~6% on the denominator, not
+  5x — but trimming re-anchors the window as well, and the knock-on was much
+  larger than 6%: six more SKUs clear the rate threshold, the empirical buffer
+  grows 52% because the last folds had been scoring against fabricated zero
+  actuals, and the acceptance verdict flips. The rule now lives in one place,
+  `step5_prescriptive.history_index()`, shared with
+  `validate_policy_holdout.py`. Full before/after in `docs/OPEN_ISSUES.md`
+  under "the padding fix". Root cause is still upstream in the step0/step2
+  zero-fill to month end, which is untouched.
+- Still unfixed, and now inconsistent: `model_benchmark.py::load_daily_series`
+  spans the padded panel, so `tools/service_frontier.py` (which imports it)
+  and every benchmark table measure a 821-day span while the deployed policy
+  measures 798. Changing it would move every published benchmark figure,
+  including the 0.9490 ceiling, so it is a decision rather than a patch.
 - Fixed (only matters for `--model prophet` now): item-level Prophet's calendar
   regressors were zero in the forecast window (`forecasting/prophet_model.py::
   load_calendar` reindexes Dim_Date onto the shared index, so future dates came

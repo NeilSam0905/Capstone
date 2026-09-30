@@ -68,10 +68,13 @@ either.
 
 The workbooks themselves are **not lost** — see issue 11. Restored from
 `origin/gambe` into `rawdata/` on 2026-09-30, the full pipeline runs from
-`create_schema.py` to `step5_prescriptive.py` and reproduces the shipped
-database exactly (`Result_Prescriptive` sha256 `da843d54…` over all 474 rows;
-`data/USTore_sales_long_with_zeros.csv` byte-identical to the committed copy
-once CRLF is normalised; every tracked result CSV clean in `git status`).
+`create_schema.py` to `step5_prescriptive.py`, and at that point it reproduced
+the shipped database exactly: `Result_Prescriptive` sha256 `da843d54…` over all
+474 rows, `data/USTore_sales_long_with_zeros.csv` byte-identical to the
+committed copy once CRLF is normalised, every tracked result CSV clean in
+`git status`. (Issue 12 has since moved that deliberately — a rebuild now
+produces 480 rows. The point stands: the rebuild is reproducible, and it was
+verified neutral before anything was changed on purpose.)
 
 So this is a documentation-and-packaging defect, not a data loss: the README
 said "Only step 0 reads them; every later step reads `data/*.csv` … so the
@@ -128,6 +131,92 @@ Two consequences, pulling opposite ways:
   access to the repository can download them from that branch today. Whether
   that matters depends on the repository's visibility, which is a question for
   the team, not for this file.
+
+### 12. The padding fix retracts the tiering's dominance claim
+`step5_prescriptive.py::load_series` spanned the zero-padded panel; fixed
+2026-09-30 by ending the history at the last date any SKU sold, the rule
+`step4_forecast_model.py::build_calendar` already used. **The fix is not in
+question** — the source settles it: the "JULY 2026 - TBS" sheet has a date
+column for every day of the month and does not contain one literal zero
+anywhere, so 2026-07-09..07-31 is "not written up yet", not 23 days of no
+sales. Those days still carried 176 `Fact_Sales` rows each, which made
+`build_observed_mask()` count them as evidence.
+
+**What it moved.** Trimming re-anchors the window as well as correcting the
+denominator, so the effect is much larger than the ~6% the note in
+`docs/FORECASTING_EXPLORATION_NOTES.md` §2.5 predicted:
+
+| | before | after |
+|---|---|---|
+| history span | 2024-05-02 .. 2026-07-31 (821 d) | .. **2026-07-08 (798 d)** |
+| days counted as evidence | 682 of 821 | **659 of 798** |
+| SKUs priced / flagged | 208 / 58 | **214 / 52** |
+| service tiers (not_stockable / partial / servable) | 18 / 166 / 24 | **21 / 176 / 17** |
+| `Result_Prescriptive` rows | 474 | **480** |
+| priced share | 0.7820 | **0.8045** |
+| mean safety stock (empirical) | 8.850 | **13.442** |
+| holdout fill, median (spread) | 0.7064 (0.3162) | **0.6778 (0.1945)** |
+| TIERED fill / units held | 0.6851 / 14,750.7 | **0.6916 / 20,005.5** |
+| flat q=0.80 fill / units held | 0.6188 / 15,122.2 | **0.6328 / 16,205.3** |
+| TIERED served per held | 0.536 | **0.443** |
+| pooled forward coverage | 0.8830 | **0.9080** |
+| acceptance verdict | NOT ACCEPTED 13/14 | **ACCEPTED 14/14** |
+| holdout gates | 14/14 | **13/14 — one FAIL** |
+
+517→520 tests, 22/22 invariants and `verify_rebuild_state` 26/28 are unchanged.
+
+**The failing gate, reported and not relaxed** (`CLAUDE.md`):
+
+```
+[FAIL] tiering costs no more stock than flat q=0.80    False != expected True
+```
+
+Tiering still wins on fill at 4 of 4 origins, but it now holds **20,005.5
+units against flat q=0.80's 16,205.3** — 23% more, where before it held
+slightly less. Its efficiency drops below the flat policy's (0.443 against
+0.501). The buffer is the q-quantile of each SKU's own prior-fold policy
+errors; with the fabricated zero actuals gone those errors are genuinely
+larger, so every buffer grows, and the tiered arm grows most because it
+assigns the higher quantiles.
+
+So `docs/PRESCRIPTIVE_CONTRACT.md`'s claim that the cascade "**dominates**:
+higher service *and* 27% less stock held" (line 353) no longer holds. The
+honest statement is a trade-off: more service, more stock. **That is a claim
+to retract, not a gate to loosen** — either the tiering's operating point
+needs revisiting now that the buffers are right, or the gate's premise
+(dominance on both axes) was always stronger than the evidence could carry.
+Someone has to choose; nothing here should be edited to make it green.
+
+**And the acceptance flip needs a human read.** Coverage clears the a priori
+0.90 partly because six SKUs it could not price before are priced now — `Eco
+Bag @ 130`, `Eco Bag CGEEE!`, `Keychain @180`, `Kit Set`, `UST OAT MUG (W
+inside)`, `UST OAT MUG (Y/B inside)`, 1,533 lifetime units between them, 1.7%
+of the catalogue — and partly because the rolling origins are anchored off
+the end of history, so all four moved back 23 days
+(2026-05-03/02-02, 2025-11-04/08-06 → 2026-04-10/01-10, 2025-10-12/07-14).
+**Before and after are therefore not the same test.** The threshold was not
+touched, but the windows it is measured on changed, and a flip to ACCEPTED on
+windows the corrected anchor chose should not be reported as "the system now
+passes" without that said out loud. `validate_policy_holdout.py` has no flag
+to pin origins to absolute dates, so the two causes cannot be separated
+without changing a verification script.
+
+**Figures that moved in documents, not yet restated.** Thirteen files carry at
+least one superseded number: `ACCEPTANCE_STANDARD.md`, `CHAPTER_4_CONTEXT.md`,
+`CHAPTER_4_DRAFT.md`, `CHAPTER_4_RECONCILIATION.md`, `COLD_START_ANALOG.md`,
+`FORECAST_VALIDATION.md`, `INVENTORY_SIMULATION.md`,
+`PRESCRIPTIVE_CONTRACT.md`, `SERVICE_LEVEL_FRONTIER.md`, the three
+`WORKLOG_*.md`, and this file. `POLICY_HOLDOUT.md` regenerates itself and is
+already current. Chapter 4 is a manuscript and the cascade's justification is
+one of its arguments, so restating it is the team's call, not a sweep.
+
+**A new inconsistency the fix creates.** `model_benchmark.py::load_daily_series`
+still spans the full 821 days, so `tools/service_frontier.py` — which imports
+it — measures a different span from the policy it sits beside. Its output is
+byte-identical before and after, `EXP_CEILING = 0.9490` and
+`EXP_SKUS_POSITIVE_DEMAND = 208` still pass, and that is the problem: 208 is
+no longer what the deployed path reports. Fixing it moves every benchmark
+table Neil published.
 
 ---
 
