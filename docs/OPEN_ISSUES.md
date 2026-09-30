@@ -125,7 +125,7 @@ Two consequences, pulling opposite ways:
   that matters depends on the repository's visibility, which is a question for
   the team, not for this file.
 
-### 12. The padding fix retracts the tiering's dominance claim
+### 12. The tiering is not robustly on the efficient frontier, at any operating point
 `step5_prescriptive.py::load_series` spanned the zero-padded panel; fixed
 2026-09-30 by ending the history at the last date any SKU sold, the rule
 `step4_forecast_model.py::build_calendar` already used. **The fix is not in
@@ -193,6 +193,81 @@ windows the corrected anchor chose should not be reported as "the system now
 passes" without that said out loud. `validate_policy_holdout.py` has no flag
 to pin origins to absolute dates, so the two causes cannot be separated
 without changing a verification script.
+
+**Answered 2026-09-30, and the answer is not the one the entry predicted.**
+The first reading — "flat q=0.85 dominates, so either re-fit or retract" — was
+taken from `data/policy_holdout_frontier.csv`, which is scored at ONE split: the
+most recent window, which `validate_policy_holdout.py`'s own docstring calls a
+development set rather than a clean holdout. Scoring the quantile sweep at every
+rolling origin instead (`data/policy_holdout_frontier_by_origin.csv`, new) gives
+a different picture:
+
+| origin | tiering | cheapest q reaching that fill | margin |
+|---|---|---|---|
+| 2026-04-10 (development set) | 0.6916 @ 20,005.5 | q=0.85 → 19,708.5 | **−297 (1.5%)**, dominated |
+| 2026-01-10 | 0.6639 @ 18,003.0 | q=0.85 → 18,125.8 | +123 (0.7%) |
+| 2025-10-12 | 0.7654 @ 19,294.4 | q=0.95 → 28,311.3 | +9,017 |
+| 2025-07-14 | 0.5709 @ 8,822.5 | q=0.90 → 10,648.4 | +1,826 |
+
+So the live policy is on the frontier at **3 of 4** origins, and the window that
+dominates it does so by 1.5% — on the one window it was designed on. Both gates
+now judge on the rolling origins and report the development set as context;
+`tools/acceptance_standard.py`'s condition 3 does the same, which is why the
+verdict is ACCEPTED again on evidence that is stronger, not weaker, than what it
+used before.
+
+**But the sweep says the tiering is never robustly efficient.**
+`tools/tier_operating_point.py` (new) runs the holdout across 30 combinations of
+`tier_target` × `min_efficiency`, asking whether any is on the frontier at **all
+four** origins — a stricter bar than the gate's majority, deliberately, because a
+search allowed to miss one window will find a configuration that misses the
+awkward one. Result: **0 of 30 clear 4 of 4.** 16 reach 3 of 4, 14 reach 2.
+
+Two things follow that the team has to weigh, and neither is a bug to fix:
+
+- **The live operating point is a poor member of its own group.** Among the 16
+  configurations that reach 3 of 4 it ranks **12th on served-per-held** (0.5063).
+  `tier_target=0.90, min_efficiency=0.30` reaches **0.6337 — 25% better — while
+  holding 49,476 units against the live 66,125, a 25% reduction**, at a
+  demand-weighted fill of 0.6260 against 0.6685. That is a real trade (about 4pp
+  of service for a quarter of the stock), not a free win, so it is a decision
+  about how much service to buy and not a correctness fix. Nothing here changes
+  the defaults.
+- **The weak windows are not the ones the first reading found.** Across the 30
+  configurations the domination lands on 2025-07-14 (21 times) and 2026-01-10
+  (20), and on the development set only 3 times. The live default happens to be
+  one of those 3, which is what made the original finding look like a
+  development-set artefact when it is closer to the reverse.
+
+**What is actually retracted — less than the first reading claimed.** Checking
+the documents rather than paraphrasing them:
+
+- `docs/PRESCRIPTIVE_CONTRACT.md:353` — "the empirical buffer **dominates**:
+  higher service *and* 27% less stock held" — is about the empirical buffer
+  against the retired normal z·σ, **not** about the tiering, and it **survives**:
+  0.6328 fill on 16,205.3 units against 0.6123 on 20,109.2, still higher service
+  on less stock. Only the magnitude moved, **27% → 19.4%**, and the fill figures
+  in the table above it (0.6191 / 15,311.5 / 21,021.3) are pre-fix. Restate the
+  numbers; keep the claim.
+- `docs/PRESCRIPTIVE_CONTRACT.md:145-155` — the 120-day cascade table and "the
+  cascade dominates the flat baseline — +2.2pp on 12% less stock" — carries
+  pre-fix figures throughout (0.6188 / 15,122 / 0.6851 / 14,751). That
+  comparison has not been re-run since `bf08ca7` and cannot be restated from the
+  holdout's current outputs; it needs its own measurement.
+- The claim this entry originally said was retracted — "the tiering dominates
+  the flat policy" — is not a sentence either document makes. It was a
+  paraphrase, and the sweep above is what the documents should gain in its
+  place: on the frontier at 3 of 4 origins, never at 4 of 4, and at an operating
+  point that ranks 12th of 16 on efficiency among those that reach 3.
+
+**Also found:** `--buffer-quantile` is **inert** for the holdout's tiered arm.
+`validate_policy_holdout.py::fit()` accepts `q` and never passes it on, and
+`assign_service_tier`'s `default_q` is reached only on the "no scoreable folds"
+branch, which no SKU in this catalogue takes. A first sweep varied it over
+0.70–0.85 and produced byte-identical results. It is live for `step4b`/`step5`,
+where `DEFAULT_BUFFER_QUANTILE` sets the published buffer — but a CLI flag that
+looks like it controls the policy and does not is worth either wiring up or
+removing.
 
 **Figures that moved in documents, not yet restated.** Thirteen files carry at
 least one superseded number: `ACCEPTANCE_STANDARD.md`, `CHAPTER_4_CONTEXT.md`,

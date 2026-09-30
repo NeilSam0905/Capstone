@@ -13,11 +13,13 @@ pipeline gates, applied to the acceptance criterion itself - which is the
 one place it matters most, because that criterion is what the project's
 central claim rests on.
 
-One of the conditions FAILS against the live data today (forward demand
-coverage, 0.8830 against an a priori 0.90). That is deliberate and it is
-not repaired here. A test suite that quietly asserted the live system
-passes would be the same mistake as choosing a threshold the system
-clears.
+One of the conditions FAILS against the live data today. It used to be
+forward demand coverage (0.8830 against an a priori 0.90); since bf08ca7
+corrected the rate denominators that one passes at 0.9080 and condition 3
+fails instead, because flat q=0.85 dominates the tiered policy. Which one
+is red is not the point and is not repaired here. A test suite that
+quietly asserted the live system passes would be the same mistake as
+choosing a threshold the system clears.
 ------------------------------------------------------------------
 """
 import sqlite3
@@ -174,11 +176,17 @@ def _comparison(rival_fill, rival_held):
     ])
 
 
+def _frontier(*points):
+    """A flat-quantile sweep, as validate_policy_holdout.py writes it."""
+    return pd.DataFrame([{"q": q, "fill_rate": f, "units_held": h}
+                         for q, f, h in points])
+
+
 def test_condition_3_fails_when_a_simpler_policy_dominates():
     """More service for less stock. If that exists, the complexity is
     unjustified and the condition must say so."""
     c = _checker()
-    acc.condition_3_not_dominated(_comparison(0.75, 12000.0), c)
+    acc.condition_3_not_dominated(_comparison(0.75, 12000.0), None, None, c)
     assert c.failures, "a dominating alternative existed and the condition passed"
 
 
@@ -186,15 +194,116 @@ def test_condition_3_tolerates_a_genuine_trade_off():
     """More service at MORE stock is a trade, not a domination - the naive
     baseline sits on the other side of exactly this line."""
     c = _checker()
-    acc.condition_3_not_dominated(_comparison(0.80, 30000.0), c)
+    acc.condition_3_not_dominated(_comparison(0.80, 30000.0), None, None, c)
     assert c.failures == []
 
 
 def test_condition_3_is_not_vacuous_with_nothing_to_compare_against():
     c = _checker()
     acc.condition_3_not_dominated(pd.DataFrame([
-        {"scope": "TIERED", "fill_rate": 0.68, "units_held": 14000.0}]), c)
+        {"scope": "TIERED", "fill_rate": 0.68, "units_held": 14000.0}]), None, None, c)
     assert c.failures, "a comparison against nothing reported a pass"
+
+
+def test_condition_3_sees_a_dominator_the_comparison_table_never_names():
+    """The regression this pair of arguments exists for.
+
+    Every named arm is a genuine trade-off, so the old condition - which read
+    the comparison table alone - passed. A quantile nobody put in that table
+    dominates on both axes. This is not hypothetical: flat q=0.85 did exactly
+    this to the live policy once bf08ca7 corrected the buffers, and condition 3
+    reported "alternatives that dominate this policy: 0" while it happened.
+    """
+    c = _checker()
+    acc.condition_3_not_dominated(
+        _comparison(0.80, 30000.0),                  # a trade-off, as before
+        _frontier((0.80, 0.60, 11000.0),             # less fill, less stock
+                  (0.85, 0.70, 13000.0),             # MORE fill, LESS stock
+                  (0.95, 0.90, 40000.0)),            # more fill, far more stock
+        None, c)
+    assert c.failures, "a frontier point dominated and the condition passed"
+
+
+def test_condition_3_does_not_invent_a_dominator_from_the_frontier():
+    """The other direction - a frontier where every point is an honest trade
+    must still pass, or the widened condition is just noisier."""
+    c = _checker()
+    acc.condition_3_not_dominated(
+        _comparison(0.80, 30000.0),
+        _frontier((0.70, 0.55, 9000.0), (0.80, 0.62, 12000.0),
+                  (0.90, 0.80, 25000.0)),
+        None, c)
+    assert c.failures == []
+
+
+def test_condition_3_does_not_double_count_an_arm_the_table_already_names():
+    """The comparison table's `flat q=0.80 (pre-tiering)` and the frontier's
+    q=0.80 row are the same measurement. Listing it twice would not change the
+    verdict, but it would misreport how many rivals were considered."""
+    c = _checker()
+    comparison = pd.DataFrame([
+        {"scope": "TIERED", "fill_rate": 0.68, "units_held": 14000.0},
+        {"scope": "flat q=0.80 (pre-tiering)", "fill_rate": 0.62, "units_held": 12000.0},
+    ])
+    acc.condition_3_not_dominated(comparison, _frontier((0.80, 0.62, 12000.0)), None, c)
+    assert c.failures == []
+
+
+def _dominance_by_origin(*dominator_counts):
+    """The rolling-origins table as validate_policy_holdout.py writes it, cut
+    down to what condition 3 reads: one row per origin carrying how many
+    frontier quantiles dominated the tiering there.
+
+    Named apart from `_origins` above, which builds the coverage/fill columns
+    conditions 1b, 2 and 4 read - same CSV, different slice of it.
+    """
+    return pd.DataFrame([
+        {"origin": f"origin-{i}", "n_frontier_dominators": n,
+         "dominated_by_q": "0.85" if n else ""}
+        for i, n in enumerate(dominator_counts)])
+
+
+def test_condition_3_gates_on_the_origins_not_the_development_set():
+    """The fix for the basis, not just the comparison set.
+
+    Everything in the comparison table and the flat frontier is scored at one
+    split - the most recent window, which the holdout's own docstring calls a
+    development set. Here that window shows a dominator and the four rolling
+    origins mostly do not: the condition must follow the origins, or a 1.5%
+    margin on the window the policy was designed on decides the verdict. This
+    is the live 2026-09-30 shape - dominated at 1 of 4, efficient at 3.
+    """
+    c = _checker()
+    acc.condition_3_not_dominated(
+        _comparison(0.80, 30000.0),
+        _frontier((0.85, 0.70, 13000.0)),        # dominates on the dev set
+        _dominance_by_origin(1, 0, 0, 0),                    # but only at 1 of 4 origins
+        c)
+    assert c.failures == [], "a single-origin dominance decided the verdict"
+
+
+def test_condition_3_fails_when_most_origins_are_dominated():
+    """And the gate still bites where it should: a dominance that shows up
+    across the clean windows is evidence about the policy, not the window."""
+    c = _checker()
+    acc.condition_3_not_dominated(
+        _comparison(0.80, 30000.0),
+        _frontier((0.85, 0.70, 13000.0)),
+        _dominance_by_origin(1, 1, 1, 0),                    # 3 of 4
+        c)
+    assert c.failures, "a majority of origins were dominated and it passed"
+
+
+def test_condition_3_falls_back_to_the_development_set_without_origins():
+    """An origins table from before the per-origin frontier existed must not
+    silently pass - the weaker basis is used and announced."""
+    c = _checker()
+    acc.condition_3_not_dominated(
+        _comparison(0.80, 30000.0),
+        _frontier((0.85, 0.70, 13000.0)),
+        pd.DataFrame([{"origin": "old", "fill_rate": 0.6}]),   # no dominator column
+        c)
+    assert c.failures, "the fallback basis reported a pass with a dominator present"
 
 
 # ---- condition 4: evidence integrity ---------------------------------
