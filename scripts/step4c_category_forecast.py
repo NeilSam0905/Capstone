@@ -202,7 +202,10 @@ NAIVE = rolling_mean_fit_predict(30)
 # Day-by-day shape (see the docstring): forecasting/shape.py, shared with
 # step4_forecast_model.py, which gives each item its category's shape.
 SHAPES = ("prophet", "weekday", "flat")
-DEFAULT_SHAPE = "prophet"
+# weekday, not prophet: same reason as step4_forecast_model.DEFAULT_MODEL -
+# the shape only redistributes the validated total, and the dependency-free
+# pattern measured within noise of Prophet. --shape prophet restores it.
+DEFAULT_SHAPE = "weekday"
 
 
 def create_result_tables(con):
