@@ -245,7 +245,10 @@ def cluster_rates(series: Dict[object, Sequence[float]],
     sliced = {sku: np.asarray(v, dtype=float).ravel()[:end] for sku, v in series.items()}
 
     feat = sku_features(sliced, prices)
-    labels, _km, _scaler = cluster_skus(feat, k=k, seed=seed)
+    # cluster_skus also returns the cluster centers in original feature
+    # units (added on the neil branch for fold-to-fold label stability).
+    # The shrinkage does not chain fits, so they are unused here.
+    labels, _km, _scaler, _centers = cluster_skus(feat, k=k, seed=seed)
 
     n_obs = observed_days(observed, window, end, len(next(iter(series.values()), [])))
     by_label: Dict[str, Dict[object, float]] = {}
