@@ -21,7 +21,7 @@
  "data/calendar_adjustment_test.csv": "5e343c0d7d004f681deb91f54ebbc5cfb98132ec01262292ff7c83d93a1b09c6",
  "data/calendar_hurdle_results.csv": "4d303366c39c54821c4a90193cb2593b9b6213889be5e850a8428c339ce197b7",
  "data/calendar_ranges.csv": "f7b30741d48193f7f8050396e11270a170ee0d9476d4bf7922977b4ea95735f6",
- "data/category_assignment_audit.csv": "af3daf168afc8d0ec7da80814d5328df2f4ece644a72987f80bf111fce5655a6",
+ "data/category_assignment_audit.csv": "dde92ce7abd4ef35ad15e38c8feaf0ea38f4374bd49fe1b0f7b9c02481d40e63",
  "data/category_benchmark_folds.csv": "a579783d52caadd2d7d45b93c4437b540caaa81536c897cb4ff524c124e24d68",
  "data/category_benchmark_summary.csv": "867e57fdc80181365b180a8d3f1a85d3989da20cc078853f3b3e249ba12bd131",
  "data/category_daily_series.csv": "35507b36868fc671bd89627b28e1447aca605a76721bb6e592c3898a6daf200e",
@@ -163,5 +163,5 @@
  "docs/price_suffix_audit.csv": "0990c83e688335520edf6d47894cabf0783c1e02b323464d156b1133e932d5a6",
  "docs/products_without_forecast.csv": "32a58460ab4ec260718a8dcf74de2b0d7e853fcbda9a089e82477e1532519c63",
  "docs/unpriced_products.csv": "dcfa730bf272c4763f325a1cf1a78bcd894fe25efb5c0607804146f54fb08554",
- "ustore.db": "aaa012548dbb409f4213795e20235c958b8674478e0344f6e2cf2c21da7b87cb"
+ "ustore.db": "008907b465c66d17bce5a73a9b469bf37f1be68e3ffe150535053f37e8dae6be"
 }
