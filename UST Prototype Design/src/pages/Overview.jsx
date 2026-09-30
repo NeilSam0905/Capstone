@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { getProducts, getMonthlyUnits, getMeta, getStockPosition, getReorderAlerts, getAdvisories } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
-import Pending, { Loading, PendingValue } from '../components/Pending';
+import { Loading, PendingValue } from '../components/Pending';
 import { LineChart, Donut, HBars, FSNStat, StackBar } from '../components/charts';
 import Modal from '../components/Modal';
 import FsnBandModal from '../components/FsnBandModal';
@@ -18,6 +18,8 @@ export default function Overview({ filters, setPage }) {
     { key: `overview:products:${filters.supplier}|${filters.category}|${filters.dateRange}` });
   const { data: monthly } = useData(() => getMonthlyUnits(filters), [filters], []);
   const { data: meta } = useData(getMeta, []);
+  // Feeds the below-ROP count in the KPI row and the On-hand column in the
+  // products modal. It has no panel of its own on this page.
   const { data: stock } = useData(() => getStockPosition(filters), [filters]);
   const { data: alerts } = useData(getReorderAlerts, []);
   const { data: advisories } = useData(getAdvisories, []);
@@ -102,23 +104,6 @@ export default function Overview({ filters, setPage }) {
           onClick={() => setPage?.('reorder')}
           linkLabel="Open Reorder Alerts"
         />
-      </div>
-
-      {/* Stock status banner — real coverage, no ROP to judge against */}
-      <div className="banner">
-        <span className="section-h">Stock Status</span>
-        {stock ? (
-          <>
-            <div className="banner__item">
-              <span className="dot" style={{ background: 'var(--ok)' }} />
-              <b style={{ color: 'var(--ok)' }}>{stock.covered}</b> items with a stock count
-            </div>
-            <div className="banner__item">
-              <span className="dot" style={{ background: 'var(--line)' }} />
-              <b style={{ color: 'var(--muted)' }}>{stock.total - stock.covered}</b> items with no inventory record
-            </div>
-          </>
-        ) : <span className="hint">Loading…</span>}
       </div>
 
       {/* Trend + category mix */}

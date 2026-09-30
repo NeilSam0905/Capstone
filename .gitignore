@@ -23,6 +23,12 @@ Copy of USTORE INVENTORY REPORT (1).xlsx
 # after it reads only data/*.csv, which IS committed.
 rawdata/
 
-# assistant/editor scratch config - not project source
-CLAUDE.md
-.claude/
+# Store data is committed ONLY in encrypted form, under vault/ (scripts/vault.py).
+# The plain files below stay on each machine: `python scripts/vault.py unlock`
+# restores them from vault/, `lock` re-encrypts after changes.
+data/*.csv
+data/*.xlsx
+docs/*.csv
+/*.xlsx
+.vault_state.json
+*.vaulttmp

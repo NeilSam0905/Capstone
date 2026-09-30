@@ -6,6 +6,11 @@ import Icon from './Icon';
  *  It then renders as a real <button> rather than a <div> with a handler, so
  *  it is reachable by Tab and fires on Enter/Space without extra wiring, and
  *  it gains the `is-link` affordance (pointer, hover lift, a chevron).
+ *
+ *  `sub` is where a tile says what its number MEANS. It is always visible on
+ *  purpose: this briefly carried a hover-revealed panel instead, which put
+ *  the explanation behind a gesture that a touch screen does not have and a
+ *  reader has no reason to try.
  */
 export default function KPICard({ label, value, sub, icon, tone, accent = false, onClick, linkLabel }) {
   const inner = (

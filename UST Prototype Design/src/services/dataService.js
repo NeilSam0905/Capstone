@@ -214,6 +214,20 @@ export const getFsnSensitivity = () => get('/fsn/sensitivity');
 export const getForecast = () => get('/forecast');
 export const getForecastMetrics = () => get('/forecast');
 export const getProductForecast = productId => get(`/forecast/${productId}`);
+
+// Category-level forecast, from step4c_category_forecast.py: the category's
+// sales are added up first and THAT total is forecast, so it covers every item
+// in the category. The items listed under it (`contributors`) are a breakdown
+// from the per-item forecasts and do not add up to it. When step4c has not run
+// the backend falls back to summing the item forecasts and says so in
+// `data.source` ('category_model' | 'sum_of_items').
+// encodeURIComponent because the names carry spaces and '&'
+// ("Shirts & Tops", "Umbrellas & Gear").
+export const getCategoryForecast = category =>
+  get(`/forecast/category/${encodeURIComponent(category)}`);
+// Which categories have a category-level forecast, biggest first. Includes
+// categories with no Fast item, which the per-item forecasts cannot reach.
+export const getCategoryForecasts = () => get('/forecast/categories');
 export const getReorderAlerts = () => get('/reorder');
 export const getAdvisories = () => get('/advisories');
 
@@ -374,9 +388,10 @@ export const addProduct = ({ item_name, category, supplier_name }) =>
 /** Kicks off create_schema.py -> step5_prescriptive.py as a background job.
  *  Returns { ok:false, error } (HTTP 409) if a run is already in progress.
  *
- *  `includeForecast: false` leaves out step4_forecast_model.py, which fits a
- *  rolling mean per Fast SKU. It used to be a full-MCMC Prophet run costing
- *  1-2 hours, which is where the opt-out comes from; it now finishes in
+ *  `includeForecast: false` leaves out step4_forecast_model.py, which forecasts
+ *  every Fast SKU (a blend of category share and TSB, plus a few Prophet fits
+ *  for the daily pattern). It used to be a full-MCMC Prophet run costing 1-2
+ *  hours, which is where the opt-out comes from; it now finishes in about 10
  *  seconds. Nothing else in the pipeline reads its output, so the rest of the
  *  run (rebuilt database, FSN classes, reorder points) is unaffected either
  *  way. */

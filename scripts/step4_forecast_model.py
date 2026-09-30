@@ -1,43 +1,148 @@
 """
-Phase 3 of ETL: rolling-mean demand forecasting, scored on 30-day aggregates.
+Phase 3 of ETL: demand forecasting for Fast SKUs, scored on 30-day aggregates.
 
-Every Fast SKU is forecast with the SAME model: the mean of the trailing
-30 days, held flat across a 30-day horizon. That model is literally
-`forecasting.baselines.rolling_mean_fit_predict(30)` - the identical
-callable `model_benchmark.py` scores as `rolling_mean_30` and
-`step5_prescriptive.py` lists in DEMAND_METHODS - so the benchmark's and
-the frontier's findings about `rolling_mean_30` are findings about THIS
-model, not about a near relative of it.
+Every Fast SKU is forecast with the SAME model, selected by `--model`. The
+default is `topdown_tsb`: a 50/50 blend of two forecasts of the item's next 30
+days, spread over the days by its category's calendar-aware Prophet pattern.
+Whichever model is chosen, it is literally the callable from `forecasting/`
+that the benchmarks score under that name, so a finding about it is a finding
+about THIS model, not a near relative.
+
+--- The default: 50/50 category share + TSB ---
+
+    top-down   the item's CATEGORY's trailing 6-month average x the item's share
+               of the category over the last 30 days. Long window for the smooth
+               category, short one for the item's own recent standing.
+    TSB        the item's demand probability x demand size, both smoothed
+               (alpha = beta = 0.05). The probability is updated EVERY day, zeros
+               included, so an item that stops selling decays towards zero.
+    forecast   0.5 x top-down + 0.5 x TSB, a flat rate per day.
+
+Chosen by `scripts/test_item_forecast_methods.py` (data/item_forecast_method_test.csv,
+data/item_forecast_robustness.csv): 47 methods on the 58 Fast items, identical
+walk-forward folds (the harness below), each forecast using only data before its
+origin. Shipped Prophet, which this replaces, reproduces its own stored metrics
+exactly in that script, so the numbers are comparable to what the screen showed:
+
+    method                              mean MASE   pooled WMAPE   bias
+    Prophet (previous default)             2.52        88.4%       +25%
+    repeat last 30 days                    1.95        71.6%        -5%
+    6-month average                        2.25        78.1%        -7%
+    TSB alpha=beta=0.05                    1.79        66.9%        -7%
+    top-down alone                         1.75        65.5%        -8%
+    50/50 top-down + TSB (default)         1.71        64.1%        -7%
+
+    (57 items with a usable MASE scale; below 1 in 23 items, was 6.)
+
+  - It beats the old Prophet on 46 of 57 items; the paired bootstrap over items
+    puts the mean MASE gain at 0.81 (95% CI 0.51 to 1.21).
+  - Not luck of one period: the ranking of all 47 methods on the older six folds
+    and the newer six correlates at 0.95, and the blend is first in both.
+  - 13 of the 58 "Fast" items sold NOTHING in the last 360 days (their last sale
+    is between 2024-05 and 2025-05: fsn_class is computed from full history, see
+    forecasting/category.py). Prophet keeps forecasting them; a decaying method
+    does not. That is a real defect of Prophet here, but it inflates the headline.
+    On the 45 items still selling: mean MASE 2.61 -> 2.16, better on 34 of 45,
+    CI 0.28 to 0.61. Read that one as the honest size of the improvement.
+  - It is still not accurate in absolute terms: MASE is below 1 for 11 of those 45
+    items, and the manuscript's <=20% MAPE target stays out of reach.
+
+The top group (top-down, TSB, their blends) is within noise of each other; the
+blend beats TSB alone by 0.09 MASE (CI 0.02 to 0.16), and a grid over the top-down
+share window and TSB parameters is flat (1.68 to 1.90), so it is not a lucky
+setting. Two more reasons to prefer it to plain TSB: the Fast items' forecasts
+then follow their category's long-run level, and 47 methods were compared, so the
+simpler principle (short memory for the item, long memory for the category) is the
+safer bet than the single best number.
+
+What did NOT help, all in data/item_forecast_method_test.csv: the 6-month average
+on its own (item series are too sparse for a long window; not reliably better than
+Prophet, CI -0.73 to +0.10), 3- and 12-month averages, spike capping, medians and
+trimmed means, "same 30 days last year" (under-forecasts by 50%), category momentum
+and seasonal indices, Croston and SBA (over-forecast by 39-46%), Prophet with a flat
+trend (worse), and blending Prophet in: every pairing with Prophet scored worse than
+the same blend without it. Dropping Prophet's yearly term helps it (2.52 -> 2.22 on
+all items) but not on the 45 items still selling (2.61 -> 2.60), and it still trails
+every method above.
+
+--- The school-calendar adjustment (default) ---
+
+`topdown_tsb+calendar+prophet_shape` is the blend above, multiplied by
+forecasting/calendar_adjust.py's factor: when the next 30 days hold more
+semester-break / exam days than the window the level was learned over, the
+total goes down to match (ratios measured on the item's CATEGORY, since an item
+is too sparse). It never goes up; store closures are not used. Measured by
+scripts/test_calendar_adjustment.py on the same folds:
+
+    mean MASE 1.71 -> 1.67 | pooled WMAPE 64.1% -> 60.3% | bias -7% -> -15%
+    better on 41 of 57 items (bootstrap 95% CI of the gap -0.066 to -0.007),
+    in both the older and the newer six folds
+
+The extra under-forecast falls mostly in break months. The "lower only" rule was
+chosen after seeing the uncapped version fail after breaks, so treat the gain as
+slightly optimistic. `--model topdown_tsb+prophet_shape` gives the unadjusted blend.
+
+--- The day-by-day shape ---
+
+The blend is a flat rate, and a flat line tells you nothing about the days. Each
+item's 30-day total is therefore spread over the days by its CATEGORY's Prophet
+pattern (weekly seasonality + the Dim_Date flags; forecasting/shape.py, the same
+code step4c uses). The total is unchanged - the weights sum to 1 - so the 30-day
+accuracy above is unaffected. Scored day by day against a flat line (below 1 is
+better; test_item_forecast_methods.py, data/item_forecast_shape_test.csv):
+
+    category's Prophet pattern     0.976   (0.941 in months with 5+ break days)
+    category's weekday pattern     0.982
+    the item's own Prophet         0.986
+    the item's own weekday         0.998
+
+An item's daily series is mostly zeros, so the category, which has enough sales to
+show a weekly rhythm, supplies the pattern. The gain is small (2-3% of daily
+error) and concentrated in semester-break months; it is a rhythm (quiet Sundays,
+closures, breaks), not a forecast of individual spikes or bulk orders.
+`--model topdown_tsb+weekday_shape` (no Prophet needed) and `--model topdown_tsb`
+(flat) are the alternatives, and Prophet being unavailable falls back to weekday
+automatically; `Result_Forecast.model_type` says which was actually used
+(e.g. "topdown_tsb+prophet_shape").
+
+--- Prophet, and why it is no longer the default ---
+
+Prophet was the default "by request": the forecast screen was to be served by
+Prophet. It is still selectable (`--model prophet`), and it still supplies the
+day-by-day pattern above, but as the source of the 30-day total it lost. ~50% of
+days are zeros and the span is 23 months, so its trend and yearly terms are fitted
+on almost no evidence and then extrapolated; it over-forecasts by 25% and keeps
+forecasting items that stopped selling. docs/FAST_MOVING_BENCHMARK.md recorded the
+same ordering earlier (37 methods, nothing beat a trailing average, Prophet beat
+the trailing mean on 12 of 58 SKUs). `--model prophet` now looks its calendar flags
+up for the forecast window too; before, they were zero-filled there, so the
+validated model and the produced forecast were not the same thing.
+
+Other selectable models, all flat rates:
+
+    rolling_mean_30  mean of the trailing 30 observations, clipped at 0
+    tsb              TSB with alpha = beta = 0.1
+    ewma_a0.1        exponentially weighted average, alpha = 0.1
 
 --- What this file used to be ---
 
 It fit Prophet per SKU (logistic growth, five Dim_Date regressors, 25
-changepoints for a "standard" tier, a fixed linear trend for a
-"simplified" tier, MCMC(1000) production fits) and took 1-2 hours behind
-a cmdstan build. Then it briefly used a full-history (expanding) mean.
-Both are gone. Consequences worth stating plainly:
+changepoints for a "standard" tier, a fixed linear trend for a "simplified"
+tier, MCMC(1000) production fits) and took 1-2 hours behind a cmdstan build. Then
+it briefly used a full-history (expanding) mean, then the benchmark's Prophet
+through forecasting/prophet_model.py, and now the blend above.
 
-  - The forecast is a CONSTANT per SKU. No trend, no weekly seasonality,
-    no calendar effects: enrollment periods, exam weeks, event days and
-    semestral breaks no longer move the prediction, because a mean has no
-    design matrix to put them in.
-  - Runtime is seconds, and no toolchain is required.
-  - Nothing in the repository imports prophet any more.
+--- The rows ---
 
---- The model ---
+    yhat       = the item's 30-day total x that day's weight (an even split when
+                 no shape is applied)
+    yhat_lower = max(yhat - SD, 0)
+    yhat_upper = yhat + SD
 
-    level      = mean of the trailing 30 observations (fewer if the
-                 training slice is shorter), clipped at 0
-    yhat       = level, on each of the 30 horizon days
-    yhat_lower = max(level - SD, 0)
-    yhat_upper = level + SD
-
-SD is the sample standard deviation (ddof=1) of the FULL series, not of
-the 30-day window. The window is the right basis for the level (it tracks
-recent demand) but a poor one for dispersion: a SKU whose last 30 days
-happen to be flat would get a zero-width interval, which claims a
-certainty the model does not have. The band is display-only - it is not
-read by step5 or by anything else.
+SD is the sample standard deviation (ddof=1) of the item's FULL daily series, not
+of a 30-day window: a SKU whose last 30 days happen to be flat would otherwise get
+a zero-width interval, which claims a certainty the model does not have. The band
+is display-only - it is not read by step5 or by anything else.
 
 --- Validation: the same harness as the benchmark ---
 
@@ -99,8 +204,9 @@ Metrics, per SKU, per period scope:
     which happens disproportionately in breaks, so MAPE<=20% is assessed
     only on 'overall' and 'standard_period'.
 
-is_sem_break is the only Dim_Date column read, and only to assign those
-scopes. It does not enter the forecast.
+is_sem_break assigns those scopes. The Dim_Date flags also reach the forecast
+through the day-by-day shape (and through Prophet, if selected); they do not move
+the 30-day total of the default model, which is what these metrics score.
 
 Writes to (does not touch Fact_Sales):
   - Result_Forecast          (per SKU, per forecast date, 30-day horizon)
@@ -112,6 +218,7 @@ transaction, so an interrupted run leaves the previous forecasts in place.
 Filename note: this was step4_prophet_forecast.py until the model changed.
 Older docs and log entries refer to it under that name.
 """
+import argparse
 import os
 import sqlite3
 import sys
@@ -124,8 +231,14 @@ import pandas as pd
 # step5_prescriptive.py and conftest.py do.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from forecasting.baselines import naive_fit_predict, rolling_mean_fit_predict
+from forecasting.baselines import (
+    ewma_fit_predict, naive_fit_predict, rolling_mean_fit_predict,
+)
 from forecasting.evaluate import make_folds, walk_forward_evaluate
+from forecasting.intermittent import tsb_fit_predict
+from forecasting.calendar_adjust import calendar_capped_fit_predict, load_day_types
+from forecasting.shape import day_shape, load_calendar as load_shape_calendar
+from forecasting.topdown import topdown_tsb_fit_predict
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ustore.db")
 
@@ -136,7 +249,109 @@ MAX_FOLDS = 12
 MIN_TRAIN = 60
 
 WINDOW = 30                    # the rolling mean's trailing window
-MODEL_TYPE = "rolling_mean_30"
+TSB_ALPHA = 0.1                # size smoothing      - benchmark's values
+TSB_BETA = 0.1                 # probability smoothing
+
+RESIDUE = "Uncategorised"      # same bucket step1b_categorize_products.py uses
+
+# Every entry is the SAME callable the benchmarks score under that name.
+# Keyed by the string written to Result_Forecast.model_type, so the label and
+# the model can never drift apart - which is why a model that spreads its total
+# over the days with a shape is its OWN entry ("topdown_tsb+prophet_shape"), not
+# a flag: the stored label says exactly what produced the rows.
+#
+# Each factory takes a `ctx` dict so a model that needs context can have it:
+# Prophet is bound to the shared daily index and to Dim_Date's regressor columns,
+# and the category-share model to the item's category series
+# (ctx["category_values"], rebuilt per item because it differs per item). Every
+# entry takes the same argument rather than special-casing one.
+_TOPDOWN_DESC = ("50/50 blend: category 6-month average x item's 30-day share + "
+                 "TSB alpha=beta=0.05")
+
+
+def _topdown(ctx):
+    return topdown_tsb_fit_predict(ctx["category_values"])
+
+
+def _topdown_calendar(ctx):
+    """The blend, lowered when the school calendar shows quieter days ahead
+    (forecasting/calendar_adjust.py; ratios from the item's CATEGORY)."""
+    return calendar_capped_fit_predict(_topdown(ctx), ctx["day_types"],
+                                       cat_values=ctx["category_values"])
+
+
+MODELS = {
+    "topdown_tsb+calendar+prophet_shape": (
+        _topdown_calendar, f"{_TOPDOWN_DESC}, lowered when the school calendar shows quieter "
+                           f"days ahead; the {HORIZON}-day total is spread over the days by the "
+                           f"item's category's Prophet pattern"),
+    "topdown_tsb+prophet_shape": (
+        _topdown, f"{_TOPDOWN_DESC}; the {HORIZON}-day total is spread over the days by "
+                  f"the item's category's Prophet pattern"),
+    "topdown_tsb+weekday_shape": (
+        _topdown, f"{_TOPDOWN_DESC}; the {HORIZON}-day total is spread over the days by "
+                  f"the item's category's weekday pattern"),
+    "topdown_tsb": (_topdown, f"{_TOPDOWN_DESC}, flat rate over {HORIZON} days"),
+    "tsb": (lambda ctx: tsb_fit_predict(TSB_ALPHA, TSB_BETA),
+            f"TSB p_hat*z_hat, alpha={TSB_ALPHA} beta={TSB_BETA}, "
+            f"flat over {HORIZON} days"),
+    "rolling_mean_30": (lambda ctx: rolling_mean_fit_predict(WINDOW),
+                        f"trailing {WINDOW}-day mean, flat over {HORIZON} days"),
+    "ewma_a0.1": (lambda ctx: ewma_fit_predict(0.1),
+                  f"EWMA alpha=0.1, flat over {HORIZON} days"),
+    "prophet": (lambda ctx: _make_prophet(ctx),
+                f"Prophet, weekly+yearly seasonality with Dim_Date calendar "
+                f"regressors, VARYING over {HORIZON} days"),
+}
+# The default, and why: see the docstring. Measured on the 58 Fast SKUs over
+# identical folds by scripts/test_item_forecast_methods.py: mean MASE 1.71 against
+# 2.52 for the Prophet it replaces (2.16 against 2.61 on the 45 items still
+# selling). `prophet` stays in MODELS and is still selectable with --model prophet:
+# it is the comparison the manuscript's sections 2.1.4 and 3.3.2 need, and a
+# measured negative result is worth more than an untested claim.
+# The calendar adjustment on top (scripts/test_calendar_adjustment.py): mean MASE
+# 1.71 -> 1.67, pooled WMAPE 64.1% -> 60.3%, better on 41 of 57 items.
+DEFAULT_MODEL = "topdown_tsb+calendar+prophet_shape"
+
+# Models whose factory needs the item's category series (see MODELS).
+NEEDS_CATEGORY = {"topdown_tsb", "topdown_tsb+prophet_shape", "topdown_tsb+weekday_shape",
+                  "topdown_tsb+calendar+prophet_shape"}
+
+# A level model that gets its category's day-by-day shape on top (forecasting/shape.py).
+# The 30-day total is the level model's, unchanged: the shape only redistributes it.
+SHAPE_KIND = {"topdown_tsb+prophet_shape": "prophet", "topdown_tsb+weekday_shape": "weekday",
+              "topdown_tsb+calendar+prophet_shape": "prophet"}
+
+# Models whose STORED forecast varies by day: Prophet draws its own curve, the
+# shaped ones borrow their category's. scripts/verify_rebuild_state.py reads this
+# to decide whether a flat forecast per SKU would be a fault.
+CURVE_MODELS = {"prophet"} | set(SHAPE_KIND)
+
+
+def _make_prophet(ctx):
+    """Prophet bound to the benchmark's shared daily index and calendar.
+
+    Returns the standard `fit_predict(train, horizon)` callable, so it
+    drops into the same harness as the trailing averages and is scored by
+    `walk_forward_evaluate` on identical folds.
+
+    The calendar columns come from Dim_Date, which `populate_dim_date.py` fills
+    from `calendar_ranges.csv`; they are the six in
+    `forecasting.prophet_model.CALENDAR_REGRESSORS`, semester_week included.
+
+    The index and calendar are extended HORIZON days past the last observation.
+    Without that, the flags for the production forecast window fall off the end
+    of the index and are zero-filled, so the validated model (folds see the real
+    flags) and the produced forecast were not the same model.
+    """
+    from forecasting.prophet_model import load_calendar, prophet_fit_predict
+    if ctx.get("con") is None:
+        return prophet_fit_predict(ctx["index"], None, "prophet")
+    idx = ctx["index"]
+    ext = idx.append(pd.date_range(idx[-1] + pd.Timedelta(days=1), periods=HORIZON, freq="D"))
+    return prophet_fit_predict(ext, load_calendar(ctx["con"], ext), "prophet")
+
+
 VALIDATION_METHOD = "walk_forward_30d_aggregate"
 MAPE_PASS_THRESHOLD = 20.0
 
@@ -204,8 +419,10 @@ def create_result_tables(con):
 
 
 def load_common(con):
+    cols = {r[1] for r in con.execute("PRAGMA table_info(Dim_Product)")}
+    cat_col = "forecast_category" if "forecast_category" in cols else "NULL AS forecast_category"
     products = pd.read_sql(
-        "SELECT product_id, item_name, fsn_class, is_hvl FROM Dim_Product", con
+        f"SELECT product_id, item_name, fsn_class, is_hvl, {cat_col} FROM Dim_Product", con
     )
     fact = pd.read_sql(
         """SELECT f.product_id, d.calendar_date, f.quantity_sold
@@ -220,9 +437,23 @@ def load_common(con):
 
 def build_calendar(fact, dim_date):
     """The full daily index every SKU's series is reindexed onto, plus the
-    is_sem_break flag aligned to it. Same span convention as
-    step5_prescriptive.py::load_series."""
-    idx = pd.date_range(fact["calendar_date"].min(), fact["calendar_date"].max(), freq="D")
+    is_sem_break flag aligned to it.
+
+    The index ends at the last date ANY SKU sold, not at the last row of
+    Fact_Sales. The panel is zero-filled out to the end of the calendar range
+    (2026-07-31) while the tallies stop at 2026-07-08, so its last 23 days are
+    padding. Left in, a 30-day trailing mean averaged 7 real days with 23
+    padded zeros: measured on the Fast SKUs, the 30-day forecasts summed to
+    647 units against 3,291 actually sold in the last 30 real days (0.20x),
+    and the last validation folds scored fake zero "actuals". Forecast dates
+    start the day after this end, which is also what
+    step4c_category_forecast.py does, so a category and its items describe
+    the same 30 days. (step5_prescriptive.py::load_series still spans the
+    whole panel; its 365-day window makes that a ~6% effect, not 5x.)"""
+    last_sale = fact.loc[fact["quantity_sold"] > 0, "calendar_date"].max()
+    if pd.isna(last_sale):
+        last_sale = fact["calendar_date"].max()
+    idx = pd.date_range(fact["calendar_date"].min(), last_sale, freq="D")
     breaks = (dim_date.set_index("calendar_date")[SCOPE_COLUMN]
               .reindex(idx).fillna(0).to_numpy(dtype=float))
     return idx, breaks
@@ -232,6 +463,18 @@ def build_series(fact_one, idx):
     """One SKU's dense daily series over the full calendar, zero-filled."""
     return (fact_one.groupby("calendar_date")["quantity_sold"].sum()
             .reindex(idx, fill_value=0.0).astype(float).to_numpy())
+
+
+def build_category_series(fact, products, idx):
+    """{forecast_category: dense daily array over idx}: each category's combined
+    sales, every item in it (Fast or not), zero-filled on the same index as the
+    item series so position i is the same date for both. Same construction and
+    residue bucket as step4c_category_forecast.py."""
+    cat = products.set_index("product_id")["forecast_category"].fillna(RESIDUE)
+    f = fact.assign(category=fact["product_id"].map(cat).fillna(RESIDUE))
+    wide = (f.groupby(["category", "calendar_date"])["quantity_sold"].sum()
+            .unstack(0).reindex(idx, fill_value=0.0).fillna(0.0).astype(float))
+    return {c: wide[c].to_numpy() for c in wide.columns}
 
 
 def fold_scope(fold, breaks):
@@ -294,20 +537,57 @@ def metrics_rows(model_rows, naive_rows, breaks, folds):
     return out
 
 
-def append_forecast(product_id, level, spread, is_heuristic, last_date, snapshot_date, rows):
-    """30 flat rows: the trailing-window mean, banded by +/- 1 SD, clipped at 0."""
+def append_forecast(product_id, level, spread, is_heuristic, last_date, snapshot_date,
+                    model_type, rows):
+    """30 flat rows: the model's level, banded by +/- 1 SD, clipped at 0.
+
+    `model_type` is passed in rather than read from a module constant so
+    that the label written to Result_Forecast is the one `--model`
+    actually selected. step5_prescriptive.py reads that column to build
+    its provenance string, so a stale constant here would mislabel every
+    downstream number."""
+    # 6 dp, not 3. A trailing mean's level is order 1-10, so rounding to 3
+    # was lossless in practice. TSB's level is a RATE (p_hat * z_hat) and
+    # can legitimately be 1e-4 or smaller, so round(level, 3) silently
+    # turned 30 of 58 positive forecasts into hard zeros - which reads
+    # downstream as "this SKU cannot be ordered" rather than "this SKU is
+    # forecast to sell very little". Rounding must not manufacture a
+    # category change. It is still rounding, not truncation to a
+    # threshold: a level genuinely too small to order stays too small,
+    # it just stops being reported as an exact zero.
+    # `level` may be a scalar (every flat model) or a HORIZON-length array
+    # (Prophet). Broadcasting here rather than at the call site means the
+    # 30 rows written are the model's ACTUAL day-by-day output: writing a
+    # Prophet forecast as its own mean would discard exactly the calendar
+    # shape the model was chosen for, and would be Prophet in name only.
+    curve = np.broadcast_to(np.asarray(level, dtype=float).ravel(),
+                            (HORIZON,)) if np.ndim(level) == 0 else \
+        np.asarray(level, dtype=float).ravel()
+    if curve.size != HORIZON:
+        raise ValueError(
+            f"model returned {curve.size} values for a {HORIZON}-day horizon")
+
     dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=HORIZON, freq="D")
-    for d in dates:
+    for d, y in zip(dates, curve):
         rows.append(dict(
             product_id=product_id, forecast_date=d.strftime("%Y-%m-%d"),
-            yhat=round(level, 3),
-            yhat_lower=round(max(level - spread, 0.0), 3),
-            yhat_upper=round(level + spread, 3),
-            model_type=MODEL_TYPE, is_heuristic=is_heuristic, snapshot_date=snapshot_date,
+            yhat=round(float(y), 6),
+            yhat_lower=round(max(float(y) - spread, 0.0), 6),
+            yhat_upper=round(float(y) + spread, 6),
+            model_type=model_type, is_heuristic=is_heuristic, snapshot_date=snapshot_date,
         ))
 
 
 def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("---")[0].strip())
+    ap.add_argument("--model", default=DEFAULT_MODEL, choices=sorted(MODELS),
+                    help="forecasting model (default: %(default)s). "
+                         "Use rolling_mean_30 to reproduce the published "
+                         "benchmark numbers.")
+    args = ap.parse_args()
+    model_type = args.model
+    make_model, model_desc = MODELS[model_type]
+
     con = sqlite3.connect(DB_PATH)
     create_result_tables(con)
 
@@ -328,15 +608,36 @@ def main():
         ["standard", "simplified"], default="minimal",
     )
 
-    model = rolling_mean_fit_predict(WINDOW)
+    # A shaped model gets its CATEGORY's day-by-day pattern on top of the level
+    # model's total (which it leaves unchanged); prophet draws its own curve.
+    shape_kind = SHAPE_KIND.get(model_type)
+    shaped = shape_kind is not None
+    needs_category = model_type in NEEDS_CATEGORY
+    cat_series = build_category_series(fact, products, idx) if (needs_category or shaped) else {}
+    cat_of = products.set_index("product_id")["forecast_category"].fillna(RESIDUE)
+    if needs_category and cat_of.eq(RESIDUE).all():
+        raise SystemExit("Dim_Product.forecast_category is empty - run "
+                         "scripts/step1b_categorize_products.py first, or use --model tsb")
+    forecast_dates = pd.date_range(idx[-1] + pd.Timedelta(days=1), periods=HORIZON, freq="D")
+    shape_cal = load_shape_calendar(con) if shaped else None
+    shape_cache = {}                    # category -> (weights, shape actually used)
+
+    base_ctx = {"index": idx, "con": con,
+                "day_types": load_day_types(con, idx, HORIZON)}
+    model = None if needs_category else make_model(base_ctx)
     naive = naive_fit_predict()
-    snapshot_date = fact["calendar_date"].max().strftime("%Y-%m-%d")
+    # The last date of real history (see build_calendar), not the panel's last row.
+    snapshot_date = idx[-1].strftime("%Y-%m-%d")
     last_date = idx[-1]
 
     forecast_rows, metric_rows, unscored = [], [], []
+    model_totals = {}               # product_id -> the model's own 30-day total
     by_product = dict(list(fact.groupby("product_id")))
 
-    print(f"Model: {MODEL_TYPE} (trailing {WINDOW}-day mean, flat over {HORIZON} days)")
+    print(f"Model: {model_type} ({model_desc})")
+    print("Day-by-day shape: " + (
+        f"{shape_kind}, from each item's category (the 30-day total is unchanged; see the docstring)"
+        if shaped else ("the model's own curve" if model_type in CURVE_MODELS else "flat")))
     print(f"Harness: {VALIDATION_METHOD} | horizon {HORIZON} | folds {MIN_FOLDS}-{MAX_FOLDS} "
           f"| min_train {MIN_TRAIN}  (identical to model_benchmark.py)\n")
 
@@ -348,7 +649,11 @@ def main():
         # ONE fold layout per SKU, handed to both methods, so neither can be
         # advantaged by a different split.
         folds = make_folds(values.size, HORIZON, MIN_FOLDS, MAX_FOLDS, MIN_TRAIN)
-        ev_m = walk_forward_evaluate(pid, values, model, MODEL_TYPE, folds=folds)
+        cat_name = cat_of.get(pid, RESIDUE)
+        cat_vals = cat_series.get(cat_name, np.zeros(len(idx)))
+        # Bound per item: the category-share model reads this item's category.
+        fit = make_model({**base_ctx, "category_values": cat_vals}) if needs_category else model
+        ev_m = walk_forward_evaluate(pid, values, fit, model_type, folds=folds)
         scored = ev_m.sufficient
 
         if scored:
@@ -369,16 +674,45 @@ def main():
             ))
 
         # Production fit: the same callable, on the whole series.
-        level = float(model(values, HORIZON)[0])
+        out = np.asarray(fit(values, HORIZON), dtype=float).ravel()
+        # A flat model is stored as its single level, or as its 30-day total
+        # spread by the category's shape; a curve model keeps all 30 values.
+        # `reported` is only what this line prints.
+        row_model, level, used = model_type, out, "flat"
+        if model_type != "prophet":
+            level = float(out[0])
+            if shaped:
+                if cat_name not in shape_cache:
+                    shape_cache[cat_name] = day_shape(shape_kind, cat_vals, idx,
+                                                      shape_cal, forecast_dates)
+                weights, used = shape_cache[cat_name]
+                # day_shape says which shape it ACTUALLY used (prophet -> weekday
+                # -> flat on failure), and the row is labelled with that, so a
+                # fallback is visible in Result_Forecast.model_type rather than
+                # hidden behind the configured name.
+                base = model_type.rsplit("+", 1)[0]
+                row_model = base if used == "flat" else f"{base}+{used}_shape"
+                if used != "flat":
+                    level = float(out.sum()) * weights
+        reported = float(np.mean(out))
         spread = float(np.std(values, ddof=1)) if values.size > 1 else 0.0
         append_forecast(pid, level, spread, 0 if scored else 1,
-                        last_date, snapshot_date, forecast_rows)
+                        last_date, snapshot_date, row_model, forecast_rows)
+        model_totals[pid] = float(out.sum())
 
+        shape = "mean" if model_type == "prophet" else ("shaped" if used != "flat" else "flat")
         print(f"[{tier:10}] product_id={pid:4} sale_days={int(row['n_obs']):4} "
-              f"folds={ev_m.n_folds:3} yhat={level:8.3f}  {name}")
+              f"folds={ev_m.n_folds:3} yhat({shape})={reported:8.3f}  {name}")
 
     forecast_df = pd.DataFrame(forecast_rows)
     metrics_df = pd.DataFrame(metric_rows)
+
+    # A shape only redistributes: every item's 30 days must still add up to its
+    # model's total (which is what was validated). Checked BEFORE anything is written.
+    written = forecast_df.groupby("product_id")["yhat"].sum()
+    drift = max(abs(written[pid] - t) for pid, t in model_totals.items())
+    assert drift < 1e-3, f"the day-by-day shape changed an item's 30-day total (max drift {drift:.6f})"
+    assert (forecast_df["yhat"] >= 0).all(), "negative forecast written"
 
     # Clear + refill in one transaction: on failure SQLite rolls back to the
     # previous run's forecasts rather than to nothing.

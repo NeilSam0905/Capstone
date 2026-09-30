@@ -22,7 +22,9 @@ flask-cors is enabled anyway as a fallback for direct access.
 """
 import csv
 import io
+import re
 from datetime import date, datetime
+from pathlib import Path
 
 from flask import Flask, Response, g, jsonify, request
 from flask_cors import CORS
@@ -36,6 +38,160 @@ import validation
 
 app = Flask(__name__)
 CORS(app)
+
+# The plain data files are gitignored; after a fresh clone or a pull they come
+# from the encrypted vault/ (scripts/vault.py). Never overwrites local work.
+_vault_note = pipeline.vault.ensure_unlocked()
+if _vault_note:
+    print(_vault_note, flush=True)
+
+# Uploaded workbooks are archived here, so a spreadsheet imported through the
+# interface lands in the same folder step0 reads its source workbooks from.
+# Gitignored (real client data), and created on demand rather than assumed -
+# a clean clone has no rawdata/.
+RAWDATA_DIR = Path(__file__).resolve().parent.parent / "rawdata"
+
+# An import is a whole workbook, so the JSON-sized default is far too small,
+# but an unbounded upload is a trivial way to fill the disk. The largest file
+# in rawdata/ today is ~2 MB.
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+
+
+def _safe_name(name):
+    """Filenames are built from user-supplied months/dates, so strip anything
+    that could climb out of RAWDATA_DIR before it reaches the filesystem."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", str(name))
+
+
+def _write_rawdata(filename, payload):
+    """Archive an uploaded file into rawdata/ and return the path, or None if
+    it could not be written. A failed archive must never fail the import: the
+    rows the user wanted loaded are the point, the copy is a side effect."""
+    try:
+        RAWDATA_DIR.mkdir(parents=True, exist_ok=True)
+        path = RAWDATA_DIR / _safe_name(filename)
+        path.write_bytes(payload)
+        return str(path)
+    except OSError as exc:
+        app.logger.warning("could not write %s to rawdata/: %s", filename, exc)
+        return None
+
+
+def _norm_header(s):
+    """'Units On Hand' / 'units_on_hand' / ' UNITS ON HAND ' -> 'unitsonhand'.
+    The store's workbooks are hand-kept and their headers vary in case,
+    spacing and punctuation; matching on letters and digits alone is what
+    lets one importer read all of them."""
+    return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+
+def _read_table(storage):
+    """Read an uploaded .csv/.xlsx into (headers, rows-as-dicts).
+
+    Raises ValueError with a message meant for the user - the interface shows
+    it verbatim, so it has to say what to fix, not what went wrong internally.
+    """
+    name = (storage.filename or "").lower()
+    raw = storage.read()
+    if not raw:
+        raise ValueError("The file is empty.")
+
+    if name.endswith(".xlsx"):
+        from openpyxl import load_workbook
+        try:
+            # read_only + data_only: we want values, not formulas, and these
+            # workbooks can carry thousands of rows of embedded formatting.
+            wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        except Exception as exc:                       # openpyxl raises a zoo
+            raise ValueError(f"Could not read that .xlsx file ({exc}).") from exc
+        ws = wb.active
+        table = [list(r) for r in ws.iter_rows(values_only=True)]
+    elif name.endswith(".csv"):
+        for encoding in ("utf-8-sig", "utf-8", "cp1252"):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            raise ValueError("Could not decode that CSV - save it as UTF-8 and retry.")
+        table = [row for row in csv.reader(io.StringIO(text))]
+    else:
+        raise ValueError("Upload a .csv or .xlsx file.")
+
+    table = [r for r in table if any(str(c).strip() for c in r if c is not None)]
+    if not table:
+        raise ValueError("The file has no rows.")
+
+    headers = [_norm_header(h) for h in table[0]]
+    rows = []
+    for values in table[1:]:
+        row = {}
+        for i, h in enumerate(headers):
+            if h:
+                row[h] = values[i] if i < len(values) else None
+        rows.append(row)
+    return headers, rows
+
+
+def _pick(row, *names):
+    """First non-empty value among several accepted column spellings."""
+    for n in names:
+        v = row.get(_norm_header(n))
+        if v is not None and str(v).strip() != "":
+            return v
+    return None
+
+
+def _as_int(value):
+    """Spreadsheet numbers arrive as 5, 5.0 or '5' depending on the cell.
+    Returns None when the value is not a whole number."""
+    try:
+        f = float(str(value).strip().replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+    return int(f) if f == int(f) else None
+
+
+def _as_iso_date(value):
+    """Accept a real date cell, an ISO string, or nothing. Deliberately does
+    NOT accept DD/MM or MM/DD: the whole pipeline refuses ambiguous dates for
+    the reason set out in the README, and an importer is exactly where a
+    silently-misread date would do the most damage."""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    s = str(value or "").strip()[:10]
+    return s if validation.ISO_DATE_RE.match(s) else None
+
+
+def _product_index(c):
+    """Lowercased item_name -> product_id, for matching a spreadsheet's item
+    column against the controlled vocabulary."""
+    return {r["item_name"].strip().lower(): r["product_id"]
+            for r in dbmod.rows(c, "SELECT product_id, item_name FROM Dim_Product")}
+
+
+def _accepted_upload(storage):
+    """Reject anything that is not a spreadsheet BEFORE it is archived.
+
+    rawdata/ is a pipeline input folder - step0 globs it - so letting an
+    unparseable upload land there would put junk in front of the ETL. The
+    extension check therefore gates the archive, not just the parse."""
+    name = (storage.filename or "").lower()
+    if not (name.endswith(".csv") or name.endswith(".xlsx")):
+        return "Upload a .csv or .xlsx file."
+    return None
+
+
+def _archive_upload(storage):
+    """Keep the file exactly as uploaded, under a timestamped name so two
+    imports of the same workbook do not overwrite each other."""
+    storage.stream.seek(0)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return _write_rawdata(f"import_{stamp}_{storage.filename or 'upload'}",
+                          storage.stream.read())
 
 
 def con():
@@ -133,7 +289,30 @@ def get_meta():
 
 @app.get("/api/suppliers")
 def get_suppliers():
-    cat = catalog.compute_catalog(con())
+    c = con()
+
+    # ?month=YYYY-MM — only suppliers with a sale in that month, for the batch
+    # report's filter. Taken from build_batch_report()'s own output rather than
+    # a query of its own, so the dropdown cannot offer a supplier whose section
+    # that report would then come back empty for. An unparseable month is
+    # ignored rather than rejected: a filter list is not worth a failed screen.
+    month = request.args.get("month") or None
+    if month and validation.ISO_MONTH_RE.match(month):
+        sold = sorted({e["supplier"] for e in build_batch_report(c, month)})
+        return jsonify([catalog.ALL_SUPPLIERS, *sold])
+
+    cat = catalog.compute_catalog(c)
+    # ?forecastable=1 — only suppliers with at least one SKU the model actually
+    # forecast. The Demand Forecast screen lists nothing but forecastable SKUs,
+    # so offering it a supplier whose items are all unforecast leads straight
+    # to an empty page.
+    if _bool_flag("forecastable"):
+        ids = _forecastable_ids(c)
+        # An empty set means the pipeline has not produced any forecast at all.
+        # That screen then falls back to every SKU with sales history, so the
+        # supplier list must not narrow to nothing underneath it.
+        if ids:
+            cat = [p for p in cat if p["product_id"] in ids]
     return jsonify([catalog.ALL_SUPPLIERS, *sorted({p["supplier_name"] for p in cat})])
 
 
@@ -153,14 +332,141 @@ def get_months():
 @app.get("/api/products")
 def get_products():
     c = con()
-    cat = catalog.compute_catalog(c)
     supplier = request.args.get("supplier") or None
     category = request.args.get("category") or None
+    # The topbar's date range belongs here, not only on /api/sales/monthly.
+    # Every product-derived panel (total units, top sellers, category mix)
+    # reads this endpoint, so without it "Last 3 Months" moved the trend line
+    # and left every other figure on the page at its all-time value.
+    date_range = request.args.get("dateRange") or None
+    cat = catalog.compute_catalog(c, date_range)
     cat = [p for p in cat if catalog.matches(p, supplier, category)]
     if _bool_flag("has_history"):
         cat = [p for p in cat if p["is_active"] and p["total_units"] >= 0 and p["has_history"]]
         cat.sort(key=lambda p: p["item_name"])
     return jsonify(cat)
+
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+VOCAB_CSV = DATA_DIR / "vocab_mapping_FINAL_v5.csv"
+INVENTORY_SOURCE_CSV = DATA_DIR / "USTore_inventory_excel_long.csv"
+
+
+def _append_csv_row(path, row):
+    """Append one dict to an existing CSV, in that file's own column order.
+
+    Reads the header first and writes strictly against it, so a column added
+    to the file later cannot silently shift values into the wrong field.
+    Returns True on success; a failure here is reported, never swallowed - a
+    half-registered item is worse than a rejected one.
+    """
+    with open(path, newline="", encoding="utf-8") as f:
+        header = next(csv.reader(f))
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        csv.DictWriter(f, fieldnames=header).writerow(
+            {k: row.get(k, "") for k in header})
+    return header
+
+
+def _register_in_source_csvs(name, category, price):
+    """Make a new item survive `step1_apply_mapping.py`, which rebuilds
+    Dim_Product from scratch on every pipeline run.
+
+    TWO files are needed, and the second is the one that is easy to miss:
+
+      1. `vocab_mapping_FINAL_v5.csv` - the controlled vocabulary. Maps a raw
+         name to its canonical form; a new item maps to itself.
+      2. `USTore_inventory_excel_long.csv` - the inventory source. This is
+         what actually decides the roster: step1 builds `all_items` from the
+         canonical names present in the SALES and INVENTORY csvs, NOT from
+         the vocabulary. A vocabulary entry alone would leave the item out of
+         Dim_Product entirely at the next rebuild.
+
+    Quantity is left blank rather than zeroed: the store has not counted this
+    item yet, and writing 0 would assert a stock figure nobody measured. It
+    reads as 0 until the first real count is recorded, which then supersedes
+    it (catalog.load_counted_stock takes precedence over the workbook).
+    """
+    today_iso = date.today().isoformat()
+    _append_csv_row(VOCAB_CSV, {
+        "raw_name": name,
+        "canonical_item_name": name,
+        "merged": "no",
+        "row_count": 0,
+        "source": "tally_interface",
+        "revisit_with_store": "",
+    })
+    _append_csv_row(INVENTORY_SOURCE_CSV, {
+        "Category": category,
+        "Date": today_iso,
+        "Item": name,
+        "Price": price if price is not None else "",
+        "Quantity": "",
+        "Notes": f"Added via the tally interface {today_iso}; not yet counted",
+    })
+
+
+@app.post("/api/products")
+def add_product():
+    """Create one new item, permanently.
+
+    Writes to three places, because anything less does not survive:
+
+      - `Dim_Product`, so the item is usable in this session immediately;
+      - `data/vocab_mapping_FINAL_v5.csv`, the controlled vocabulary;
+      - `data/USTore_inventory_excel_long.csv`, the inventory source, which is
+        what `step1_apply_mapping.py` actually derives the product roster from.
+
+    Writing to the vocabulary is a deliberate, user-directed exception to the
+    rule that it is a hand-maintained file. The two CSV appends happen BEFORE
+    the database insert so that a filesystem failure leaves nothing behind: a
+    row in Dim_Product that no CSV backs would vanish at the next pipeline run
+    and look like data loss.
+    """
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("item_name") or "").strip()
+    category = str(payload.get("category") or "").strip() or "Uncategorised"
+    supplier = str(payload.get("supplier_name") or "").strip() or None
+
+    errors = {}
+    if not name:
+        errors["item_name"] = "Enter an item name."
+    elif len(name) > 200:
+        errors["item_name"] = "Item name is too long."
+
+    c = con()
+    if not errors and c.execute(
+        "SELECT 1 FROM Dim_Product WHERE LOWER(TRIM(item_name)) = ?", (name.lower(),)
+    ).fetchone():
+        errors["item_name"] = "An item with that name already exists."
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+
+    # CSVs first: see the docstring. If these fail the item is never created,
+    # rather than created in a form that the next pipeline run would erase.
+    try:
+        _register_in_source_csvs(name, category, payload.get("unit_price_php"))
+    except (OSError, StopIteration, csv.Error) as exc:
+        app.logger.exception("could not register %r in the source CSVs", name)
+        return jsonify({"ok": False, "errors": {
+            "item_name": f"Could not write to the data files ({exc}). Item not added."
+        }}), 500
+
+    # fsn_class and lead_time_days are left NULL on purpose: step3 classifies
+    # and step5a sets lead times. Guessing either here would put a number in
+    # front of the prescriptive math that no rule produced.
+    cur = c.execute("""
+        INSERT INTO Dim_Product (item_name, category, supplier_name, entry_date, is_active, is_hvl)
+        VALUES (?, ?, ?, ?, 1, 0)
+    """, (name, category, supplier, date.today().isoformat()))
+    c.commit()
+
+    return jsonify({"ok": True, "product": {
+        "product_id": cur.lastrowid,
+        "item_name": name,
+        "category": category,
+        "supplier_name": supplier or catalog.UNATTRIBUTED,
+    }})
 
 
 @app.get("/api/products/<int:product_id>/history")
@@ -207,11 +513,16 @@ def get_monthly_units():
     return jsonify(sorted(by_month.values(), key=lambda a: a["month"]))
 
 
-def build_batch_report(c, month):
+def build_batch_report(c, month, only_supplier=None):
     """The month's sales grouped by supplier — the shared body of both
     /api/reports/batch (JSON, for the screen) and /api/reports/batch.pdf
     (the document Purchasing and Finance actually receive). Neither may
-    compute this differently from the other."""
+    compute this differently from the other.
+
+    `only_supplier` narrows the report to that supplier's section. It is applied
+    here, in the shared body, rather than on the screen: a filter that trimmed
+    the table but not the PDF/CSV/XLSX beside it would hand someone an export
+    that disagrees with what they were looking at when they clicked."""
     cat = catalog.compute_catalog(c)
     product_by_id = {p["product_id"]: p for p in cat}
 
@@ -235,6 +546,10 @@ def build_batch_report(c, month):
         })
         line_total = row["units"] * p["unit_price_php"] if p["unit_price_php"] is not None else None
         entry["items"].append({
+            # product_id travels with the line so the XLSX renderer can join
+            # each row to its per-date quantities. Two suppliers can carry the
+            # same item_name, so the name is not a key.
+            "product_id": row["product_id"],
             "item_name": p["item_name"],
             "quantity": row["units"],
             "unit_price_php": p["unit_price_php"],
@@ -248,10 +563,79 @@ def build_batch_report(c, month):
 
     out = []
     for entry in by_supplier.values():
+        # Named `only_supplier`, not `supplier`: the loop above binds `supplier`
+        # to each row's own supplier, so a parameter of that name is shadowed
+        # by the time this runs and every section but the last one's is dropped.
+        if (only_supplier and only_supplier != catalog.ALL_SUPPLIERS
+                and entry["supplier"] != only_supplier):
+            continue
         entry["items"].sort(key=lambda i: i["quantity"], reverse=True)
         out.append(entry)
     out.sort(key=lambda e: e["subtotal"], reverse=True)
     return out
+
+
+def build_batch_daily(c, month):
+    """The month laid out day by day, for the TBS-shaped .xlsx export.
+
+    `build_batch_report` aggregates each item to a monthly total, which is
+    what the screen, the PDF and the CSV show. The store's own TBS workbook
+    is a grid instead - one column per calendar day - so this returns the
+    same Fact_Sales rows at day resolution. The two cannot disagree: the
+    row totals are SUM() formulas over these columns, and both read the
+    same table.
+
+    Dates come from Dim_Date rather than from Python's calendar so the
+    column set is the pipeline's own calendar, including the closure flags
+    the Tally Interface writes.
+    """
+    days = dbmod.rows(c, """
+        SELECT calendar_date, is_store_closed, is_event_day,
+               is_enrollment_period, is_exam_week, is_sem_break
+        FROM Dim_Date
+        WHERE substr(calendar_date, 1, 7) = ?
+        ORDER BY calendar_date
+    """, (month,))
+
+    qty_rows = dbmod.rows(c, """
+        SELECT f.product_id, d.calendar_date AS day, SUM(f.quantity_sold) AS units
+        FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        WHERE substr(d.calendar_date, 1, 7) = ?
+        GROUP BY 1, 2
+        HAVING SUM(f.quantity_sold) > 0
+    """, (month,))
+
+    by_product = {}
+    for row in qty_rows:
+        by_product.setdefault(row["product_id"], {})[row["day"]] = row["units"]
+
+    # One mark per day, so the export can shade the date columns the way the
+    # store colour-codes theirs. First match wins: a closed day is a closed
+    # day whatever else the calendar says about it, and an event during
+    # enrollment is read as the event. These are exactly the Dim_Date
+    # regressors the forecast is fitted on (see step4_forecast_model.py), so
+    # the sheet shows the same calendar the model sees.
+    MARKS = (("is_store_closed", "closed"), ("is_event_day", "event"),
+             ("is_enrollment_period", "enrollment"), ("is_exam_week", "exam"),
+             ("is_sem_break", "break"))
+
+    def mark(day):
+        for column, name in MARKS:
+            if day[column]:
+                return name
+        return None
+
+    marks = {d["calendar_date"]: mark(d) for d in days}
+
+    return {
+        "dates": [d["calendar_date"] for d in days],
+        "marks": {d: m for d, m in marks.items() if m},
+        "quantities": by_product,
+        # The store writes this in the legend block as "N DAYS". It counts
+        # days that actually sold, not days the store was open - an open day
+        # with no recorded sale is not a selling day on their sheet either.
+        "selling_days": len({r["day"] for r in qty_rows}),
+    }
 
 
 @app.get("/api/reports/batch")
@@ -259,7 +643,7 @@ def get_batch_report():
     month = request.args.get("month")
     if not month:
         return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
-    return jsonify(build_batch_report(con(), month))
+    return jsonify(build_batch_report(con(), month, request.args.get("supplier") or None))
 
 
 @app.get("/api/reports/batch.pdf")
@@ -280,8 +664,9 @@ def get_batch_report_pdf():
     if not month or not validation.ISO_MONTH_RE.match(month):
         return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
 
-    report = build_batch_report(con(), month)
-    pdf_bytes = batch_pdf.render(report, month)
+    c = con()
+    report = build_batch_report(c, month, request.args.get("supplier") or None)
+    pdf_bytes = batch_pdf.render(report, month, build_batch_daily(c, month))
 
     disposition = "inline" if _bool_flag("inline") else "attachment"
     filename = f"USTore_Batch_Sales_Report_{month}.pdf"
@@ -300,7 +685,7 @@ def get_batch_report_csv():
     if not month or not validation.ISO_MONTH_RE.match(month):
         return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
 
-    report = build_batch_report(con(), month)
+    report = build_batch_report(con(), month, request.args.get("supplier") or None)
     csv_bytes = batch_export.render_csv(report, month)
     filename = f"USTore_Batch_Sales_Report_{month}.csv"
     return Response(csv_bytes, mimetype="text/csv", headers={
@@ -311,14 +696,17 @@ def get_batch_report_csv():
 
 @app.get("/api/reports/batch.xlsx")
 def get_batch_report_xlsx():
-    """The batch sales report as an .xlsx workbook - same row shape and
-    same shared body as the CSV and PDF exports."""
+    """The batch sales report as an .xlsx workbook, laid out as the store's
+    own TBS sheet: supplier blocks, one column per calendar day, TOTAL
+    QUANTITY / ITEM PRICE / FOR REMITTANCE. Same build_batch_report() body
+    as the CSV, PDF and screen, plus build_batch_daily() for the grid."""
     month = request.args.get("month")
     if not month or not validation.ISO_MONTH_RE.match(month):
         return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
 
-    report = build_batch_report(con(), month)
-    xlsx_bytes = batch_export.render_xlsx(report, month)
+    c = con()
+    report = build_batch_report(c, month, request.args.get("supplier") or None)
+    xlsx_bytes = batch_export.render_xlsx(report, month, build_batch_daily(c, month))
     filename = f"USTore_Batch_Sales_Report_{month}.xlsx"
     return Response(xlsx_bytes,
                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -584,6 +972,93 @@ def get_inventory_counts():
     })
 
 
+@app.post("/api/inventory/import")
+def import_inventory_counts():
+    """Bulk stock counts from a .csv/.xlsx, archived into rawdata/ as uploaded.
+
+    Expected columns (header spelling is matched loosely - case, spacing and
+    punctuation are ignored):
+
+        Item            required, must match a Dim_Product item_name
+        Units On Hand   required, whole number >= 0  (aliases: Quantity, Stock)
+        Month           optional, YYYY-MM - falls back to the ?month= form field
+        Note            optional
+
+    Upserts exactly like the single-count form: one count per product per
+    month, a re-import corrects rather than accumulates.
+
+    Rows that cannot be used are REPORTED, never silently dropped - the same
+    rule step2 follows with Exception_Log. Valid rows are still applied, so a
+    500-row workbook is not rejected wholesale over two bad lines.
+    """
+    storage = request.files.get("file")
+    if storage is None or not storage.filename:
+        return jsonify({"ok": False, "error": "Choose a .csv or .xlsx file to import."}), 400
+    bad = _accepted_upload(storage)
+    if bad:
+        return jsonify({"ok": False, "error": bad}), 400
+
+    default_month = (request.form.get("month") or "").strip()
+    if default_month and not validation.ISO_MONTH_RE.match(default_month):
+        return jsonify({"ok": False, "error": "Month must be YYYY-MM."}), 400
+
+    saved = _archive_upload(storage)
+    storage.stream.seek(0)
+    try:
+        _, rows = _read_table(storage)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc), "saved_to": saved}), 400
+
+    c = con()
+    products = _product_index(c)
+    today_month = date.today().strftime("%Y-%m")
+    imported = updated = 0
+    rejected = []
+    now = datetime.now().isoformat(timespec="seconds")
+
+    for i, row in enumerate(rows, start=2):        # start=2: row 1 is the header
+        item = _pick(row, "Item", "Item Name", "Product", "Canonical Item Name")
+        qty = _as_int(_pick(row, "Units On Hand", "Quantity", "Units", "Stock", "On Hand"))
+        month = str(_pick(row, "Month", "Count Month") or default_month).strip()[:7]
+        note = _pick(row, "Note", "Remarks")
+
+        if not item:
+            rejected.append({"row": i, "item": "", "reason": "No item name."}); continue
+        pid = products.get(str(item).strip().lower())
+        if pid is None:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Not in the controlled vocabulary."}); continue
+        if qty is None or qty < 0:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Units on hand must be a whole number >= 0."}); continue
+        if not validation.ISO_MONTH_RE.match(month):
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "No usable month (YYYY-MM)."}); continue
+        if month > today_month:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Month is in the future."}); continue
+
+        existed = dbmod.one(c, "SELECT 1 FROM Inventory_Count WHERE product_id = ? AND count_month = ?",
+                            (pid, month))
+        c.execute("""
+            INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged)
+            VALUES (?, ?, ?, ?, 'import', ?)
+            ON CONFLICT (product_id, count_month) DO UPDATE SET
+                quantity = excluded.quantity, note = excluded.note, date_logged = excluded.date_logged
+        """, (pid, month, qty, (str(note).strip() if note else None), now))
+        if existed:
+            updated += 1
+        else:
+            imported += 1
+
+    c.commit()
+    return jsonify({
+        "ok": True, "imported": imported, "updated": updated,
+        "rejected": rejected[:50], "rejected_total": len(rejected),
+        "rows_read": len(rows), "saved_to": saved,
+    })
+
+
 @app.post("/api/inventory")
 def add_inventory_count():
     """Record (or correct) one product's stock count for one month.
@@ -650,10 +1125,84 @@ def get_calendar():
 
 @app.get("/api/calendar/closed")
 def get_closed_dates():
-    rows = dbmod.rows(con(), """
-        SELECT calendar_date FROM Dim_Date WHERE is_store_closed = 1 ORDER BY calendar_date
+    """Every date the store was shut, from BOTH records of it.
+
+    There are two, and they do not agree:
+
+      Dim_Date.is_store_closed   the published academic calendar
+                                 (calendar_ranges.csv) plus anything staff
+                                 flagged through this interface.
+      Dim_Day_Status             read out of the TBS workbooks themselves,
+                                 where each date's header cell is coloured
+                                 and a per-sheet legend gives the meaning
+                                 ("NO OPERATION", "HOLIDAY (DAY OF VALOR)").
+
+    The workbook is the store's own record of what it actually did, and it
+    knows things the academic calendar cannot: 48 of the dates it marks
+    "NO OPERATION" are Sundays, which no term calendar has an opinion
+    about. Showing only Dim_Date therefore under-reports closures badly.
+
+    Rows are merged by date and carry their provenance, so the interface
+    can show WHY a date is flagged and where that came from rather than
+    presenting two different sets of truth as one list. Returned most
+    recent first: the list spans 2023-2026 and the recent end is the part
+    anyone is checking.
+    """
+    c = con()
+    rows = dbmod.rows(c, """
+        WITH merged AS (
+            SELECT calendar_date,
+                   1 AS from_calendar, 0 AS from_workbook,
+                   NULL AS label
+            FROM Dim_Date WHERE is_store_closed = 1
+
+            UNION ALL
+
+            SELECT calendar_date,
+                   0 AS from_calendar, 1 AS from_workbook,
+                   legend_label AS label
+            FROM Dim_Day_Status WHERE is_store_closed = 1
+        )
+        SELECT calendar_date,
+               MAX(from_calendar) AS from_calendar,
+               MAX(from_workbook) AS from_workbook,
+               MAX(label)         AS label
+        FROM merged
+        GROUP BY calendar_date
+        ORDER BY calendar_date DESC
+    """) if "Dim_Day_Status" in _table_names(c) else dbmod.rows(c, """
+        SELECT calendar_date, 1 AS from_calendar, 0 AS from_workbook,
+               NULL AS label
+        FROM Dim_Date WHERE is_store_closed = 1
+        ORDER BY calendar_date DESC
     """)
-    return jsonify([r["calendar_date"] for r in rows])
+
+    # Closure_Log holds the reason a staff member typed. It is the better
+    # label when there is one, because it describes this specific closure
+    # rather than the legend category the workbook filed it under.
+    reasons = {}
+    if "Closure_Log" in _table_names(c):
+        for r in dbmod.rows(c, "SELECT closure_date, reason FROM Closure_Log "
+                               "WHERE is_closed = 1 AND reason IS NOT NULL"):
+            if r["reason"]:
+                reasons[r["closure_date"]] = r["reason"]
+
+    out = []
+    for r in rows:
+        d = r["calendar_date"]
+        src = ("both" if r["from_calendar"] and r["from_workbook"]
+               else "workbook" if r["from_workbook"] else "calendar")
+        out.append({
+            "calendar_date": d,
+            "source": src,
+            "reason": reasons.get(d) or r["label"] or None,
+        })
+    return jsonify(out)
+
+
+def _table_names(c):
+    return {r[0] for r in c.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
 
 
 @app.get("/api/calendar/<iso_date>")
@@ -760,40 +1309,86 @@ def add_entry():
     return jsonify({"ok": True, "entry": entry})
 
 
-@app.get("/api/tally/export")
-def export_tally_csv():
-    """
-    Entries recorded through this tally interface (tally_date_flag = 0),
-    as a CSV in the same shape as the original source workbooks in
-    rawdata/: Date, Item, Total Quantity, Supplier - one row per
-    (date, item, supplier), quantities summed. Restricted to SALE
-    transactions, since that is what "Total Quantity" meant in those
-    workbooks; DAMAGED/PROMO/TRANSFER are a different kind of movement
-    and would misrepresent units actually sold if folded in.
-    """
-    rows = dbmod.rows(con(), """
-        SELECT d.calendar_date AS calendar_date, p.item_name AS item_name,
-               SUM(f.quantity_sold) AS total_quantity,
-               COALESCE(p.supplier_name, ?) AS supplier_name
-        FROM Fact_Sales f
-        JOIN Dim_Date d ON d.date_id = f.date_id
-        JOIN Dim_Product p ON p.product_id = f.product_id
-        WHERE f.tally_date_flag = 0 AND UPPER(f.transaction_type) = 'SALE'
-        GROUP BY d.calendar_date, p.item_name, p.supplier_name
-        ORDER BY d.calendar_date, p.item_name
-    """, (catalog.UNATTRIBUTED,))
+@app.post("/api/tally/import")
+def import_tally():
+    """Bulk sales-tally entries from a .csv/.xlsx, archived into rawdata/ as
+    uploaded. Shaped like the source workbooks step0 reads:
 
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["Date", "Item", "Total Quantity", "Supplier"])
-    for r in rows:
-        writer.writerow([r["calendar_date"], r["item_name"], r["total_quantity"], r["supplier_name"]])
+        Date              required, ISO YYYY-MM-DD, not in the future
+        Item              required, must match a Dim_Product item_name
+        Total Quantity    required, whole number > 0  (aliases: Quantity, Qty)
+        Transaction Type  optional, defaults to SALE
 
-    return Response(
-        buf.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": "attachment; filename=tally_export.csv"},
-    )
+    Dates must be ISO. DD/MM and MM/DD are refused rather than guessed - with
+    both accepted, 05/11/2025 is valid under either reading and lands six
+    months apart depending on which won, which is exactly the defect the
+    pipeline was cleaned up to remove (README, "Key design decisions").
+
+    Appends, it does not upsert: two tallies of the same item on the same day
+    are two real movements. Rows that cannot be used are reported, not dropped.
+    """
+    storage = request.files.get("file")
+    if storage is None or not storage.filename:
+        return jsonify({"ok": False, "error": "Choose a .csv or .xlsx file to import."}), 400
+    bad = _accepted_upload(storage)
+    if bad:
+        return jsonify({"ok": False, "error": bad}), 400
+
+    saved = _archive_upload(storage)
+    storage.stream.seek(0)
+    try:
+        _, rows = _read_table(storage)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc), "saved_to": saved}), 400
+
+    c = con()
+    products = _product_index(c)
+    dates = {r["calendar_date"]: r["date_id"]
+             for r in dbmod.rows(c, "SELECT date_id, calendar_date FROM Dim_Date")}
+    today_iso = date.today().isoformat()
+    imported = 0
+    rejected = []
+
+    for i, row in enumerate(rows, start=2):
+        item = _pick(row, "Item", "Item Name", "Product", "Canonical Item Name")
+        qty = _as_int(_pick(row, "Total Quantity", "Quantity", "Qty", "Units", "Quantity Sold"))
+        iso = _as_iso_date(_pick(row, "Date", "Calendar Date", "Sale Date"))
+        ttype = str(_pick(row, "Transaction Type", "Type") or "SALE").strip().upper()
+
+        if not item:
+            rejected.append({"row": i, "item": "", "reason": "No item name."}); continue
+        pid = products.get(str(item).strip().lower())
+        if pid is None:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Not in the controlled vocabulary."}); continue
+        if iso is None:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Date missing or not ISO YYYY-MM-DD."}); continue
+        if iso > today_iso:
+            rejected.append({"row": i, "item": str(item), "reason": "Date is in the future."}); continue
+        if iso not in dates:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Date not in the calendar."}); continue
+        if qty is None or qty <= 0:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": "Quantity must be a whole number > 0."}); continue
+        if ttype not in validation.TRANSACTION_TYPES:
+            rejected.append({"row": i, "item": str(item),
+                             "reason": f"Unknown transaction type '{ttype}'."}); continue
+
+        c.execute("""
+            INSERT INTO Fact_Sales
+                (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag, transaction_type)
+            VALUES (?, ?, ?, 0, 0, ?)
+        """, (pid, dates[iso], qty, ttype))
+        imported += 1
+
+    c.commit()
+    return jsonify({
+        "ok": True, "imported": imported, "updated": 0,
+        "rejected": rejected[:50], "rejected_total": len(rejected),
+        "rows_read": len(rows), "saved_to": saved,
+    })
 
 
 # ---------------------------------------------------------------- events
@@ -843,12 +1438,105 @@ def add_event():
 
 # -------------------------------------------------------------- forecast
 
+def _forecastable_ids(c):
+    """product_ids step4_forecast_model.py produced a forecast for.
+
+    Empty when the pipeline has not run. Callers must read that as "no
+    restriction is knowable yet", not as "nothing qualifies"."""
+    if not _has_forecast_table(c):
+        return set()
+    return {r["product_id"] for r in dbmod.rows(
+        c, "SELECT DISTINCT product_id FROM Result_Forecast")}
+
+
+def _monthly_history(c, product_ids, until=None):
+    """Observed units per month, summed over exactly `product_ids`, with the
+    number of days the store tallied in that month.
+
+    Sent alongside a forecast so the Demand Forecast chart can show the months
+    leading up to it. Callers pass the same items the forecast covers - for
+    the category model every product in its forecast_category, for the
+    sum-of-items fallback only the Fast contributors - so the history and the
+    forecast on one chart are totals of the same thing.
+
+    `tally_days` is what lets the chart put a month on the same axis as the
+    daily forecast (units / tally_days = units per day). It counts every day
+    the store tallied ANY sales, from these items' first sale on: a tally day
+    with no row for these items is a real zero and belongs in the average. A
+    month nobody tallied at all is simply absent.
+
+    `until` (an ISO date) stops the history where the forecast's own training
+    data stops - the category model trims the zero-padded days after the last
+    sale (its `history_end`), and averaging those days into the last month
+    would show a dip that is not in the data the forecast was made from."""
+    ids = list(product_ids)
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
+    return dbmod.rows(c, f"""
+        WITH tally AS (
+            SELECT DISTINCT d.calendar_date AS date, d.date_id
+            FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        ),
+        mine AS (
+            SELECT date_id, SUM(quantity_sold) AS units
+            FROM Fact_Sales WHERE product_id IN ({marks})
+            GROUP BY date_id
+        ),
+        first_sale AS (
+            SELECT MIN(t.date) AS date
+            FROM tally t JOIN mine m ON m.date_id = t.date_id
+            WHERE m.units > 0
+        )
+        SELECT substr(t.date, 1, 7) AS month,
+               SUM(COALESCE(m.units, 0)) AS units,
+               COUNT(*) AS tally_days
+        FROM tally t LEFT JOIN mine m ON m.date_id = t.date_id
+        WHERE t.date >= (SELECT date FROM first_sale)
+          AND (? IS NULL OR t.date <= ?)
+        GROUP BY 1 ORDER BY 1
+    """, [*ids, until, until])
+
+
 def _has_forecast_table(c):
     tables = {r[0] for r in c.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     return "Result_Forecast" in tables and c.execute(
         "SELECT COUNT(*) FROM Result_Forecast "
         "WHERE model_type IS NOT 'policy_rate'").fetchone()[0] > 0
+
+
+# No column in Dim_Product says whether an item is still stocked - `is_active`
+# is 1 for every one of the 519 products, and `payment_status` is "UNKNOWN" for
+# the items this would matter for, so neither is a usable signal. This infers
+# it instead: an item with no recorded sale in the last year is flagged as
+# likely no longer stocked, so the screen can say so instead of showing a
+# near-zero forecast with no explanation. It is a heuristic, not a confirmed
+# status - a slow, genuinely seasonal item could trip it too, which is why the
+# wording below says "likely" and gives the actual last-sale date to check.
+DISCONTINUED_DAYS = 365
+
+
+def _last_sale_date(c, product_id):
+    """The most recent date this product recorded a real (>0) sale, or None
+    if it never has."""
+    row = dbmod.one(c, """
+        SELECT MAX(d.calendar_date) AS d
+        FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        WHERE f.product_id = ? AND f.quantity_sold > 0
+    """, (product_id,))
+    return row["d"] if row else None
+
+
+def _discontinued_flags(last_sale_date, reference_date):
+    """(days_since_last_sale, likely_discontinued) as of `reference_date`
+    (a forecast's own snapshot_date/history_end, not wall-clock "now" - the
+    calendar here runs past the real date). Never having sold at all counts
+    as likely discontinued too, though that should not occur for a Fast item."""
+    if not last_sale_date or not reference_date:
+        return None, last_sale_date is None
+    days = (date.fromisoformat(reference_date) - date.fromisoformat(last_sale_date)).days
+    return days, days >= DISCONTINUED_DAYS
 
 
 # Wording is aimed at the person using the dashboard, not at whoever wrote the
@@ -927,6 +1615,10 @@ def get_forecast(product_id):
         "SELECT item_name, fsn_class, is_hvl FROM Dim_Product WHERE product_id = ?",
         (product_id,))
 
+    snapshot_date = forecast_rows[0]["snapshot_date"]
+    last_sale_date = _last_sale_date(c, product_id)
+    days_since_last_sale, likely_discontinued = _discontinued_flags(last_sale_date, snapshot_date)
+
     return jsonify({
         "available": True,
         "reason": None,
@@ -937,9 +1629,237 @@ def get_forecast(product_id):
             "is_hvl": product["is_hvl"] if product else 0,
             "model_type": forecast_rows[0]["model_type"],
             "is_heuristic": bool(forecast_rows[0]["is_heuristic"]),
-            "snapshot_date": forecast_rows[0]["snapshot_date"],
+            "snapshot_date": snapshot_date,
+            "last_sale_date": last_sale_date,
+            "days_since_last_sale": days_since_last_sale,
+            "likely_discontinued": likely_discontinued,
             "forecast": forecast_rows,
+            "history": _monthly_history(c, [product_id]),
             "metrics": metrics,
+        },
+    })
+
+
+def _table_names(c):
+    return {r[0] for r in c.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+def _category_contributors(c, category):
+    """The category's Fast items that have their own forecast, biggest first.
+
+    `last_sale_date` rides along so the caller can flag an item that likely
+    is not stocked any more (see DISCONTINUED_DAYS / _discontinued_flags) -
+    computed here as one query rather than one round trip per contributor."""
+    return dbmod.rows(c, """
+        SELECT p.product_id, p.item_name, p.fsn_class, p.is_hvl,
+               COALESCE(p.supplier_name, ?) AS supplier_name,
+               SUM(f.yhat) AS yhat_30d,
+               (SELECT MAX(d.calendar_date) FROM Fact_Sales f2
+                JOIN Dim_Date d ON d.date_id = f2.date_id
+                WHERE f2.product_id = p.product_id AND f2.quantity_sold > 0) AS last_sale_date
+        FROM Result_Forecast f
+        JOIN Dim_Product p ON p.product_id = f.product_id
+        WHERE p.category = ?
+        GROUP BY p.product_id
+        ORDER BY yhat_30d DESC
+    """, (catalog.UNATTRIBUTED, category))
+
+
+def _flag_discontinued(contributors, reference_date):
+    """Adds days_since_last_sale / likely_discontinued to each contributor
+    row in place, as of the category's own reference date. Returns the same
+    list for a fluent call at the point contributors are built."""
+    for r in contributors:
+        r["days_since_last_sale"], r["likely_discontinued"] = \
+            _discontinued_flags(r.get("last_sale_date"), reference_date)
+    return contributors
+
+
+def _category_counts(c, category):
+    return dbmod.one(c, """
+        SELECT COUNT(*) AS n_products,
+               SUM(CASE WHEN fsn_class='F' THEN 1 ELSE 0 END) AS n_fast
+        FROM Dim_Product WHERE category = ?
+    """, (category,))
+
+
+@app.get("/api/forecast/categories")
+def get_forecast_categories():
+    """The categories that have a category-level forecast, biggest first.
+
+    The Demand Forecast screen builds its category picker from this. It used
+    to derive the picker from the Fast items that have a forecast, which left
+    out any category with no Fast item at all (Home & Novelty, Apparel
+    Accessories) even though those categories do sell."""
+    c = con()
+    rows = []
+    if "Result_Category_Forecast" in _table_names(c):
+        rows = dbmod.rows(c, """
+            SELECT forecast_category AS category, SUM(yhat) AS total_30d,
+                   MIN(model_type) AS model_type, MIN(snapshot_date) AS snapshot_date
+            FROM Result_Category_Forecast
+            GROUP BY forecast_category
+            ORDER BY total_30d DESC
+        """)
+    if not rows:
+        return jsonify({"available": False, "reason": FORECAST_PENDING_REASON, "data": None})
+    return jsonify({"available": True, "reason": None, "data": {"categories": rows}})
+
+
+@app.get("/api/forecast/category/<path:category>")
+def get_forecast_category(category):
+    """The 30-day forecast for a whole category.
+
+    Served from Result_Category_Forecast (scripts/step4c_category_forecast.py):
+    the category's sales are added up FIRST and that total is forecast, which
+    covers every item in the category and measured more accurate than adding
+    up item forecasts (see that script's docstring for the comparison). The
+    response carries its own walk-forward `metrics` so the screen can say how
+    far off it has typically been.
+
+    `contributors` are the Fast items that have their own forecast, from
+    Result_Forecast. They are a breakdown, NOT the parts of the total: each
+    item is forecast on its own (step4), only Fast items are forecast at all,
+    and the category model uses a different window, so the two do not add up.
+    `contributors_total_30d` carries the items' own sum so the screen can show
+    both numbers, and `source` tells it which shape it is looking at.
+
+    When the category table is absent or has nothing for this category (the
+    pipeline has not run step4c, or an older database), this falls back to the
+    previous behaviour - the SUM of the Fast items' forecasts - and reports
+    `source: "sum_of_items"` so the screen can word it accordingly.
+    """
+    c = con()
+    tables = _table_names(c)
+    cat_rows = []
+    if "Result_Category_Forecast" in tables:
+        cat_rows = dbmod.rows(c, """
+            SELECT forecast_date, yhat, yhat_lower, yhat_upper
+            FROM Result_Category_Forecast
+            WHERE forecast_category = ?
+            ORDER BY forecast_date
+        """, (category,))
+    if not cat_rows:
+        return _category_forecast_from_items(c, category)
+
+    head = dbmod.one(c, """
+        SELECT model_type, is_heuristic, snapshot_date, history_end
+        FROM Result_Category_Forecast WHERE forecast_category = ? LIMIT 1
+    """, (category,))
+    metrics = []
+    if "Result_Category_Forecast_Metrics" in tables:
+        metrics = dbmod.rows(c, """
+            SELECT validation_method, period_scope, n_obs, mae, rmse, mape, mase,
+                   naive_mae, naive_mase, beats_naive_mae, mean_actual_30d
+            FROM Result_Category_Forecast_Metrics WHERE forecast_category = ?
+        """, (category,))
+    contributors = _category_contributors(c, category) if _has_forecast_table(c) else []
+    _flag_discontinued(contributors, head["history_end"])
+    meta = _category_counts(c, category)
+    # History for the chart covers the same items the category model was
+    # trained on: every product whose forecast_category this is, with a blank
+    # one counted as "Uncategorised" - step4c_category_forecast.py's RESIDUE.
+    series_ids = [r["product_id"] for r in dbmod.rows(c, """
+        SELECT product_id FROM Dim_Product
+        WHERE COALESCE(forecast_category, 'Uncategorised') = ?
+    """, (category,))]
+
+    return jsonify({
+        "available": True,
+        "reason": None,
+        "data": {
+            "category": category,
+            "source": "category_model",
+            "model_type": head["model_type"],
+            "snapshot_date": head["snapshot_date"],
+            "history_end": head["history_end"],
+            "is_heuristic": bool(head["is_heuristic"]),
+            "n_products": meta["n_products"] if meta else 0,
+            "n_fast": (meta["n_fast"] or 0) if meta else 0,
+            "n_forecast": len(contributors),
+            "total_30d": round(sum(r["yhat"] or 0 for r in cat_rows), 3),
+            "contributors_total_30d": round(sum(r["yhat_30d"] or 0 for r in contributors), 3),
+            "forecast": cat_rows,
+            "history": _monthly_history(c, series_ids, until=head["history_end"]),
+            "contributors": contributors,
+            "metrics": metrics,
+        },
+    })
+
+
+def _category_forecast_from_items(c, category):
+    """The category forecast built by SUMMING the per-SKU rows in
+    Result_Forecast - what this endpoint did before step4c existed, kept as
+    the fallback so a database without Result_Category_Forecast still works.
+
+    Only Fast SKUs get a forecast, so this total covers the items in
+    `contributors` and no others - the response says how many that is, and
+    how many products the category holds in total, so the figure is never
+    read as covering the whole category when it does not. It always equals the
+    sum of the items shown underneath it, which the category model does not.
+    """
+    if not _has_forecast_table(c):
+        return jsonify(_FORECAST_PENDING)
+
+    rows = dbmod.rows(c, """
+        SELECT f.forecast_date,
+               SUM(f.yhat)       AS yhat,
+               SUM(f.yhat_lower) AS yhat_lower,
+               SUM(f.yhat_upper) AS yhat_upper
+        FROM Result_Forecast f
+        JOIN Dim_Product p ON p.product_id = f.product_id
+        WHERE p.category = ?
+        GROUP BY f.forecast_date
+        ORDER BY f.forecast_date
+    """, (category,))
+
+    if not rows:
+        total = dbmod.one(c,
+            "SELECT COUNT(*) AS n FROM Dim_Product WHERE category = ?",
+            (category,))
+        return jsonify({
+            "available": False,
+            "reason": (f"No item in {category} has a forecast yet. "
+                       "Only Fast-moving items are forecast, and this "
+                       "category has none."
+                       if total and total["n"] else
+                       f"No products are in {category}."),
+            "data": None,
+        })
+
+    contributors = _category_contributors(c, category)
+    meta = _category_counts(c, category)
+
+    head = dbmod.one(c, """
+        SELECT f.model_type, f.snapshot_date,
+               MAX(f.is_heuristic) AS any_heuristic
+        FROM Result_Forecast f
+        JOIN Dim_Product p ON p.product_id = f.product_id
+        WHERE p.category = ?
+    """, (category,))
+    _flag_discontinued(contributors, head["snapshot_date"] if head else None)
+
+    total = round(sum(r["yhat_30d"] or 0 for r in contributors), 3)
+    return jsonify({
+        "available": True,
+        "reason": None,
+        "data": {
+            "category": category,
+            "source": "sum_of_items",
+            "model_type": head["model_type"] if head else None,
+            "snapshot_date": head["snapshot_date"] if head else None,
+            "history_end": None,
+            "is_heuristic": bool(head["any_heuristic"]) if head else False,
+            "n_products": meta["n_products"] if meta else 0,
+            "n_fast": (meta["n_fast"] or 0) if meta else 0,
+            "n_forecast": len(contributors),
+            "total_30d": total,
+            "contributors_total_30d": total,
+            "forecast": rows,
+            "history": _monthly_history(c, [r["product_id"] for r in contributors]),
+            "contributors": contributors,
+            "metrics": [],
         },
     })
 
@@ -953,6 +1873,37 @@ def get_advisories():
     Returns an honest pending shape when the forecast hasn't been generated."""
     c = con()
     has_forecast = _has_forecast_table(c)
+
+    def affected_items(fsn=("F",), limit=8):
+        """The SKUs an advisory is actually about, with the numbers that make
+        it checkable: forecast, stock on hand, reorder point.
+
+        An advisory that says "make sure Fast-moving items are stocked" is not
+        actionable until it names them, so every advisory carries its own list
+        and the interface shows it on click. LEFT JOINs throughout - a SKU with
+        no forecast or no stock count still belongs in the list, reported as
+        null rather than dropped."""
+        placeholders = ",".join("?" * len(fsn))
+        rows = dbmod.rows(c, f"""
+            SELECT p.product_id, p.item_name, p.fsn_class, p.category,
+                   COALESCE(p.supplier_name, ?) AS supplier_name,
+                   {"(SELECT SUM(yhat) FROM Result_Forecast rf WHERE rf.product_id = p.product_id)"
+                    if has_forecast else "NULL"} AS forecast_30d,
+                   (SELECT r.reorder_point FROM Result_Prescriptive r
+                     WHERE r.product_id = p.product_id LIMIT 1) AS reorder_point
+              FROM Dim_Product p
+             WHERE p.fsn_class IN ({placeholders})
+             ORDER BY {"forecast_30d DESC," if has_forecast else ""} p.item_name
+             LIMIT ?
+        """, (catalog.UNATTRIBUTED, *fsn, limit))
+        stock = {p["product_id"]: p["current_stock"] for p in catalog.compute_catalog(c)}
+        for r in rows:
+            r["current_stock"] = stock.get(r["product_id"])
+            r["below_rop"] = (
+                r["current_stock"] is not None and r["reorder_point"] is not None
+                and r["current_stock"] <= r["reorder_point"]
+            )
+        return rows
 
     # Upcoming events from Event_Log
     upcoming_events = dbmod.rows(c, """
@@ -998,6 +1949,10 @@ def get_advisories():
                            "ensure Fast-moving items (uniforms, IDs, school supplies) are stocked.",
             "date_range": [dates[0], dates[-1]],
             "has_forecast": has_forecast,
+            "basis": f"{len(dates)} upcoming date(s) in Dim_Date carry is_enrollment_period = 1. "
+                     "The items below are the Fast-moving class (step3's 80th-percentile ADUS "
+                     "cut), which is what an enrollment surge draws on.",
+            "items": affected_items(("F",)),
         })
 
     if "exam_week" in period_types:
@@ -1010,6 +1965,9 @@ def get_advisories():
                            "Expect reduced foot traffic; delay non-urgent restocking.",
             "date_range": [dates[0], dates[-1]],
             "has_forecast": has_forecast,
+            "basis": f"{len(dates)} upcoming date(s) in Dim_Date carry is_exam_week = 1. "
+                     "Restocking these Fast movers can wait until after the window.",
+            "items": affected_items(("F",)),
         })
 
     for event in upcoming_events:
@@ -1021,6 +1979,10 @@ def get_advisories():
                            f"Event on {_us_date(event['event_date'])}. Check stock for high-demand items.",
             "date_range": [event["event_date"], event["event_date"]],
             "has_forecast": has_forecast,
+            "basis": f"Logged in Event_Log for {_us_date(event['event_date'])}"
+                     + (f", which falls in semester {event['semester_id']} week "
+                        f"{event['semester_week']}." if event["semester_id"] else "."),
+            "items": affected_items(("F",)),
         })
 
     # If forecast exists, add top fast-movers that may need restocking
@@ -1046,7 +2008,10 @@ def get_advisories():
                                "Review stock levels against the forecast on the Demand Forecast page.",
                 "date_range": None,
                 "has_forecast": True,
-                "top_items": fast_items,
+                "basis": "Ranked by SUM(yhat) over the 30-day horizon in Result_Forecast, "
+                         "Fast class only. Stock and reorder point come from the latest "
+                         "count and Result_Prescriptive.",
+                "items": affected_items(("F",), limit=5),
             })
 
     if not advisories:
@@ -1062,6 +2027,9 @@ def get_advisories():
                                    "forecast-based advisories."),
             "date_range": None,
             "has_forecast": has_forecast,
+            "basis": "No upcoming row in Dim_Date has is_enrollment_period, is_exam_week or "
+                     "is_event_day set, and Event_Log has no future entry.",
+            "items": [],
         })
 
     return jsonify({

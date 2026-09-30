@@ -26,7 +26,7 @@ import numpy as np
 
 __all__ = ["APPAREL", "NON_APPAREL", "classify", "speed_label",
            "fold_scoped_speed_labels", "fold_scoped_service_classes",
-           "build_service_class_fn",
+           "build_service_class_fn", "fold_scoped_fsn_labels",
            "PRODUCT_TYPES", "classify_product_type"]
 
 APPAREL = "apparel"
@@ -176,6 +176,52 @@ def build_service_class_fn(series, real_offset: int = 0,
         return fold_scoped_service_classes(series, train_end, real_offset,
                                            threshold)
     return _fn
+
+
+def fold_scoped_fsn_labels(series, train_end: int, real_offset: int = 0,
+                           threshold: float = 80.0):
+    """sku -> 'fast'/'slow'/'nonmoving', computed from ONLY
+    series[sku][real_offset:train_end] for every sku.
+
+    Unlike fold_scoped_speed_labels above, this keeps a real non-moving
+    bucket rather than folding zero-sale SKUs into "slow" - matching how
+    scripts/step3_fsn_classification.py actually classifies the committed
+    fsn_class column: the 80th-percentile ADUS split is computed over the
+    MOVING population only (SKUs with at least one sale in the window),
+    and every SKU with zero sales in the window is 'nonmoving' outright,
+    never ranked against the movers. Still not a byte-for-byte port (same
+    caveats as fold_scoped_speed_labels: no imputation_flag weighting, no
+    is_censored exclusion - this works from the daily-aggregated arrays
+    already in hand), but the bucket boundaries follow the real
+    methodology instead of approximating it away.
+
+    Exists for scripts/category_split_prophet.py's category-splitting
+    test: an item with zero sales in a fold's training window is exactly
+    the kind of SKU worth pooling with other quiet SKUs into its own
+    aggregate rather than diluting - or being diluted by - the fast
+    movers, and merging it into "slow" (as fold_scoped_speed_labels does,
+    deliberately, for its own per-SKU pooling use case) would erase that
+    distinction here.
+
+    If every SKU in the window is non-moving (a degenerate window), there
+    is nothing to rank and everyone stays 'nonmoving'.
+    """
+    movers = {}
+    for sku, values in series.items():
+        train = np.asarray(values, dtype=float)[real_offset:train_end]
+        sale_days = int(np.count_nonzero(train > 0))
+        if sale_days > 0:
+            movers[sku] = float(train.sum()) / sale_days
+
+    if not movers:
+        return {sku: "nonmoving" for sku in series}
+
+    cutoff = np.quantile(np.fromiter(movers.values(), dtype=float), threshold / 100.0)
+    return {
+        sku: ("nonmoving" if sku not in movers else
+              "fast" if movers[sku] >= cutoff else "slow")
+        for sku in series
+    }
 
 
 # ---- finer product-type buckets (TEMPORARY / exploratory) -----------

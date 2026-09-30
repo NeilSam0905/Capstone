@@ -335,3 +335,62 @@ def test_summarise_counts_skus_and_folds():
 
 def test_summarise_of_an_empty_frame_is_empty():
     assert summarise(pd.DataFrame()).empty
+
+
+# ------------------------------------------------------------------
+# `gap`: the forecast window starts `gap` days after training ends,
+# instead of immediately - see the module docstring's point 3.
+# ------------------------------------------------------------------
+
+def test_gap_zero_is_the_original_behaviour():
+    """gap=0 must reproduce exactly what make_folds always did."""
+    plain = make_folds(500, horizon=30, min_folds=3, min_train=60)
+    gapped = make_folds(500, horizon=30, min_folds=3, min_train=60, gap=0)
+    assert plain == gapped
+
+
+def test_gap_matches_folds_to_the_same_outcome_window_with_less_training_data():
+    """A gapped fold and its gap=0 counterpart are scored against the SAME
+    real outcome window (test_end matches) - the gap only takes away days
+    of training data the gapped fold would not really have had yet, which
+    is the whole point (module docstring, point 3)."""
+    folds = make_folds(500, horizon=30, min_folds=3, min_train=60, gap=18)
+    plain = make_folds(500, horizon=30, min_folds=3, min_train=60)
+    assert len(folds) == len(plain)
+    for f, p in zip(folds, plain):
+        assert f.gap == 18
+        assert f.test_end == p.test_end            # same outcome window is scored
+        assert f.train_end == p.train_end - 18      # trained on 18 fewer days
+        assert f.test_start == f.train_end + 18
+        assert f.test_end == f.test_start + 30
+
+
+def test_gap_still_has_no_leakage():
+    for f in make_folds(500, horizon=30, min_folds=3, min_train=60, gap=18):
+        f.assert_no_leakage(500)
+        assert f.test_start >= f.train_end          # the gap sits AFTER training ends
+
+
+def test_gap_can_reduce_the_fold_count_on_a_short_series():
+    """Every test window is pushed `gap` days later, so a series that fit N
+    folds at gap=0 fits N or fewer with a gap - never more."""
+    n = 500
+    plain = make_folds(n, horizon=30, min_folds=1, min_train=60)
+    gapped = make_folds(n, horizon=30, min_folds=1, min_train=60, gap=18)
+    assert len(gapped) <= len(plain)
+
+
+def test_negative_gap_is_rejected():
+    with pytest.raises(ValueError):
+        make_folds(500, horizon=30, min_folds=3, min_train=60, gap=-1)
+
+
+def test_walk_forward_evaluate_honours_gap_when_computing_its_own_folds():
+    """When walk_forward_evaluate is not handed a fold list, it must build
+    one with the gap it was given - not silently score at gap=0."""
+    values = np.arange(500, dtype=float)
+    ev = walk_forward_evaluate("s", values, mean_model, folds=None, gap=18,
+                               horizon=30, min_folds=1, min_train=60)
+    expected = make_folds(500, horizon=30, min_folds=1, min_train=60, gap=18)
+    assert ev.n_folds == len(expected)
+    assert [r["origin"] for r in ev.rows] == [f.origin for f in expected]
