@@ -103,7 +103,7 @@ from forecasting.policy import (
 )
 from step5_prescriptive import (
     DAYS_PER_YEAR, H_PHP_PER_UNIT_YEAR, MIN_SALE_DAYS_FOR_RATE, Z_BY_CLASS,
-    build_observed_mask, safety_stock,
+    build_observed_mask, history_index, safety_stock,
 )
 
 DB_NAME = "ustore.db"
@@ -137,7 +137,10 @@ def load(con):
         "SELECT product_id, item_name, fsn_class, lead_time_days, unit_price_php "
         "FROM Dim_Product", con).set_index("product_id")
 
-    idx = pd.date_range(fact["calendar_date"].min(), fact["calendar_date"].max(), freq="D")
+    # Shared with step5_prescriptive.load_series so this scores the same span
+    # the policy it is validating was built on. Using the full panel here left
+    # the last fold measuring fill against 23 days of step0 zero-fill.
+    idx = history_index(fact)
     series = {pid: (g.groupby("calendar_date")["quantity_sold"].sum()
                      .reindex(idx, fill_value=0.0).astype(float).to_numpy())
               for pid, g in fact.groupby("product_id")}

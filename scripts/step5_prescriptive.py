@@ -285,6 +285,40 @@ def build_observed_mask(con, idx):
     return ev.reindex(idx).fillna(0).astype(bool).to_numpy()
 
 
+def history_index(fact):
+    """The daily index every series is reindexed onto: first sale to LAST
+    DATE ANY SKU SOLD, not to the last row of Fact_Sales.
+
+    Factored out for the same reason eligible_population() is - two copies
+    of this rule that drift apart give the predictive stage, the
+    prescriptive stage and the holdout that validates them three different
+    spans. scripts/validate_policy_holdout.py imports it;
+    step4_forecast_model.py::build_calendar and
+    step4c_category_forecast.py::trim_padding apply the same rule to the
+    forecast steps.
+
+    Why the end moves. step0 zero-fills blank cells out to month end for the
+    dense months, and 2026-07-09..07-31 is the terminal run of that fill.
+    Checked against the source rather than inferred: the "JULY 2026 - TBS"
+    sheet carries a date column for every day of the month and does not hold
+    one literal zero anywhere in it - every cell is blank or positive - so a
+    blank is "nothing written up yet", never "counted, sold nothing". Those
+    23 days still get 176 Fact_Sales rows each, which is what made
+    build_observed_mask() count them as evidence: 23 days in the denominator
+    of every trailing rate, contributing nothing to the numerator.
+
+    This is not only a denominator correction. Trimming re-anchors the
+    window, so the trailing 365 days now end 2026-07-08 and reach 23 days
+    further back, picking up real trading days at the other end - which is
+    why six more SKUs clear MIN_SALE_DAYS_FOR_RATE and the empirical buffer
+    grows (the last folds had been scoring against fabricated zero actuals).
+    """
+    last_sale = fact.loc[fact["quantity_sold"] > 0, "calendar_date"].max()
+    if pd.isna(last_sale):
+        last_sale = fact["calendar_date"].max()
+    return pd.date_range(fact["calendar_date"].min(), last_sale, freq="D")
+
+
 def load_series(con):
     fact = pd.read_sql_query("""
         SELECT f.product_id, d.calendar_date, f.quantity_sold
@@ -295,8 +329,7 @@ def load_series(con):
         "SELECT product_id, item_name, fsn_class, lead_time_days, unit_price_php "
         "FROM Dim_Product", con)
 
-    idx = pd.date_range(fact["calendar_date"].min(),
-                        fact["calendar_date"].max(), freq="D")
+    idx = history_index(fact)
 
     series = {}
     for pid, g in fact.groupby("product_id"):
