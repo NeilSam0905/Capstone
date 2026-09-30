@@ -214,21 +214,7 @@ function CategoryForecastPanel({ category, onPickItem }) {
                     tags={wholeCategory && <ReliabilityTag metrics={fd.metrics} isHeuristic={fd.is_heuristic} />}
                     scope={!wholeCategory && fd.n_forecast < fd.n_products
                       ? `the ${fd.n_forecast} forecast item${fd.n_forecast === 1 ? '' : 's'} only`
-                      : null}>
-        {/* A shaped forecast draws ups and downs, and a reader will take them for
-            predicted spikes. Say what they are: the 30-day total is the 6-month
-            average's; the shape only spreads it over the days using weekdays,
-            closures and the school calendar. Bulk orders are not in it. */}
-        {wholeCategory && /_shape$/.test(fd.model_type ?? '') && (
-          <p className="hint" style={{ textAlign: 'center', margin: '8px 0 0' }}>
-            The 30-day total comes from the 6-month average
-            {isCalendarAdjusted(fd.model_type) && ', lowered when the school calendar shows quieter days ahead (semester break, exams)'}.
-            The day-to-day pattern reflects
-            weekdays, store closures and the school calendar — one-off bulk orders can&rsquo;t
-            be predicted from dates.
-          </p>
-        )}
-      </ForecastCard>
+                      : null} />
 
       <CategoryTotalCard category={category} fd={fd} onPickItem={onPickItem} />
     </>

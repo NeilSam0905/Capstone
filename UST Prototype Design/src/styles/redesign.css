@@ -917,6 +917,20 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .donut__centre-val { font-size: 19px; font-weight: 800; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .donut__centre-lbl { font-size: 10px; color: var(--muted); font-weight: 600; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; }
 
+/* Hover breakdown of the donut's grouped "Others" slice: floats over the
+   legend beside the ring, and ignores the pointer so the hover underneath
+   (slice or legend row) is not lost. */
+.donut__others {
+  position: absolute; top: 0; z-index: 3; pointer-events: none;
+  text-align: left; min-width: 150px; max-width: 240px;
+}
+.donut__others .charttip__label { margin-bottom: 4px; }
+.donut__others-row {
+  display: flex; justify-content: space-between; gap: 14px;
+  font-size: 11.5px; line-height: 1.55; font-variant-numeric: tabular-nums;
+}
+.donut__others-row span { overflow: hidden; text-overflow: ellipsis; }
+
 /* Legend. The cap is the height of the ring beside it, so a catalogue with
    twelve categories makes the legend scroll rather than make the card - and
    with it the chart sharing its grid row - grow to fit every last one. */
