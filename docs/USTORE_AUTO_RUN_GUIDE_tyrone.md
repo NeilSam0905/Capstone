@@ -52,6 +52,7 @@ python tools/audit_price_suffix_skus.py          # 71 suffixed, 12 twins, 8 fami
 python tools/demand_basis_by_anchor.py           # 27 anchors; 2026-07 gives 79 @30d, 208 @365d
 pytest tests/                                    # 379 passed
 python scripts/model_benchmark.py                # 8 methods, both ranking tables (~6 min)
+python scripts/step4b_policy_forecast.py         # publishes the policy rate + interval  (5)
 python scripts/step5_prescriptive.py             # 1,975 rows, N excluded, all gates pass
 
 git status --porcelain                           # empty — no modified CSVs        (2)
@@ -62,6 +63,14 @@ git shortlog -sne HEAD                           # one entry per person         
 ```
 
 ### The four things that will otherwise mislead you
+
+**(5) `step4b` is new and `step5` now needs it.** Since 2026-09-23 the demand rate and the
+lead-time interval are published into `Result_Forecast` (`model_type='policy_rate'`) and
+`step5_prescriptive.py` READS them rather than recomputing. Running step5 on its own now exits 1
+with a message naming step4b — that is the wiring working, not a regression. `--recompute-policy`
+restores the old behaviour, and the two paths are required to produce an identical
+`Result_Prescriptive`. The counts above predate this change and are left as the historical record
+they are.
 
 **(1) `--phase a10` after `step5_prescriptive.py` has run.**
 Seeding `Dim_Parameters` with the provisional grid is a deliberate state change that breaks the

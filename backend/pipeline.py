@@ -30,7 +30,9 @@ optional:
 If either fails, the run is recorded as "skipped" for that step and the
 pipeline continues — /api/meta already reports forecast availability as
 an honest pending state, so a missing forecast is not a reason to block
-step5a/step5, neither of which read Result_Forecast.
+step5a/step5. step5 DOES read Result_Forecast - but the rows it reads are
+step4b's policy_rate rows, not step4's point forecast, and step4b is not
+skippable.
 
 Three things here exist specifically so a run driven from a browser button
 behaves, rather than looking hung:
@@ -100,16 +102,20 @@ STEPS = [
     ("step3", "scripts/step3_fsn_classification.py", "Classify Fast / Slow / Non-moving", False, DEFAULT_TIMEOUT_S, "~1 min"),
     ("step4", "scripts/step4_forecast_model.py", "Forecast demand (rolling mean)", True, DEFAULT_TIMEOUT_S, "~10 s"),
     ("step5a", "scripts/step5a_set_lead_times.py", "Set supplier lead times", False, DEFAULT_TIMEOUT_S, "~5 s"),
+    ("step4b", "scripts/step4b_policy_forecast.py", "Publish the policy rate + interval", False, DEFAULT_TIMEOUT_S, "~10 s"),
     ("step5", "scripts/step5_prescriptive.py", "Compute ROP / EOQ / safety stock", False, DEFAULT_TIMEOUT_S, "~10 s"),
 ]
 
-# Steps a caller is allowed to opt out of. Only step4: it is the one step whose
-# output (Result_Forecast) nothing else in the pipeline reads -
-# step5_prescriptive.py derives demand from observed history, not from
-# Result_Forecast. The original reason to skip it was cost - it was a two-hour
-# Prophet run - which the rolling mean has removed; the opt-out stays because
-# callers and the Tally Interface's checkbox are built around it, and because
-# it is still the only step that is genuinely optional to the rest of the run.
+# Steps a caller is allowed to opt out of. Still only step4 - and the reason
+# has changed, so it is worth restating. step4 publishes the rolling-mean POINT
+# forecast, which the Demand Forecast screen draws and nothing else consumes.
+# step4b, added when the predictive stage was wired in, publishes the demand
+# RATE and the lead-time interval that step5_prescriptive.py now reads instead
+# of recomputing - so step4b is NOT optional: skipping it leaves step5 with no
+# policy rows, and step5 exits rather than silently falling back.
+#
+# It runs AFTER step5a because the interval is measured at each SKU's own
+# lead-time horizon, and step5a is what sets lead times.
 SKIPPABLE = {"step4"}
 
 _lock = threading.Lock()

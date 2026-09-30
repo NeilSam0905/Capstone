@@ -91,6 +91,102 @@ by it.
 
 ---
 
+## 1a. The rate window, reopened — and a cascade that removes its cost
+
+`docs/WORKLOG_POLICY_AND_ACCEPTANCE.md` §5 closed this lever as *"second-order with a real
+coverage cost"*: a flat 120-day window bought **+2.2pp fill and −15% holding** at q=0.80 but
+cost **63 SKUs** their rate entirely — they fall under `MIN_SALE_DAYS_FOR_RATE` in a shorter
+window and would be flagged `insufficient_data`.
+
+It is reopened for one reason. That "second-order" ranking was set against a policy apparatus
+the evidence then said beat naive stocking by **26 points**. `docs/INVENTORY_SIMULATION.md`
+has since measured the same comparison against real opening stock at **0.6 points**. Against
+the corrected baseline a 2.2-point lever is not second-order, and it is the only lever tested
+that addresses §9's diagnosed bottleneck — *the underlying rate shifts* — head on rather than
+around it.
+
+**The original measurement reproduces exactly**, on its own terms (fixed population, flat
+q=0.80, dev origin): 63 SKUs lost, fill 0.6188 → 0.6415, holding 11,930 → 10,233 (−14.2%).
+Nothing here contradicts it.
+
+### The cascade
+
+`resolve_rates(..., short_window=N)` adds one layer above the existing rule:
+
+```
+short window has sale_days >= min -> use the SHORT window's rate
+otherwise                         -> fall through to the committed rule, on 365d
+```
+
+A SKU too thin for the short window keeps its long-window rate instead of being flagged. No new
+`rate_source` value — `RATE_SOURCES` is controlled vocabulary reaching `Result_Prescriptive`,
+`backend/app.py` and the invariants, so the existing **`window_days`** field carries which
+window was used. `short_window=None` reproduces the committed behaviour bit-for-bit, the same
+isolation property `shrink=False` provides for the pooling.
+
+`trailing_rate_fn` takes the same cascade and must be given it whenever `resolve_rates` is:
+`policy_fold_errors` replays it to size the empirical buffer, so a mismatch would calibrate the
+buffer against a rate the policy does not deploy.
+
+### The coverage cost is gone
+
+The blocking objection in §5 no longer applies. Across four rolling origins, at short windows
+of 90/120/180/270 days:
+
+| Window | Forward coverage (pooled) | Worst origin | Min SKUs priced |
+| --- | ---: | ---: | ---: |
+| 365 (committed) | 0.8830 | 0.7798 | 150 |
+| 90 / 120 / 180 / 270 | **0.8830** | **0.7798** | **150** |
+
+Identical at every setting. The 63 SKUs keep their rate. Acceptance condition 1b is untouched,
+which was the condition this lever could not be allowed to damage.
+
+### What it buys, and the finding that came out of measuring it
+
+On the **full** population at the development origin — not the fixed population §5 used:
+
+| Window | Operating point | Fill | Units held |
+| --- | --- | ---: | ---: |
+| 365 | flat q=0.80 | 0.6188 | 15,122 |
+| **120 cascade** | **flat q=0.80** | **0.6412** | **13,305** |
+| 365 | tiered (committed) | **0.6851** | 14,751 |
+| 120 cascade | tiered | 0.6603 | 12,758 |
+
+**The cascade dominates the flat baseline it is measured against** — +2.2pp on 12% less stock,
+with coverage preserved. It reproduces §5's gain *and* removes §5's cost.
+
+**But it does not stack with the tiering.** Applied on top, it loses 2.5pp. Under the inventory
+simulation the same interference appears with the signs reversed, which is itself worth
+recording given that measure corrected the tiering claim:
+
+| | 365d | 120d cascade |
+| --- | ---: | ---: |
+| flat q=0.80 — fill | 0.9301 | **0.9395** |
+| tiered — fill | 0.9345 | 0.9371 |
+| flat q=0.80 — mean on hand | 9,201 | 10,729 |
+| tiered — mean on hand | 9,486 | 10,828 |
+
+Under simulation the best fill is **flat q=0.80 with the cascade**, and adding the tiering on
+top makes it *worse on both axes* (0.9395 → 0.9371 fill, 10,729 → 10,828 held).
+
+**The reading: the short window and the service tiering are substitutes, and they interfere.**
+Both put stock where demand can use it — the tiering across SKUs, the window across time.
+Applied together the tiering reads the more responsive rate's fold errors, concludes less
+buffer is needed, and over-trims.
+
+### What is settled and what is not
+
+- **Settled:** the coverage cost that closed this lever is removed by the cascade, and the
+  cascade dominates the flat 365d baseline on the better-powered measure.
+- **Not settled:** whether `cascade + flat` or `tiered + 365d` is the better policy. The two
+  measures disagree in sign, and the simulation's differences (0.3–0.9pp, 14–43 units on 4,565)
+  are below what 28–45 observable SKUs can resolve — the same limit
+  `docs/INVENTORY_SIMULATION.md` reports for the tiering itself. More inventory coverage
+  resolves this; more modelling does not.
+- **Not changed:** the deployed default remains the 365-day window with tiering.
+  `short_window` is measured and available, defaulted off — the same treatment
+  `cluster_pooled` received for the same reason.
+
 ## 1b. Service tiers: how much service each SKU's demand will accept
 
 A single population-wide operating point does two wrong things at once. Sorting the scored
@@ -139,10 +235,20 @@ flat q = 0.80 they replace:
 | flat q=0.80 | 0.6180 | 15,156 | 0.470 |
 | flat q=0.95 | 0.7981 | 32,206 | 0.286 |
 
-More demand met on *less* stock — a dominance, not a trade to adjudicate. Across four
-rolling origins the tiering beat the flat quantile on **fill at 4 of 4**, and on
-**efficiency at 2 of 4**: it reliably buys more service, but at some windows by spending
-more stock rather than less. Both claims are reported; the weaker one is not dropped.
+More demand met on *less* stock, on this measure. Across four rolling origins the tiering
+beat the flat quantile on **fill at 4 of 4**, and on **efficiency at 2 of 4**: it reliably
+buys more service, but at some windows by spending more stock rather than less. Both claims
+are reported; the weaker one is not dropped.
+
+**Adjudicated, and it is a trade rather than a dominance.** The line above is
+reorder-point coverage. `docs/INVENTORY_SIMULATION.md` scores the same two rules against
+real opening stock — **not separable** on the 52 SKUs the workbook covers (Δfill +0.0044,
+95% CI [−0.0000, +0.0111]) — and then against a synthetic shelf deep enough to make all
+242 priced SKUs observable. There they separate cleanly from one lead-time's cover upward,
+the tiering winning **+1.0 to +2.8 points of fill (P(>0) = 1.00)** and holding **more**
+stock at every depth where it wins. The gain is real and it is **bought**. At the depth
+bracketing USTore's actual shelf it is +0.96 points of fill for 0.6% more stock — a
+favourable trade, and one the store should be offered knowingly rather than told is free.
 
 ## 2. The uncertainty: empirical, at lead-time horizon
 
@@ -251,6 +357,93 @@ Full results, strata and the policy's own frontier: **`docs/POLICY_HOLDOUT.md`**
 
 ---
 
+## 5. Where the rate and the interval are published
+
+Everything above describes what the prescriptive layer consumes. Until 2026-09-23 it
+*computed* those two quantities inside `step5_prescriptive.py` and threw them away, which
+left the manuscript's descriptive → predictive → prescriptive progression broken at both
+joints:
+
+| Stage | Coverage | Consumed downstream? |
+| --- | --- | --- |
+| Descriptive — `Fact_Sales`, FSN, density | 266 SKUs, 821 days | yes |
+| **Predictive** — `Result_Forecast` (`rolling_mean_30`) | **58 SKUs, 32 forecasting zero → 26 usable** | **no — orphaned** |
+| Prescriptive — ROP / EOQ / tiers | 266 scored, 208 priced | — computed its own rate |
+
+`backend/pipeline.py` stated it in a comment rather than hiding it: *"step5a/step5, neither
+of which read `Result_Forecast`."* The predictive stage was not missing. It was **buried** —
+`resolve_rates` produces a demand rate for 208 SKUs with an explicit `insufficient_data`
+state for the rest, and `empirical_buffer` produces an uncertainty for each of them. That is
+a forecast, expressed in the units the decision needs.
+
+`scripts/step4b_policy_forecast.py` publishes it. `step5_prescriptive.py` reads it.
+
+| Stage | Coverage now |
+| --- | --- |
+| Descriptive | 266 SKUs, 821 days |
+| **Predictive** — `Result_Forecast`, `model_type='policy_rate'` | **208 priced + 58 flagged = 266 of 266** |
+| Prescriptive | 266 scored, 208 priced — **reads the rows above** |
+
+### What is written, and why in that shape
+
+Per **priced** SKU, one row per day across its own lead time *L*:
+
+| Column | Holds |
+| --- | --- |
+| `yhat` | the demand rate, units/day — **not rounded** |
+| `yhat_lower` | the rate; the policy's downside is the expectation, errors being floored at zero |
+| `yhat_upper` | `rate + buffer/L`, so **`SUM(yhat_upper)` across the *L* rows is the reorder point**, exactly |
+| `buffer_units` | the buffer over *L*, stored whole |
+| `horizon_days` | *L* |
+| `rate_source`, `service_tier`, `buffer_quantile`, `buffer_source` | the provenance `Result_Prescriptive` carries, recorded at the point it is decided |
+
+Per **flagged** SKU, one row, `yhat` NULL and `rate_source='insufficient_data'` — the
+predictive stage saying it has nothing, *in the table*, rather than being absent from it.
+A zero would read as *"nothing will sell"*, which is the degeneracy this contract exists to
+keep out of the prescription; it must not re-enter through the predictive table either.
+
+Three decisions are worth stating because each could reasonably have gone the other way.
+
+**The rows are not rounded.** step4 rounds its point forecast to three decimals because
+those rows are a display artifact for a chart. These are a pipeline input, and a rate
+rounded to 3dp moves every reorder point built from it.
+
+**Both model types live in one table, side by side.** `rolling_mean_30`'s 1,740 rows are
+untouched and the Demand Forecast screen still draws them. They answer different questions —
+a 30-day point forecast for a chart, a rate plus a lead-time interval for a stocking
+decision — and collapsing them would lose the distinction. Two writers now share one table,
+so `step4_forecast_model.py`'s `DELETE` is scoped to its own `model_type`, pinned by test.
+
+**The consumed quantities are stored in columns of their own rather than recovered from the
+band.** `Result_Prescriptive` has to come out identical whether step5 reads these rows or
+recomputes them, and recovering the buffer as `(yhat_upper − yhat) × L` returns it to within
+an ulp, not exactly — an ulp in the buffer is an ulp in every reorder point. The band is
+still populated and still meaningful; it is simply not the read path. Added by in-place
+migration, the same way `Result_Forecast_Metrics.mase` and this table's own contract columns
+were.
+
+### The equivalence is verified, not asserted
+
+`--recompute-policy` keeps the pre-wiring path runnable as a control, and the two must agree:
+
+```
+step5_prescriptive.py --recompute-policy     →  Result_Prescriptive  (baseline)
+step4b_policy_forecast.py; step5_prescriptive.py  →  Result_Prescriptive  (wired)
+```
+
+**474 of 474 rows identical, byte-for-byte, across all 27 columns** — not "to four decimal
+places". `tests/test_policy_forecast.py` pins the round-trip, the scoped `DELETE`, and the
+requirement that a flagged SKU appears carrying no number.
+
+### What this does not change
+
+The rate, the buffer, the tiers, the operating points and every threshold are exactly as
+§1–§4 describe. Nothing was re-fitted and no default moved; the quantities simply now have a
+published home between the stage that produces them and the stage that consumes them. The
+acceptance verdict is unchanged at **13 of 14, forward coverage 0.8830**.
+
+---
+
 ## Findings the measurements produced that the spec did not anticipate
 
 Reported rather than absorbed, per the work direction's own rule.
@@ -295,6 +488,11 @@ coverage.
 
 - **This is a coverage test of the reorder point, not a full inventory simulation.** A full
   simulation needs an opening stock per SKU and `Inventory_Count` is empty in this database.
+  **Narrowed:** the historical inventory workbook carries real monthly counts for 27% of the
+  scored SKUs, and `docs/INVENTORY_SIMULATION.md` simulates those rather than inventing an
+  opening stock. On that subset the policy's margin over naive stocking is **0.6 points at 6%
+  more stock**, against the 26 points the coverage test shows — a real shelf carries stock
+  across blocks and absorbs variance the coverage test credits to the buffer.
   Inventing the starting condition and reporting the result as a measurement would be worse
   than not measuring.
 - **The cost inputs remain provisional** pending the USTore site visit. Holding is reported

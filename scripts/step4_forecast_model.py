@@ -382,7 +382,13 @@ def main():
 
     # Clear + refill in one transaction: on failure SQLite rolls back to the
     # previous run's forecasts rather than to nothing.
-    con.execute("DELETE FROM Result_Forecast")
+    # Clear only THIS model's rows. Result_Forecast also carries the policy
+    # rate and interval that step4b publishes and step5 consumes
+    # (model_type='policy_rate'); an unqualified DELETE here would silently
+    # empty the predictive stage the prescriptive layer reads, and step5 would
+    # then fail loudly - which is better than it silently recomputing, but the
+    # right fix is not to delete somebody else's rows in the first place.
+    con.execute("DELETE FROM Result_Forecast WHERE model_type IS NOT 'policy_rate'")
     con.execute("DELETE FROM Result_Forecast_Metrics")
     con.executemany(
         """INSERT INTO Result_Forecast

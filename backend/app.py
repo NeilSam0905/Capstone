@@ -86,7 +86,8 @@ def get_meta():
     n_reorder = c.execute("SELECT COUNT(*) FROM Result_Prescriptive").fetchone()[0]
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     has_forecast = "Result_Forecast" in tables and c.execute(
-        "SELECT COUNT(*) FROM Result_Forecast").fetchone()[0] > 0
+        "SELECT COUNT(*) FROM Result_Forecast "
+        "WHERE model_type IS NOT 'policy_rate'").fetchone()[0] > 0
 
     priced = [p for p in products if p["unit_price_php"] is not None]
     unpriced_units = sum(
@@ -341,28 +342,27 @@ def get_fsn_sensitivity():
 # so "enough to last until the next count" means the same thing in both places.
 REVIEW_PERIOD_DAYS = 30
 
-# The forecast -> prescriptive contract's rate states and service tiers, as the
-# API sees them. Only the exceptional ones need names here: the screen has to
-# render "we do not know" and "deliberately not stocked" differently from "you
-# have enough", and before the contract all three were the same pixel. See
-# docs/PRESCRIPTIVE_CONTRACT.md.
+# The forecast -> prescriptive contract's three rate states, as the API sees
+# them. Only the third needs a name here: the screen has to render "we do not
+# know" differently from "you have enough", and before the contract those two
+# were the same pixel. See docs/PRESCRIPTIVE_CONTRACT.md.
 RATE_INSUFFICIENT = "insufficient_data"
 POLICY_STATE_PRICED = "priced"
 POLICY_STATE_INSUFFICIENT = "insufficient_data"
 TIER_NOT_STOCKABLE = "not_stockable"
-INSUFFICIENT_DATA_NOTE = (
-    "Insufficient data - manual review. This item has no demand in the trailing "
-    "365 days, so the pipeline cannot estimate a rate for it and deliberately "
-    "emits no reorder point. A blank here means \"not known\", NOT \"stock is "
-    "fine\": first-season designs, one-off drops and discontinued lines all land "
-    "here, and they need a person to decide, not a number."
-)
 NOT_STOCKABLE_NOTE = (
     "Made-to-order candidate. This item's own history shows that every extra "
     "unit of stock returns less service than the store's efficiency floor, so "
     "the reorder point covers normal demand and buys no safety stock. Low "
     "availability here is a deliberate choice, not an oversight - if it must be "
     "available on demand, it needs a standing order, not a bigger buffer."
+)
+INSUFFICIENT_DATA_NOTE = (
+    "Insufficient data - manual review. This item has no demand in the trailing "
+    "365 days, so the pipeline cannot estimate a rate for it and deliberately "
+    "emits no reorder point. A blank here means \"not known\", NOT \"stock is "
+    "fine\": first-season designs, one-off drops and discontinued lines all land "
+    "here, and they need a person to decide, not a number."
 )
 
 ORDER_QTY_NOTE = (
@@ -413,8 +413,9 @@ def get_reorder():
             "reorder_point": r["reorder_point"],
             "demand_method": r["demand_method"],
             # The forecast -> prescriptive contract. rate_source is what the
-            # screen must branch on: 'insufficient_data' means this SKU has no
-            # learnable demand rate and carries NO reorder point.
+            # screen must branch on: 'insufficient_data' means this SKU has
+            # no learnable demand rate and carries NO reorder point. See
+            # docs/PRESCRIPTIVE_CONTRACT.md.
             "rate_source": r.get("rate_source"),
             "service_tier": r.get("service_tier"),
             "buffer_quantile": r.get("buffer_quantile"),
@@ -446,13 +447,13 @@ def get_reorder():
         item["stock_as_of"] = st.get("stock_as_of")
         item["stock_source"] = st.get("stock_source")
 
-        # A SKU with no learnable demand rate has NO reorder point, and the old
-        # `item["reorder_point"] or 0.0` turned that NULL into 0.0 - which then
-        # rendered as needs_reorder=False, i.e. "you have enough stock". That is
-        # a recommendation the pipeline has no evidence for, and it is exactly
-        # the silent zero the contract exists to prevent. These SKUs get an
-        # explicit state instead, and every downstream number stays None rather
-        # than being computed off a fabricated zero.
+        # A SKU with no learnable demand rate has NO reorder point, and the
+        # old `item["reorder_point"] or 0.0` turned that NULL into 0.0 - which
+        # then rendered as needs_reorder=False, i.e. "you have enough stock".
+        # That is a recommendation the pipeline has no evidence for, and it is
+        # exactly the silent zero the contract exists to prevent. These SKUs
+        # get an explicit state instead, and every downstream number stays
+        # None rather than being computed off a fabricated zero.
         if item.get("rate_source") == RATE_INSUFFICIENT or item["reorder_point"] is None:
             item["rate_source"] = RATE_INSUFFICIENT
             item["policy_state"] = POLICY_STATE_INSUFFICIENT
@@ -517,9 +518,9 @@ def get_reorder():
                 # Reported, not hidden: these SKUs are IN the table and on the
                 # screen, carrying a state instead of a number.
                 "insufficient_data_skus": len(flagged),
-                "insufficient_data_note": INSUFFICIENT_DATA_NOTE,
                 "not_stockable_skus": sum(
                     1 for i in priced if i.get("service_tier") == TIER_NOT_STOCKABLE),
+                "insufficient_data_note": INSUFFICIENT_DATA_NOTE,
                 "total_skus": len(items),
                 "with_stock_count": sum(1 for i in items if i["current_stock"] is not None),
                 "no_stock_count": sum(1 for i in items if i["current_stock"] is None),
@@ -846,7 +847,8 @@ def _has_forecast_table(c):
     tables = {r[0] for r in c.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     return "Result_Forecast" in tables and c.execute(
-        "SELECT COUNT(*) FROM Result_Forecast").fetchone()[0] > 0
+        "SELECT COUNT(*) FROM Result_Forecast "
+        "WHERE model_type IS NOT 'policy_rate'").fetchone()[0] > 0
 
 
 # Wording is aimed at the person using the dashboard, not at whoever wrote the
@@ -874,6 +876,7 @@ def get_forecast_general():
                rf.model_type, rf.is_heuristic, rf.snapshot_date
         FROM Result_Forecast rf
         JOIN Dim_Product p ON p.product_id = rf.product_id
+        WHERE rf.model_type IS NOT 'policy_rate'
         GROUP BY rf.product_id
     """)
     return jsonify({
@@ -896,7 +899,7 @@ def get_forecast(product_id):
         SELECT forecast_date, yhat, yhat_lower, yhat_upper,
                model_type, is_heuristic, snapshot_date
         FROM Result_Forecast
-        WHERE product_id = ?
+        WHERE product_id = ? AND model_type IS NOT 'policy_rate'
         ORDER BY forecast_date
     """, (product_id,))
 
@@ -1028,7 +1031,7 @@ def get_advisories():
                    SUM(rf.yhat) AS total_forecast_30d
             FROM Result_Forecast rf
             JOIN Dim_Product p ON p.product_id = rf.product_id
-            WHERE p.fsn_class = 'F'
+            WHERE p.fsn_class = 'F' AND rf.model_type IS NOT 'policy_rate'
             GROUP BY rf.product_id
             ORDER BY total_forecast_30d DESC
             LIMIT 5

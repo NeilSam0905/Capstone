@@ -159,7 +159,9 @@ def observed_days(observed: Optional[Sequence[bool]], window: int,
 
 
 def trailing_rate_fn(window: int = DEFAULT_WINDOW,
-                     observed: Optional[Sequence[bool]] = None):
+                     observed: Optional[Sequence[bool]] = None,
+                     short_window: Optional[int] = None,
+                     min_sale_days: int = DEFAULT_MIN_SALE_DAYS):
     """`train -> units/day`, the deployed policy's own predictor.
 
     Deliberately the SAME shape as forecasting/baselines.py's fit_predict
@@ -173,12 +175,24 @@ def trailing_rate_fn(window: int = DEFAULT_WINDOW,
     `len(train)` locates the window inside the mask without widening the
     callable's signature, which is what lets the harness keep treating
     this as an ordinary one-argument model.
+
+    `short_window` applies the SAME cascade `resolve_rates` applies, and
+    must be passed whenever `resolve_rates` was given it. This function is
+    what `policy_fold_errors` replays to size the empirical buffer, so a
+    mismatch would calibrate the buffer against a rate the policy does not
+    actually deploy - the buffer would be absorbing an error the rate no
+    longer makes. The two have to move together.
     """
     def _fn(train: np.ndarray) -> float:
-        w = trailing_window(train, window)
+        eff_window = window
+        if short_window is not None:
+            sw = trailing_window(train, short_window)
+            if int(np.count_nonzero(sw > 0)) >= min_sale_days:
+                eff_window = short_window
+        w = trailing_window(train, eff_window)
         if not w.size:
             return 0.0
-        denom = observed_days(observed, window, len(train),
+        denom = observed_days(observed, eff_window, len(train),
                               len(train) if observed is None else len(observed))
         return float(w.sum()) / float(denom)
     return _fn
@@ -258,6 +272,7 @@ def resolve_rates(series: Dict[object, Sequence[float]],
                   k: int = DEFAULT_CLUSTER_K,
                   upto: Optional[int] = None,
                   observed: Optional[Sequence[bool]] = None,
+                  short_window: Optional[int] = None,
                   seed: int = 0) -> Dict[object, dict]:
     """sku -> {rate, rate_source, sale_days, own_rate, cluster, cluster_rate, shrink_weight}.
 
@@ -283,6 +298,39 @@ def resolve_rates(series: Dict[object, Sequence[float]],
     than being shrunk toward nothing. Shrinking toward zero is the
     degeneracy this whole contract exists to keep out of the
     prescription, and it must not sneak back in through the pooling step.
+
+    `short_window` (optional) adds ONE layer above all of that:
+
+      short window has sale_days >= min -> use the SHORT window's rate
+      otherwise                         -> fall through to the rule above,
+                                           unchanged, on `window`
+
+    Why it exists. docs/POOLING_AND_CLUSTERING_EXPERIMENTS.md section 9's
+    three diagnostics converge on the finding that what defeats forecasting
+    on this catalogue is not sparsity but that the underlying RATE SHIFTS -
+    semester cycles, product lifecycles, one-off drops. A shorter trailing
+    window tracks a shifting rate; pooling, aggregation and synthetic
+    history all leave the shift intact, which is why each of them failed.
+
+    Why it is a cascade and not simply a shorter window. A flat 120-day
+    window was measured at +2.2pp fill and -15% holding at q=0.80, but it
+    costs 63 SKUs their rate entirely - they fall under `min_sale_days` in
+    a shorter window and would be flagged `insufficient_data`. Acceptance
+    condition 1b (forward demand coverage) is already the one failing
+    check, and buying fill by flagging more SKUs moves that problem rather
+    than solving it. Falling back to the long window keeps today's coverage
+    exactly while taking the responsiveness wherever the evidence supports
+    it.
+
+    Which window a SKU actually used is recorded in `window_days`. No new
+    `rate_source` value is introduced: RATE_SOURCES is controlled
+    vocabulary reaching Result_Prescriptive, backend/app.py and the
+    invariants, and `window_days` already carries the distinction.
+
+    `short_window=None` reproduces the committed behaviour exactly, the
+    same isolation property `shrink=False` provides for the pooling, and
+    for the same reason - the window has to be a measurable variable
+    rather than a change tangled up with everything else.
     """
     out: Dict[object, dict] = {}
 
@@ -297,16 +345,27 @@ def resolve_rates(series: Dict[object, Sequence[float]],
                                        window=window, observed=observed, seed=seed)
 
     for sku, values in series.items():
-        w = trailing_window(values, window, upto)
+        # The cascade: prefer the short window where it stands on its own
+        # evidence, otherwise fall through to the long one unchanged. The
+        # observed-days denominator follows the window that is actually
+        # used - computing a 120-day sum over a 365-day denominator would
+        # put the two rates on different bases and make them incomparable.
+        eff_window = window
+        if short_window is not None:
+            sw = trailing_window(values, short_window, upto)
+            if int(np.count_nonzero(sw > 0)) >= min_sale_days:
+                eff_window = short_window
+
+        w = trailing_window(values, eff_window, upto)
         total = float(w.sum())
         sale_days = int(np.count_nonzero(w > 0))
-        n_obs = observed_days(observed, window, upto, len(values))
+        n_obs = observed_days(observed, eff_window, upto, len(values))
         own = total / float(n_obs) if n_obs > 0 else 0.0
 
         rec = {"rate": None, "rate_source": INSUFFICIENT, "sale_days": sale_days,
                "own_rate": own, "cluster": labels.get(sku),
                "cluster_rate": None, "shrink_weight": None,
-               "observed_days": n_obs, "window_days": window}
+               "observed_days": n_obs, "window_days": eff_window}
 
         if total <= 0:
             out[sku] = rec                      # the flag: no rate, not a zero

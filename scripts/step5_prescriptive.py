@@ -305,6 +305,116 @@ def load_series(con):
     return series, products, idx
 
 
+def eligible_population(products, series):
+    """(prod_ix, eligible, prices) - the F/S SKUs with any sales history.
+
+    Factored out so scripts/step4b_policy_forecast.py scores the IDENTICAL
+    population this script prices. Two copies of this loop that drift apart
+    by one SKU would produce a predictive stage that silently disagrees with
+    the prescriptive one about who exists, which is the class of defect the
+    whole contract is built to prevent.
+    """
+    prod_ix = products.set_index("product_id")
+    eligible = {}
+    for _, row in products.iterrows():
+        pid, cls = row["product_id"], row["fsn_class"]
+        if cls not in Z_BY_CLASS:          # N excluded entirely
+            continue
+        s = series.get(pid)
+        if s is None or s.sum() <= 0:
+            continue
+        eligible[pid] = s
+
+    prices = {pid: (None if pd.isna(prod_ix.loc[pid, "unit_price_php"])
+                    else float(prod_ix.loc[pid, "unit_price_php"]))
+              for pid in eligible}
+    return prod_ix, eligible, prices
+
+
+# ---------------------------------------------------------------------
+# The materialised predictive stage.
+#
+# `Result_Forecast` used to hold one thing: step4's rolling-mean point
+# forecast, 58 Fast SKUs, 32 of them forecasting a flat zero - 26 usable,
+# and read by NOTHING. backend/pipeline.py said so in a comment:
+# "step5a/step5, neither of which read Result_Forecast." The descriptive ->
+# predictive -> prescriptive progression the manuscript claims was broken at
+# both joints, because this script computed its own demand rate and never
+# consulted the predictive table at all.
+#
+# It now holds two things, distinguished by model_type and living side by
+# side rather than one replacing the other:
+#
+#   rolling_mean_30   step4's point forecast. Unchanged, still 58 SKUs,
+#                     still what the Demand Forecast screen draws. Rounded
+#                     to 3dp, because it is a display artifact.
+#   policy_rate       what this script actually consumes: the demand RATE
+#                     from forecasting.policy.resolve_rates and the
+#                     UNCERTAINTY from empirical_buffer, at the SKU's own
+#                     lead-time horizon. 208 priced + 58 flagged = 266.
+#                     NOT rounded, because it is a pipeline input and a
+#                     rounded rate would move every reorder point.
+#
+# Why extra columns rather than packing everything into the band. The band
+# (yhat_lower/yhat_upper) is populated and meaningful - the upper band over
+# the lead time sums to the reorder point - but a consumer recovering the
+# buffer by subtracting one stored float from another gets it back to within
+# an ulp, not exactly. `Result_Prescriptive` has to come out identical when
+# this path is used, so the two quantities this script consumes are stored
+# where they can be read back with no arithmetic at all. In-place migration
+# rather than a schema rebuild, the same way Result_Forecast_Metrics.mase
+# and this table's own contract columns were added.
+POLICY_MODEL_TYPE = "policy_rate"
+
+FORECAST_POLICY_COLUMNS = {
+    "horizon_days": "INTEGER",      # the horizon this row's band is measured at
+    "buffer_units": "REAL",         # empirical buffer over horizon_days, in units
+    "rate_source": "TEXT",          # observed / cluster_pooled / insufficient_data
+    "service_tier": "TEXT",         # servable / partial / not_stockable
+    "buffer_quantile": "REAL",      # the operating point this SKU's tier resolved to
+    "buffer_source": "TEXT",        # empirical_quantile / normal_z_sigma_fallback / none
+}
+
+
+def ensure_forecast_policy_columns(con):
+    """Add the policy columns to Result_Forecast if they are not there yet."""
+    have = {r[1] for r in con.execute("PRAGMA table_info(Result_Forecast)")}
+    added = []
+    for name, decl in FORECAST_POLICY_COLUMNS.items():
+        if name not in have:
+            con.execute(f"ALTER TABLE Result_Forecast ADD COLUMN {name} {decl}")
+            added.append(name)
+    if added:
+        con.commit()
+    return added
+
+
+def load_policy_forecast(con):
+    """{product_id: record} - the policy rate and interval step4b published.
+
+    One record per eligible SKU, collapsed from the per-day rows (every row
+    of a SKU carries the same rate and the same buffer; the per-day grain
+    exists so the band is drawable and so the upper band sums to the reorder
+    point over the lead time). Returns {} when the table or the rows are
+    absent, so the caller can fail loudly rather than silently recompute.
+    """
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='Result_Forecast'").fetchone():
+        return {}
+    have = {r[1] for r in con.execute("PRAGMA table_info(Result_Forecast)")}
+    if not set(FORECAST_POLICY_COLUMNS) <= have:
+        return {}
+    rows = con.execute(
+        "SELECT product_id, yhat, buffer_units, horizon_days, rate_source, "
+        "       service_tier, buffer_quantile, buffer_source, MIN(forecast_date) "
+        "FROM Result_Forecast WHERE model_type = ? GROUP BY product_id",
+        (POLICY_MODEL_TYPE,)).fetchall()
+    return {int(r[0]): {"rate": r[1], "buffer_units": r[2], "horizon_days": r[3],
+                        "rate_source": r[4], "service_tier": r[5],
+                        "buffer_quantile": r[6], "buffer_source": r[7]}
+            for r in rows}
+
+
 def load_forecast_totals(con):
     """{product_id: 30-day forecast total} straight out of Result_Forecast,
     plus the model_type that produced it.
@@ -316,10 +426,17 @@ def load_forecast_totals(con):
     if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
                        "AND name='Result_Forecast'").fetchone():
         return {}, None
+    # Point-forecast rows only. Result_Forecast also carries this script's own
+    # materialised policy rate (model_type='policy_rate'), which is a rate and
+    # not a 30-day point forecast - summing the two together would be adding
+    # two different quantities and calling the result demand.
     rows = con.execute(
-        "SELECT product_id, SUM(yhat) FROM Result_Forecast GROUP BY product_id").fetchall()
+        "SELECT product_id, SUM(yhat) FROM Result_Forecast "
+        "WHERE model_type IS NOT ? GROUP BY product_id",
+        (POLICY_MODEL_TYPE,)).fetchall()
     models = [r[0] for r in con.execute(
-        "SELECT DISTINCT model_type FROM Result_Forecast").fetchall()]
+        "SELECT DISTINCT model_type FROM Result_Forecast WHERE model_type IS NOT ?",
+        (POLICY_MODEL_TYPE,)).fetchall()]
     # One model per run in practice; if step4 ever mixes them, name them all
     # rather than picking one and misreporting the provenance.
     model_type = "+".join(sorted(m for m in models if m)) or "unknown"
@@ -423,6 +540,13 @@ def main():
                          "REMEDIATION_MASTER_v2.md S1. Ratify the default with the team - "
                          "'forecast' reproduces the old behaviour exactly.")
     ap.add_argument("--db", default=DB_NAME)
+    ap.add_argument("--recompute-policy", action="store_true",
+                    help="Compute the demand rate and the empirical buffer in-process "
+                         "instead of reading what scripts/step4b_policy_forecast.py "
+                         "published into Result_Forecast. This is the pre-wiring "
+                         "behaviour, kept as a CONTROL: the two paths must produce an "
+                         "identical Result_Prescriptive, and keeping the old one runnable "
+                         "is what makes that checkable rather than asserted.")
     ap.add_argument("--buffer-quantile", type=float, default=DEFAULT_BUFFER_QUANTILE,
                     help="Operating point on the service/holding frontier, as a DIAL "
                          "rather than an asserted service level. The buffer is the "
@@ -531,22 +655,10 @@ def main():
     # trailing window summed to zero, which dropped 58 of 266 out of the
     # output entirely: not as "unknown", simply absent, so the screen showed
     # nothing where a recommendation belonged.
-    prod_ix = products.set_index("product_id")
-    eligible = {}
-    for _, row in products.iterrows():
-        pid, cls = row["product_id"], row["fsn_class"]
-        if cls not in Z_BY_CLASS:          # N excluded entirely
-            continue
-        s = series.get(pid)
-        if s is None or s.sum() <= 0:
-            continue
-        eligible[pid] = s
+    prod_ix, eligible, prices = eligible_population(products, series)
 
-    prices = {pid: (None if pd.isna(prod_ix.loc[pid, "unit_price_php"])
-                    else float(prod_ix.loc[pid, "unit_price_php"]))
-              for pid in eligible}
-
-    # ---- demand rate: trailing observed, cluster-pooled fallback ----
+    # ---- demand rate: read from the published policy forecast ----
+    policy = None
     if args.demand_basis == "forecast":
         # Legacy mode, kept so the pre-contract behaviour is reproducible.
         # The contract does NOT apply here: D comes from Result_Forecast, a
@@ -566,13 +678,55 @@ def main():
         print("NOTE: --demand-basis=forecast keeps the z*sigma normal buffer. The "
               "empirical\n      buffer is available only on the ratified trailing "
               "basis - see the loop\n      comment in main() for why.")
-    else:
+    elif args.recompute_policy:
         rates = resolve_rates(eligible, prices,
                               window=int(DAYS_PER_YEAR),
                               min_sale_days=MIN_SALE_DAYS_FOR_RATE,
                               shrink=args.shrink,
                               k=args.cluster_k,
                               observed=observed)
+        print("Policy basis: RECOMPUTED in-process (--recompute-policy). The wired "
+              "path\n              reads scripts/step4b_policy_forecast.py's published "
+              "rows instead.")
+    else:
+        # The wired path: the demand rate and the lead-time interval come from
+        # Result_Forecast, where step4b published them, rather than being
+        # recomputed here and discarded. This is what makes the descriptive ->
+        # predictive -> prescriptive progression literal instead of a diagram.
+        policy = load_policy_forecast(con)
+        if not policy:
+            print("No policy_rate rows in Result_Forecast.\n"
+                  "Run scripts/step4b_policy_forecast.py first (it needs step5a's lead "
+                  "times),\nor pass --recompute-policy to compute them here as before.")
+            return 1
+        missing = [p for p in eligible if p not in policy]
+        if missing:
+            print(f"Result_Forecast is stale: {len(missing)} eligible SKU(s) have no "
+                  f"policy_rate row\n(e.g. {missing[:5]}). Re-run "
+                  f"scripts/step4b_policy_forecast.py.")
+            return 1
+        # Settings that shape the policy belong to step4b now. Accepting them
+        # here and ignoring them would let the prescription silently disagree
+        # with the predictive rows it claims to be reading.
+        owned = {"buffer_quantile": DEFAULT_BUFFER_QUANTILE, "cluster_k": DEFAULT_CLUSTER_K,
+                 "shrink": False, "flat_quantile": False, "zero_fill": False,
+                 "tier_target": DEFAULT_TIER_TARGET,
+                 "tier_min_efficiency": DEFAULT_TIER_MIN_EFFICIENCY}
+        overridden = [f"--{k.replace('_', '-')}" for k, d in owned.items()
+                      if getattr(args, k) != d]
+        if overridden:
+            print(f"{', '.join(overridden)} shape the POLICY, which is now published by "
+                  f"scripts/step4b_policy_forecast.py.\nPass them there and re-run it, or "
+                  f"add --recompute-policy to apply them here.")
+            return 1
+        rates = {pid: {"rate": policy[pid]["rate"],
+                       "rate_source": policy[pid]["rate_source"],
+                       "sale_days": None, "own_rate": None, "cluster": None,
+                       "cluster_rate": None, "shrink_weight": None}
+                 for pid in eligible}
+        n_read = sum(1 for p in policy.values() if p["rate_source"] != INSUFFICIENT)
+        print(f"Policy basis: READ from Result_Forecast (model_type='{POLICY_MODEL_TYPE}') "
+              f"- {n_read} rates, {len(policy) - n_read} flagged")
 
     # ---- per-SKU variability (feeds the LEGACY comparison column) ----
     stats = {}
@@ -645,7 +799,14 @@ def main():
     # holding to chase SKUs no reorder point can serve. See
     # forecasting/policy.py's tier section for the measurement behind that.
     tiers = {}
-    if args.demand_basis != "forecast" and not args.flat_quantile:
+    if policy is not None:
+        # Published by step4b from each SKU's own pre-origin folds, read back
+        # rather than re-derived. Re-deriving would be a second opinion on a
+        # decision that has already been recorded, and the two could drift.
+        tiers = {pid: {"tier": policy[pid]["service_tier"],
+                       "q": policy[pid]["buffer_quantile"]}
+                 for pid in stats if policy[pid]["service_tier"]}
+    elif args.demand_basis != "forecast" and not args.flat_quantile:
         for pid, st in stats.items():
             tiers[pid] = assign_service_tier(
                 eligible[pid], st["lead_time_days"], rate_fn,
@@ -682,7 +843,21 @@ def main():
         # less than the efficiency floor.
         tier_q = tiers.get(pid, {}).get("q", args.buffer_quantile)
 
-        if args.demand_basis == "forecast":
+        if policy is not None:
+            # The interval step4b measured at THIS SKU's lead-time horizon,
+            # read back whole. The one thing not read back is the normal
+            # fallback: z*sigma is a function of population-wide sigma medians
+            # this script owns, so step4b records that the fallback applies and
+            # the value is supplied here. The provenance still travels.
+            pol = policy[pid]
+            buffer_src = pol["buffer_source"] or BUFFER_NORMAL_FALLBACK
+            buffer_q = pol["buffer_quantile"]
+            if buffer_src == BUFFER_NORMAL_FALLBACK:
+                ss = ss_normal
+                n_normal_fallback += 1
+            else:
+                ss = float(pol["buffer_units"] or 0.0)
+        elif args.demand_basis == "forecast":
             ss, buffer_src, buffer_q = ss_normal, BUFFER_NORMAL_FALLBACK, None
         elif tier == NOT_STOCKABLE:
             ss, buffer_src, buffer_q = 0.0, BUFFER_NOT_STOCKED, None

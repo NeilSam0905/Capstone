@@ -45,6 +45,7 @@ that touches a CSV (see `docs/WORK_PLAN_STATUS_HISTORY.md` Block 1 for what it c
 | 3 | `scripts/step3_fsn_classification.py` | Computes ADUS (Average Daily Units Sold) per SKU, weighting imputed/allocated rows at 0.5, and classifies Fast/Slow/Non-moving at the 80th-percentile ADUS cutoff (currently F=58, S=228, N=233; it was S=230/N=231 before Block 2.2 in `docs/WORK_PLAN_STATUS_HISTORY.md`). Days flagged `is_censored` are dropped from the ADUS denominator — `EXCLUDE_CENSORED_DAYS = False` reverts that, see Block 2.4 in `docs/WORK_PLAN_STATUS_HISTORY.md`. Flags High-Velocity-Limited (HVL) items with thin history. Writes `fsn_class`/`is_hvl` back to `Dim_Product`. |
 | 4 | `scripts/step4_forecast_model.py` | Forecasts **every** Fast SKU with `rolling_mean_30` — literally `forecasting/baselines.py::rolling_mean_fit_predict(30)`, the same callable `model_benchmark.py` scores, so the benchmark's and `SERVICE_LEVEL_FRONTIER.md`'s findings apply to the production model directly. Flat over 30 days, ±1 SD band. Validated on `forecasting/evaluate.py`'s walk-forward harness at the benchmark's exact settings (**horizon 30, 3–12 folds, min_train 60**), so the scoring unit is a **30-day aggregate** — the quantity the pipeline serves — not a daily point. **58 of 58 SKUs scored, 12 folds each**; naive is scored on identical folds. **Takes seconds.** Sale-day tiers (38/10/10) are now descriptive labels only — they select neither model nor harness. Results: 35/58 beat naive (MAE 40.0 vs 104.2), 1/58 meets MAPE ≤20%, and **32/58 forecast zero** because their trailing window is empty — see `docs/ROLLING_MEAN_FORECAST.md` §4, that one is an open decision. Previously fit Prophet per SKU with full-MCMC production fits at 1–2 hours; renamed from `step4_prophet_forecast.py`. |
 | 5a | `scripts/step5a_set_lead_times.py` | Sets `Dim_Product.lead_time_days` per product from a name-keyword classifier (jacket/windbreaker → 28d, embroidered → 18d, shirt/jersey/polo/tee → 14d, else → 18d default). Provisional, pending Block 5 (USTore site visit). |
+| 4b | `scripts/step4b_policy_forecast.py` | **Publishes the predictive stage the prescriptive layer actually consumes.** `forecasting.policy.resolve_rates`' demand rate and `empirical_buffer`'s lead-time interval are written into `Result_Forecast` as `model_type='policy_rate'` — **208 SKUs priced, 58 flagged `insufficient_data`, 266 of 266 accounted for** — alongside step 4's `rolling_mean_30` rows rather than replacing them. Runs after `step5a` because the interval is measured at each SKU's own lead-time horizon. Not skippable: `step5` reads these rows instead of recomputing, and exits if they are absent. See `docs/PRESCRIPTIVE_CONTRACT.md` §5. |
 | 5 | `scripts/step5_prescriptive.py` | ROP / Safety Stock / EOQ per Fast+Slow SKU, using `step5a`'s real lead time and a holding cost derived from USTore's stated inventory value (arithmetic + every assumption written to `Dim_Parameters`, all flagged provisional). Ordering cost is genuinely ambiguous, so every SKU is priced under **two** scenarios (`low_admin_cost` / `high_goods_value`) rather than one guess — see `docs/STATUS_AND_NEXT_STEPS.md` for the numbers. Writes `Result_Prescriptive`. |
 
 Supporting/one-off scripts still in the repo: `scripts/build_vocab_mapping.py` /
@@ -155,9 +156,13 @@ The README covers the pipeline and how to run it. Everything else lives in
 |---|---|
 | **What's broken / still to do** | `docs/OPEN_ISSUES.md` |
 | **Open team decisions** (B1–B15) | `docs/STATUS_AND_NEXT_STEPS.md` |
+| **The criterion that replaced `MAPE ≤ 20%`** | `docs/ACCEPTANCE_STANDARD.md` |
+| **What the prescriptive layer actually consumes** (a rate + an uncertainty, not a point forecast) | `docs/PRESCRIPTIVE_CONTRACT.md` |
+| **Is the reorder point any good?** — rolling-origin holdout | `docs/POLICY_HOLDOUT.md` |
+| **Is it any good against *real stock*?** — and why the holdout overstates it | `docs/INVENTORY_SIMULATION.md` |
 | The forecasting model, and whether it meets the criteria | `docs/ROLLING_MEAN_FORECAST.md` |
 | Why an error-based acceptance criterion fails here | `docs/DEGENERATE_FORECAST.md` |
-| Why service level is a frontier, not a threshold | `docs/SERVICE_LEVEL_FRONTIER.md` |
+| Why service level is a frontier, not a threshold — *note: `POLICY_HOLDOUT.md` later found no interior knee on the policy's own curve* | `docs/SERVICE_LEVEL_FRONTIER.md` |
 | Method comparison (10 methods, identical folds) | `docs/FORECAST_METHOD_COMPARISON.md` |
 | Where every number came from | `docs/DATA_PROVENANCE.md` |
 | Divergences from the manuscript | `docs/DIVERGENCE_REGISTER.md` |
@@ -165,6 +170,13 @@ The README covers the pipeline and how to run it. Everything else lives in
 | Power BI build spec | `docs/POWERBI_DASHBOARD_PLAN.md` |
 | Backend / frontend contracts | `backend/README.md`, `UST Prototype Design/README.md` |
 | Historical status against the work plan | `docs/WORK_PLAN_STATUS_HISTORY.md` |
+| **Session logs, newest last** — what changed, what it cost the record, what is open | `docs/WORKLOG_POLICY_AND_ACCEPTANCE.md`, `docs/WORKLOG_INVENTORY_AND_RATE_WINDOW.md` |
+
+> **Reading order for a new session.** Start at the newest work log
+> (`docs/WORKLOG_INVENTORY_AND_RATE_WINDOW.md`) — its §9 is the current open list and its §7
+> records two things the written record has not caught up with: `docs/CHAPTER_4_DRAFT.md`
+> predates the policy layer, and the descriptive → predictive → prescriptive chain is broken
+> between its second and third stages.
 
 ## Changes added since the ETL pipeline above (frontend + backend)
 
@@ -208,12 +220,23 @@ wildly different costs:
 | **Run Pipeline (no forecast)** | everything except step 4 | **~40 s** |
 | **Run Full Pipeline + Forecast** | everything | **~50 s** (step 4 adds ~10 s) |
 
-Step 4 is the only step that can be opted out of (`pipeline.SKIPPABLE`),
-and it is safe to skip because nothing downstream reads its output —
-`step5_prescriptive.py` derives demand from observed history
-(`--demand-basis trailing`, the default), not from `Result_Forecast`. A
-no-forecast run still rebuilds the database, the FSN classes and the
-reorder points; it just leaves whatever forecasts are already there alone.
+Step 4 is still the only step that can be opted out of
+(`pipeline.SKIPPABLE`), and it is safe to skip because nothing downstream
+reads **its** output: step 4 publishes the `rolling_mean_30` point
+forecast, which the Demand Forecast screen draws and no other step
+consumes. A no-forecast run still rebuilds the database, the FSN classes
+and the reorder points; it just leaves whatever point forecasts are
+already there alone.
+
+**Step 4b is a different matter and is not skippable.** It publishes the
+demand *rate* and the lead-time *interval* into the same table under
+`model_type='policy_rate'`, and `step5_prescriptive.py` reads them rather
+than recomputing — which is what makes the descriptive → predictive →
+prescriptive progression literal instead of a diagram. Skipping it leaves
+step 5 with no policy rows, and step 5 exits with a message rather than
+silently falling back. `--recompute-policy` restores the pre-wiring
+behaviour as a control, and the two paths are required to produce an
+identical `Result_Prescriptive`.
 
 What the run does *not* destroy, and why that matters if you are reading
 these scripts and expecting a from-scratch rebuild to be a wipe:

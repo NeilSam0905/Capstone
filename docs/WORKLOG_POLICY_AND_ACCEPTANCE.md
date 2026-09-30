@@ -102,7 +102,14 @@ almost no stock — which a fill-based rule cannot see.
 | normal z·σ (retired) | 0.6022 | 21,029 | 0.330 |
 | naive stocking (no model) | 0.4264 | 3,249 | 1.514 |
 
-More demand met on less stock than the flat quantile it replaces — a dominance, not a trade.
+More demand met on less stock than the flat quantile it replaces, on this measure.
+
+> **Narrowed 2026-09-23 — it is a trade.** Adjudicated against real opening stock and then
+> against a synthetic shelf that makes all 242 priced SKUs observable
+> (`docs/INVENTORY_SIMULATION.md`, `--synthetic-cover`). On the 52 SKUs with measured stock the
+> two rules are **not separable**; from one lead-time's cover upward they separate cleanly and
+> the tiering holds **more** stock at every depth where it wins more demand. The gain is real
+> (+1.0 to +2.8 points of fill) and it is bought.
 
 ---
 
@@ -162,9 +169,37 @@ Recorded so the same ground is not re-covered.
 | --- | --- | --- |
 | **Pool SKUs by design** (sizes/colours of one product) | 11 design families, 25 of 266 SKUs; density 0.078 → 0.118 for those alone | Ruled out — the catalogue is not fragmented enough to matter |
 | **Lead time** (14/18/28 are provisional) | fill 0.557 / 0.581 / 0.603 / 0.593 at L = 7 / 14 / 18 / 28 | Not a driver, and reassuring: the result is not hostage to the estimate |
-| **Rate window** (365d on a growing catalogue) | Fixed population: 120d gives +2.2pp fill and −15% holding at q=0.80, but +0.16pp at q=0.95, and costs 63 SKUs of coverage | Second-order with a real coverage cost |
-| **Trend-aware rate** | the 120d-vs-365d result is itself a crude trend proxy, worth ~2pp | Not worth reopening |
+| **Rate window** (365d on a growing catalogue) | Fixed population: 120d gives +2.2pp fill and −15% holding at q=0.80, but +0.16pp at q=0.95, and costs 63 SKUs of coverage | ~~Second-order with a real coverage cost~~ — **reopened, see below** |
+| **Trend-aware rate** | the 120d-vs-365d result is itself a crude trend proxy, worth ~2pp | ~~Not worth reopening~~ — **superseded with the row above** |
 | **Cluster-pooled rate fallback** | +12.7 units served for +155.1 held (12.2 per unit) against 5.0 from the dial; prices no additional SKU | Dominated — defaulted off, code and flag kept |
+| **Cold-start donor (analog) rate** (added 2026-09-23) — borrow a rate from similar existing items where the SKU has none of its own | On the 103 cold-start SKUs carrying 11.68% of demand: `product_type` reaches 0.1552 fill on 4,853 units held, against **0.1631 for the uncategorised donor scaled to hold the same stock**. `category` is worth **+0.10pp** over that control. Price band's sign flips with the band count (−0.0058 … +0.0135) | Ruled out — the taxonomy sits **below** a matched-stock control, so it buys fill with stock rather than information; and any donor model flips acceptance condition 1b from FAIL to PASS while leaving 82% of that demand unserved. `docs/COLD_START_ANALOG.md`, `tools/cold_start_donor_test.py` |
+
+### The rate window was mis-ranked, and why that is the more useful finding
+
+Both window rows above were ranked **against a comparison that has since been corrected**. They
+were called second-order because the policy apparatus they were measured beside appeared to beat
+naive stocking by **26 points** (reorder-point coverage, `docs/POLICY_HOLDOUT.md`).
+`docs/INVENTORY_SIMULATION.md` measures that same comparison against real opening stock at
+**0.6 points**. A 2.2-point lever is not second-order next to 0.6 — it is roughly four times it.
+
+The stated cost — 63 SKUs losing their rate, which would push the already-failing acceptance
+condition 1b lower — was real and is now **removed**. `forecasting/policy.py::resolve_rates`
+takes `short_window`, preferring the short window only where a SKU has the sale-days to support
+it and falling back to 365d otherwise. Measured across four rolling origins at 90/120/180/270
+days, forward coverage stays at **0.8830** and the minimum priced count at **150** — identical
+to committed, at every setting.
+
+What the cascade buys, and the interference it exposed, are in
+`docs/PRESCRIPTIVE_CONTRACT.md` §1a. In short: it **dominates the flat 365d baseline**
+(+2.2pp fill on 12% less stock, full population, coverage preserved), and it **does not stack
+with the service tiering** — the two are substitutes, and under the inventory simulation adding
+the tiering on top of the cascade is worse on both axes.
+
+**The mis-ranking is the part worth carrying.** It is the same class of error as the three
+metric failures this project already documents — `MAPE ≤ 20%`, the trailing-coverage tautology,
+and reorder-point coverage itself. In each case a decision was made against a number that did
+not mean what it appeared to. Here the number was the project's own headline result, and it
+closed a lever for four days.
 
 ---
 
@@ -223,9 +258,27 @@ manual review rather than guessing, which is the correct operational behaviour, 
 account for roughly one unit in nine traded.
 
 A price-and-category **analog model** — borrowing a rate from similar existing items rather
-than from the item's own history — could in principle price them. It is named here as future
-work and deliberately not built: it would need its own validation before any claim rested on
-it.
+than from the item's own history — could in principle price them. ~~It is named here as future
+work and deliberately not built.~~
+
+**Built and measured, 2026-09-23** — `tools/cold_start_donor_test.py`,
+`docs/COLD_START_ANALOG.md`. It does not work, and the reason it does not is more useful than
+the rates it produces:
+
+- Against a **matched-stock control** — the uncategorised donor rescaled to hold the same stock —
+  the eight-bucket product taxonomy is **below the curve** (0.1552 against 0.1631). It was not
+  extracting a better rate; it was committing more. The apparel/non-apparel label buys
+  **+0.10pp** of fill over scaling alone.
+- **Price band is not established either.** Its verdict flips sign with a band count that has no
+  principled basis (−0.0058 … +0.0135 across 2/3/4/5/8 bands). Reported, not resolved.
+- **The trap is the criterion, not the model.** Condition 1b counts a SKU as covered if it is
+  priced *at all*. A donor model prices every cold-start SKU, so coverage moves 0.8830 → 0.9998
+  and the verdict flips to **ACCEPTED on demand that is still 82% unserved** — the
+  trailing-coverage tautology re-entering the same condition by another door.
+
+Nothing was deployed and no threshold was changed. The correction 1b actually needs is the one
+in §6 — measure against the achievable ceiling — which raises the floor without making the
+condition unfailable, and it is still not implemented.
 
 ---
 
@@ -258,3 +311,11 @@ defaulted off, because `forecasting/policy.py` imports it on the pooling path.
   flagging those days `is_store_closed`, which the pipeline picks up with no code change.
 - **`Inventory_Count` is empty**, so the holdout scores reorder-point coverage rather than a
   full inventory simulation — an opening stock per SKU would have to be invented otherwise.
+  **Partly closed.** The table is still empty, but the historical inventory workbook
+  (`data/USTore_inventory_excel_long_mapped.csv`, 23 monthly counts, already the source of
+  `step5_prescriptive.UNITS_ON_HAND_SOURCE`) supplies real opening stock for 27% of scored
+  SKUs. `tools/inventory_simulation.py` simulates them; `docs/INVENTORY_SIMULATION.md`
+  reports it. Two findings worth carrying: replenishing at all is worth **+26 points** of
+  fill over not replenishing, but the tiered policy's margin over **naive** stocking is
+  **0.6 points at 6% more stock** — against 26 points under reorder-point coverage. The
+  proxy overstates the comparator gap that acceptance condition 2 rests on.

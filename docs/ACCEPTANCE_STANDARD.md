@@ -91,6 +91,25 @@ wins on average and loses some quarters is not one a store can rely on.
 
 **4 of 4 ✅**
 
+> **How much weight this margin can bear.** The figures above are *reorder-point coverage* —
+> each lead-time block is scored as though the shelf were empty at its start, so the buffer
+> must absorb all of the block's variance. `docs/INVENTORY_SIMULATION.md` re-runs the same
+> comparison as an inventory simulation with measured opening stock, on the 27% of SKUs the
+> historical workbook covers. The condition still passes, **3 of 3 origins** — but the margin
+> over naive stocking collapses from **26 points to 0.6**, because a real shelf carries stock
+> across blocks and absorbs for free much of what the buffer is credited with here.
+>
+> Measured further: that 0.6 points is a property of how *deeply* USTore currently stocks, not
+> of the method. At roughly one lead-time's cover the margin is **4.4 points**; at the measured
+> 4.2× cover it is 0.6. The comparator gap widens as inventory falls.
+>
+> Nothing in this condition changes — the threshold, the comparator and the verdict are as
+> committed, and a result is reported rather than relaxed. What is recorded is that **a
+> 0.6-point margin is thin enough to sit inside the noise of the design choices** behind it
+> (the staleness cap, the ordering-cost scenario, which 28–45 SKUs the workbook happens to
+> cover), and that the 26-point figure should not be quoted as the system's advantage over
+> doing nothing.
+
 ### 3. Not dominated
 
 *If a simpler policy delivers at least as much service for no more stock, the complexity is
@@ -103,6 +122,20 @@ unjustified.*
 | flat q=0.95 | 0.7980 | 32,057 | trade-off |
 | naive stocking | 0.4264 | 3,249 | trade-off |
 | **this policy** | **0.6851** | **14,751** | dominated by none ✅ |
+
+> **How much weight the `flat q=0.80` row can bear.** The comparison above is
+> reorder-point coverage, and `docs/INVENTORY_SIMULATION.md` re-runs it as an inventory
+> simulation. On the 52 SKUs with measured opening stock the two rules are **not
+> separable**; on a synthetic shelf that makes all 242 priced SKUs observable they separate
+> from one lead-time's cover upward, and the tiering holds **more** stock at every depth
+> where it wins more demand.
+>
+> **Nothing in this condition changes.** The threshold, the comparator and the verdict are
+> as committed, and the policy is dominated by none of the four alternatives on either
+> measure — flat q=0.80 does not give more service for less stock under simulation any more
+> than it does here. What is recorded is that the *margin* over flat q=0.80 is a **trade
+> rather than a dominance**, so "we dominate" in that row should be read as "not dominated
+> by", which is what the condition actually tests.
 
 > **Why efficiency is deliberately *not* a condition.** Units-served-per-unit-held is reported
 > throughout this project and is excluded from the standard on purpose, because it is
