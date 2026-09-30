@@ -338,7 +338,8 @@ def get_products():
     # reads this endpoint, so without it "Last 3 Months" moved the trend line
     # and left every other figure on the page at its all-time value.
     date_range = request.args.get("dateRange") or None
-    cat = catalog.compute_catalog(c, date_range)
+    cat = catalog.compute_catalog(c, date_range,
+                                  request.args.get("start"), request.args.get("end"))
     cat = [p for p in cat if catalog.matches(p, supplier, category)]
     if _bool_flag("has_history"):
         cat = [p for p in cat if p["is_active"] and p["total_units"] >= 0 and p["has_history"]]
@@ -468,6 +469,32 @@ def add_product():
     }})
 
 
+@app.put("/api/products/<int:product_id>/status")
+def set_product_status(product_id):
+    """Mark an item discontinued, or back in stock ({"discontinued": bool}).
+
+    Stored in Product_Status by item name (see backend/db.py for why), so it
+    survives a pipeline run. A discontinued item leaves the tally item
+    pickers; its history, counts and stock figures are untouched."""
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload.get("discontinued"), bool):
+        return jsonify({"ok": False, "error": "Send discontinued: true or false."}), 400
+    c = con()
+    product = dbmod.one(c, "SELECT item_name FROM Dim_Product WHERE product_id = ?", (product_id,))
+    if not product:
+        return jsonify({"ok": False, "error": "No such item."}), 404
+    c.execute(dbmod.PRODUCT_STATUS_DDL)   # in case startup could not create it
+    c.execute("""
+        INSERT INTO Product_Status (item_name, discontinued, changed_at) VALUES (?, ?, ?)
+        ON CONFLICT (item_name) DO UPDATE SET
+            discontinued = excluded.discontinued, changed_at = excluded.changed_at
+    """, (product["item_name"], int(payload["discontinued"]),
+          datetime.now().isoformat(timespec="seconds")))
+    c.commit()
+    return jsonify({"ok": True, "product_id": product_id, "item_name": product["item_name"],
+                    "discontinued": payload["discontinued"]})
+
+
 @app.get("/api/products/<int:product_id>/history")
 def get_product_history(product_id):
     c = con()
@@ -490,6 +517,7 @@ def get_monthly_units():
     supplier = request.args.get("supplier") or None
     category = request.args.get("category") or None
     date_range = request.args.get("dateRange") or None
+    start, end = request.args.get("start"), request.args.get("end")
     keep = {p["product_id"] for p in cat if catalog.matches(p, supplier, category)}
     price_by_id = {p["product_id"]: p["unit_price_php"] for p in cat}
     months = catalog.months_seen(c)
@@ -501,7 +529,7 @@ def get_monthly_units():
     """)
     by_month = {}
     for row in monthly:
-        if row["product_id"] not in keep or not catalog.in_range(row["month"], date_range, months):
+        if row["product_id"] not in keep or not catalog.in_range(row["month"], date_range, months, start, end):
             continue
         acc = by_month.setdefault(row["month"], {"month": row["month"], "units": 0, "revenue": 0.0, "priced_units": 0})
         acc["units"] += row["units"]

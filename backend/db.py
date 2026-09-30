@@ -47,6 +47,21 @@ _INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_result_prescriptive_product ON Result_Prescriptive(product_id)",
 )
 
+# Operational tables this backend writes that an older ustore.db may not have
+# yet (create_schema.py defines the same ones; IF NOT EXISTS makes the two
+# agree whichever runs first).
+#
+# Product_Status: items the store has marked discontinued from the Tally
+# Interface. Keyed by item_name, not product_id, because step1 rebuilds
+# Dim_Product from scratch on every pipeline run and a product_id is not
+# guaranteed to survive that; the name is.
+PRODUCT_STATUS_DDL = """CREATE TABLE IF NOT EXISTS Product_Status (
+    item_name     TEXT PRIMARY KEY,
+    discontinued  INTEGER NOT NULL DEFAULT 0,
+    changed_at    TEXT
+)"""
+_TABLES = (PRODUCT_STATUS_DDL,)
+
 _init_lock = threading.Lock()
 _initialised = False
 
@@ -73,7 +88,7 @@ def ensure_initialised(force=False):
             con = _connect()
             try:
                 con.execute("PRAGMA journal_mode = WAL")
-                for stmt in _INDEXES:
+                for stmt in (*_TABLES, *_INDEXES):
                     con.execute(stmt)
                 con.commit()
             finally:
