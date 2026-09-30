@@ -246,3 +246,44 @@ degenerate; #22 establishes that the obvious replacement is unreachable and supp
 works instead. Read together they are a single argument about **choosing an objective for
 intermittent demand**, demonstrated on our own data — which is a stronger contribution than either
 would be as a standalone limitation.
+
+---
+
+## The operating point, re-measured after the padding fix (2026-09-30)
+
+`bf08ca7` took 23 days of step0 zero-fill out of the rate denominators, which
+moved every buffer (mean safety stock 8.850 → 13.442) and every tier count
+(servable 24 → 17, not_stockable 14 → 9). The thresholds that produce those
+counts — `DEFAULT_TIER_TARGET = 0.90`, `DEFAULT_TIER_MIN_EFFICIENCY = 0.10` —
+were chosen against the old measurement, so `tools/tier_operating_point.py` was
+written to ask whether they are still the right ones.
+
+It runs the holdout across 30 combinations and asks, of each, whether any flat
+quantile dominates it at **all four** rolling origins. That bar is stricter than
+the gate's majority on purpose: a search permitted to miss one window will find a
+configuration that misses the awkward one.
+
+**0 of 30 clear 4 of 4.** 16 reach 3, 14 reach 2. The tiering cannot be placed on
+the efficient frontier at every origin by moving these knobs, and that is a
+statement about the tiering rather than about the knobs.
+
+Within the 16 that reach 3 of 4, the live default is **12th on served-per-held**:
+
+| tier_target | min_efficiency | fill (demand-wtd) | units held | served/held |
+|---:|---:|---:|---:|---:|
+| 0.90 | 0.30 | 0.6260 | 49,476 | **0.6337** |
+| 0.85 | 0.30 | 0.6241 | 49,762 | 0.6281 |
+| 0.90 | 0.20 | 0.6434 | 55,303 | 0.5827 |
+| **0.90** | **0.10** *(live)* | **0.6685** | **66,125** | **0.5063** |
+
+Raising `min_efficiency` from 0.10 to 0.30 buys **25% better efficiency on 25%
+less stock, for about 4pp of fill**. That is a trade, not a correction, so the
+defaults are left alone here: it is a decision about how much service the store
+wants to buy, and it moves every reorder point. The evidence is recorded so the
+decision can be made rather than inherited.
+
+One caveat on reading the sweep: across the 30 configurations the domination
+lands on 2025-07-14 (21 times) and 2026-01-10 (20), and on the development-set
+origin only 3 times. The live default is one of those 3, which is why the first
+look at this — which had only the development set's frontier — read as a
+development-set artefact. It is closer to the reverse.

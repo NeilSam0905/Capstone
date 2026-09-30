@@ -110,6 +110,11 @@ DB_NAME = "ustore.db"
 OUT_CSV = "data/policy_holdout_frontier.csv"
 OUT_ORIGINS_CSV = "data/policy_holdout_origins.csv"
 OUT_COMPARISON_CSV = "data/policy_holdout_comparison.csv"
+# The quantile sweep repeated at EVERY origin. data/policy_holdout_frontier.csv
+# is scored at one split - the development set - so a dominance judged there is
+# judged on the window the policy was designed on, which section 1 of the module
+# docstring is the standing warning against.
+OUT_ORIGIN_FRONTIER_CSV = "data/policy_holdout_frontier_by_origin.csv"
 OUT_MD = "docs/POLICY_HOLDOUT.md"
 
 HOLDOUT_DAYS = 90
@@ -432,7 +437,7 @@ def rolling_origins(eligible, products, prices, idx, args, n_origins, observed):
     tiers, buffers - and scores the `--holdout-days` that follow it. Origins
     step back by one full window so the scored periods never overlap.
     """
-    rows = []
+    rows, frontier_rows = [], []
     for k in range(n_origins):
         split = len(idx) - args.holdout_days * (k + 1)
         if split < 200:                    # not enough history left to fit anything
@@ -454,6 +459,21 @@ def rolling_origins(eligible, products, prices, idx, args, n_origins, observed):
         flat = score(eligible, products, fitted, split, rate_fn, lambda pid: 0.80,
                      horizon=args.holdout_days, tiers=tiers)
         s, fs = summarise(df, ""), summarise(flat, "")
+        # The whole flat frontier on this origin, not just q=0.80. Without it
+        # "is the tiering on the efficient frontier" can only be asked on the
+        # development set, and re-fitting the tier thresholds against that answer
+        # would be tuning them on the window they were chosen on.
+        origin_label = str(idx[split].date())
+        dominators = []
+        for q in QUANTILES:
+            qs = summarise(score(eligible, products, fitted, split, rate_fn,
+                                 lambda pid, q=q: q, horizon=args.holdout_days,
+                                 tiers=tiers), q)
+            frontier_rows.append({
+                "origin": origin_label, "q": q, "fill_rate": qs["fill_rate"],
+                "units_short": qs["units_short"], "units_held": qs["units_held"]})
+            if qs["fill_rate"] >= s["fill_rate"] and qs["units_held"] <= s["units_held"]:
+                dominators.append(q)
         nv = naive_stocking_score(eligible, products, fitted, split,
                                   horizon=args.holdout_days)
         # Observability of the window this origin was FITTED on. Condition 4
@@ -474,7 +494,7 @@ def rolling_origins(eligible, products, prices, idx, args, n_origins, observed):
         window_dem = sum(float(eligible[pid][split:split + args.holdout_days].sum())
                          for pid in eligible)
         rows.append({
-            "origin": str(idx[split].date()),
+            "origin": origin_label,
             "window_end": str(idx[min(split + args.holdout_days, len(idx)) - 1].date()),
             "fit_observed_share": round(obs_share, 4),
             "window_demand_all_skus": round(window_dem, 1),
@@ -487,8 +507,13 @@ def rolling_origins(eligible, products, prices, idx, args, n_origins, observed):
             "flat80_served_per_held": fs["served_per_held"],
             "naive_fill": nv["fill_rate"], "naive_held": nv["units_held"],
             "naive_served_per_held": nv["served_per_held"],
+            "n_frontier_dominators": len(dominators),
+            # "+" not ";" - tools/tier_operating_point.py joins ORIGINS with ";"
+            # when it summarises a whole configuration, and two nested ";" make
+            # "2026-01-10:q0.85;0.90" unparseable back into origin and quantile.
+            "dominated_by_q": "+".join(f"{q:.2f}" for q in dominators),
         })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows), pd.DataFrame(frontier_rows)
 
 
 # ----------------------------------------------------------------- knees ---
@@ -571,6 +596,7 @@ def main():
                          "sale-days in it, falling back to 365d otherwise. "
                          "Omitted (the default) is the committed behaviour.")
     ap.add_argument("--out-origins-csv", default=OUT_ORIGINS_CSV)
+    ap.add_argument("--out-origin-frontier-csv", default=OUT_ORIGIN_FRONTIER_CSV)
     ap.add_argument("--out-comparison-csv", default=OUT_COMPARISON_CSV)
     ap.add_argument("--out-md", default=OUT_MD)
     args = ap.parse_args()
@@ -722,7 +748,8 @@ def main():
     print(budgets.to_string(index=False))
 
     # ---- PRIMARY EVIDENCE ----------------------------------------------
-    origins = rolling_origins(eligible, products, prices, idx, args, args.origins, observed)
+    origins, origin_frontier = rolling_origins(eligible, products, prices, idx, args,
+                                               args.origins, observed)
     print("\n" + "=" * 78)
     print("PRIMARY EVIDENCE - the same policy at rolling origins")
     print("=" * 78)
@@ -762,6 +789,7 @@ def main():
         **naive_row}])], ignore_index=True)
     frontier.to_csv(args.out_csv, index=False, lineterminator="\n")
     origins.to_csv(args.out_origins_csv, index=False, lineterminator="\n")
+    origin_frontier.to_csv(args.out_origin_frontier_csv, index=False, lineterminator="\n")
     comparison_out.to_csv(args.out_comparison_csv, index=False, lineterminator="\n")
     print(f"\nWrote {args.out_csv}, {args.out_origins_csv}, {args.out_comparison_csv}")
 
@@ -805,17 +833,48 @@ def main():
     print(f"       tiering beat flat q=0.80 at {wins} of {len(origins)} origins")
     expect("tiering beats flat q=0.80 at a MAJORITY of origins",
            wins > len(origins) / 2, True)
+    # The same dominance question as the development-set gate below, asked on the
+    # clean windows. A quantile that dominates the tiering at most origins is
+    # evidence about the policy; one that dominates it only on the development
+    # set could be evidence about that window.
+    if "n_frontier_dominators" in origins.columns:
+        dominated = origins[origins["n_frontier_dominators"] > 0]
+        for _, r in dominated.iterrows():
+            print(f"       {r['origin']}: dominated by flat q={r['dominated_by_q']}")
+        print(f"       the tiering is on the efficient frontier at "
+              f"{len(origins) - len(dominated)} of {len(origins)} origins")
+        expect("no quantile dominates the tiering at a MAJORITY of origins",
+               len(dominated) <= len(origins) / 2, True)
+
     # Acceptance condition 2: must beat what the store could do with no system.
     nwins = int((origins["fill_rate"] > origins["naive_fill"]).sum())
     print(f"       policy beat the naive stocking baseline at {nwins} of {len(origins)}")
     expect("policy beats naive stocking at EVERY origin", nwins, len(origins))
 
-    # The objective, as a gate: tiering must beat the flat policy it replaces on
-    # BOTH axes, or it is not worth the complexity it adds.
-    t, f80 = summarise(tiered, ""), summarise(flat80, "")
-    expect("tiering beats flat q=0.80 on fill", t["fill_rate"] > f80["fill_rate"], True)
-    expect("tiering costs no more stock than flat q=0.80",
-           t["units_held"] <= f80["units_held"], True)
+    # The objective, as a gate. This was two checks against flat q=0.80
+    # specifically - beat it on fill, cost no more stock than it - which asks a
+    # weaker question than the one that decides whether the complexity is worth
+    # carrying: is the tiering on the efficient frontier AT ALL? A quantile it
+    # was never compared against can dominate it on both axes while both of
+    # those checks pass. That is not hypothetical: once bf08ca7 took the
+    # fabricated zero actuals out of the buffers, flat q=0.85 reached fill
+    # 0.6958 on 19,708.5 units against the tiering's 0.6916 on 20,005.5 - and
+    # the old pair of gates could not see it, because 0.85 is not 0.80. The
+    # whole frontier is built above from the same folds, so compare against all
+    # of it. `>=` and `<=` rather than strict, matching
+    # tools/acceptance_standard.py's condition 3: a rival that ties on both axes
+    # is simpler for the same result, which is still an argument against.
+    t = summarise(tiered, "")
+    dominators = frontier[(frontier["fill_rate"] >= t["fill_rate"])
+                          & (frontier["units_held"] <= t["units_held"])]
+    for _, r in dominators.iterrows():
+        print(f"       flat q={r['q']:.2f} dominates on the DEVELOPMENT SET: fill "
+              f"{r['fill_rate']:.4f} >= {t['fill_rate']:.4f} while holding "
+              f"{r['units_held']:,.1f} <= {t['units_held']:,.1f} "
+              f"({r['units_held'] - t['units_held']:+,.1f} units)")
+    if len(dominators):
+        print("       reported, not gated: this frontier is scored at one split, and")
+        print("       the gate above asks the same question on the rolling origins.")
 
     if failures:
         print(f"\nFAILED: {len(failures)} gate(s).")
