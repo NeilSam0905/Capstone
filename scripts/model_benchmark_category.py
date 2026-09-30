@@ -91,7 +91,7 @@ import model_benchmark as mb
 from forecasting.baselines import naive_fit_predict
 from forecasting.category import (
     build_service_class_fn, classify, classify_product_type,
-    fold_scoped_speed_labels,
+    fold_scoped_speed_labels, storage_category_sql
 )
 from forecasting.clustering import cluster_skus, sku_features
 from forecasting.evaluate import aggregate_blocks, make_folds, summarise
@@ -203,7 +203,8 @@ def build_group_fn(con, by, series, k=4, cluster_seed=0, real_offset=0):
         cat_component = None
         if by == "category_speed":
             prod = pd.read_sql_query(
-                "SELECT product_id, item_name, category FROM Dim_Product", con)
+                f"SELECT product_id, item_name, {storage_category_sql(con)} "
+        "FROM Dim_Product", con)
             prod = prod[prod["product_id"].isin(series)]
             cat_component = {row.product_id: classify(row.item_name, row.category)
                             for row in prod.itertuples()}
@@ -217,7 +218,8 @@ def build_group_fn(con, by, series, k=4, cluster_seed=0, real_offset=0):
 
     # category / product_type: static product attributes, computed once
     prod = pd.read_sql_query(
-        "SELECT product_id, item_name, category FROM Dim_Product", con)
+        f"SELECT product_id, item_name, {storage_category_sql(con)} "
+        "FROM Dim_Product", con)
     prod = prod[prod["product_id"].isin(series)]
     if by == "product_type":
         static_map = {row.product_id: classify_product_type(row.item_name, row.category)

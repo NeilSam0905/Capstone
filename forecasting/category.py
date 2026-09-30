@@ -27,6 +27,7 @@ import numpy as np
 __all__ = ["APPAREL", "NON_APPAREL", "classify", "speed_label",
            "fold_scoped_speed_labels", "fold_scoped_service_classes",
            "build_service_class_fn", "fold_scoped_fsn_labels",
+           "storage_category_sql",
            "PRODUCT_TYPES", "classify_product_type"]
 
 APPAREL = "apparel"
@@ -222,6 +223,37 @@ def fold_scoped_fsn_labels(series, train_end: int, real_offset: int = 0,
               "fast" if movers[sku] >= cutoff else "slow")
         for sku in series
     }
+
+
+# ---- which column still holds the storage tag --------------------------
+# scripts/step1b_categorize_products.py OVERWRITES Dim_Product.category
+# with the semantic forecast category ("Shirts & Tops", "Lanyards & IDs",
+# ...) so the dashboard filters on the same grouping the models use. It
+# preserves the storage tag - APPAREL / NON-APPAREL / MAIN STORAGE - in a
+# new `storage_category` column, deliberately, so nothing is lost.
+#
+# classify() below treats that storage tag as authoritative. Handed the
+# semantic category instead, every value misses _DB_CATEGORY_MAP and the
+# whole catalogue silently falls through to the item_name keyword match -
+# changing the apparel/non-apparel label for exactly the SKUs that had a
+# real tag to defer to. Callers therefore must not select `category`
+# blindly; they select this expression, which prefers the preserved tag
+# and falls back to `category` on a database where step1b has not run.
+#
+# It lives here, once, for the same reason _SERVICE_KEY does: five
+# scripts need it and re-spelling it in each is how one of them silently
+# goes back to reading the wrong column.
+def storage_category_sql(con, alias: str = "category") -> str:
+    """SQL expression for the authoritative storage category, aliased.
+
+    Returns `COALESCE(storage_category, category) AS <alias>` where
+    step1b has added the column, and plain `category AS <alias>`
+    otherwise, so the same query works before and after step1b runs.
+    """
+    cols = {row[1] for row in con.execute("PRAGMA table_info(Dim_Product)")}
+    expr = ("COALESCE(storage_category, category)"
+            if "storage_category" in cols else "category")
+    return f"{expr} AS {alias}"
 
 
 # ---- finer product-type buckets (TEMPORARY / exploratory) -----------

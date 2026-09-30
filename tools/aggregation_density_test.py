@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(_ROOT, "scripts"))
 
 import model_benchmark as mb
 from forecasting.baselines import naive_fit_predict, rolling_mean_fit_predict
-from forecasting.category import classify, speed_label
+from forecasting.category import classify, speed_label, storage_category_sql
 from forecasting.evaluate import (
     aggregate_blocks, make_folds, walk_forward_evaluate,
 )
@@ -106,7 +106,8 @@ def main():
     con = sqlite3.connect(mb.DB_NAME)
     series, _, index = mb.load_daily_series(con)
     prod = pd.read_sql_query(
-        "SELECT product_id, item_name, category, fsn_class FROM Dim_Product", con)
+        f"SELECT product_id, item_name, {storage_category_sql(con)}, fsn_class "
+        "FROM Dim_Product", con)
     con.close()
 
     prod = prod[prod["product_id"].isin(series)]

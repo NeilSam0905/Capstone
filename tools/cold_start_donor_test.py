@@ -137,7 +137,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "scripts"))
 
-from forecasting.category import classify, classify_product_type
+from forecasting.category import classify, classify_product_type, storage_category_sql
 from forecasting.policy import (
     DEFAULT_BUFFER_QUANTILE, DEFAULT_CLUSTER_K, empirical_buffer,
     policy_fold_errors, trailing_rate_fn, trailing_window,
@@ -415,7 +415,8 @@ def main():
     con = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     eligible, products, prices, idx, observed_all = vph.load(con)
     products = products.join(
-        pd.read_sql_query("SELECT product_id, category FROM Dim_Product", con)
+        pd.read_sql_query(
+            f"SELECT product_id, {storage_category_sql(con)} FROM Dim_Product", con)
           .set_index("product_id"), how="left")
     con.close()
     observed = None if args.zero_fill else observed_all
