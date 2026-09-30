@@ -45,12 +45,52 @@ const inflight = new Map();   // path -> Promise
 let cacheVersion = 0;
 export const getCacheVersion = () => cacheVersion;
 
+const clearListeners = new Set();
+
 /** Drop everything. Called after every write, and available to callers that
  *  know they have invalidated server state some other way. */
 export function clearApiCache() {
   cache.clear();
   inflight.clear();
   cacheVersion += 1;
+  clearListeners.forEach(fn => fn());
+}
+
+/** Run `fn` after every cache clear (i.e. after every write). The prefetcher
+ *  uses it to re-warm the pages the write just made stale. Returns an
+ *  unsubscribe function. */
+export function onCacheCleared(fn) {
+  clearListeners.add(fn);
+  return () => clearListeners.delete(fn);
+}
+
+/* ---------------------------------------------------------------- peek
+
+   What a loader WOULD resolve to, read synchronously from the cache - so a
+   page can paint its data on the first frame instead of flashing a spinner
+   while an already-cached promise resolves.
+
+   `peekCached(() => getProducts(filters))` runs the loader with `get`
+   switched to a cache lookup: it sends no request and returns the cached
+   value, or undefined when there is none. Anything the loader returns other
+   than a plain get() (a Promise.resolve(null) guard, say) is a miss.
+
+   Age is ignored on purpose: a peek only picks what to show first, and the
+   caller still runs the real loader, which refetches anything past the TTL.
+   Entries never outlive a write - clearApiCache empties the map. */
+const PEEK = Symbol('peek');
+let peeking = false;
+
+export function peekCached(loader) {
+  peeking = true;
+  try {
+    const out = loader();
+    return out && out[PEEK] ? out.data : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    peeking = false;
+  }
 }
 
 async function doFetch(method, path, body) {
@@ -110,7 +150,13 @@ async function request(method, path, body) {
   return p;
 }
 
-const get = path => request('GET', path);
+const get = path => {
+  if (peeking) {
+    const hit = cache.get(path);
+    return hit ? { [PEEK]: true, data: hit.data } : undefined;
+  }
+  return request('GET', path);
+};
 const post = (path, body) => request('POST', path, body);
 const put = (path, body) => request('PUT', path, body);
 const del = path => request('DELETE', path);
@@ -126,6 +172,8 @@ function qs(params) {
 
 export const ALL_SUPPLIERS = 'All Suppliers';
 export const ALL_CATEGORIES = 'All Categories';
+/** The date filter's "pick your own months" option (backend catalog.CUSTOM_RANGE). */
+export const CUSTOM_RANGE = 'Custom Range';
 export const UNATTRIBUTED = 'Unattributed';
 
 /** TRANSACTION_TYPE values. SALE is a sale; the rest are non-sale removals.
@@ -163,8 +211,19 @@ export const getProducts = (filters = {}) =>
   get(`/products${qs({
     supplier: filters.supplier,
     category: filters.category,
-    dateRange: filters.dateRange,
+    ...rangeParams(filters),
   })}`);
+
+/** The date filter as query params: the preset label, plus the From/To months
+ *  when it is "Custom Range" (whole months, inclusive). */
+function rangeParams(filters) {
+  const custom = filters.dateRange === CUSTOM_RANGE;
+  return {
+    dateRange: filters.dateRange,
+    start: custom ? filters.rangeFrom : undefined,
+    end: custom ? filters.rangeTo : undefined,
+  };
+}
 
 /** Products that have at least one Fact_Sales row — the tally screen's
  *  item picker, so a user cannot tally against a name with no history. */
@@ -173,7 +232,7 @@ export const getSellableProducts = () => get('/products?has_history=1');
 // ---------------------------------------------------------------- sales
 
 export const getMonthlyUnits = (filters = {}) =>
-  get(`/sales/monthly${qs({ supplier: filters.supplier, category: filters.category, dateRange: filters.dateRange })}`);
+  get(`/sales/monthly${qs({ supplier: filters.supplier, category: filters.category, ...rangeParams(filters) })}`);
 
 /** One product's observed monthly units — measured history, no fit. */
 export const getProductHistory = productId => get(`/products/${productId}/history`);
@@ -382,6 +441,11 @@ export const importTallyEntries = file => upload('/tally/import', file);
  *  hand-maintained mapping file. */
 export const addProduct = ({ item_name, category, supplier_name }) =>
   post('/products', { item_name, category, supplier_name });
+
+/** Mark an item discontinued (true) or back in stock (false). A discontinued
+ *  item drops out of the tally item pickers; its history is kept. */
+export const setProductDiscontinued = (productId, discontinued) =>
+  put(`/products/${productId}/status`, { discontinued });
 
 // --------------------------------------------------------------- pipeline
 

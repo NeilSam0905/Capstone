@@ -20,6 +20,10 @@ export default function Modal({
   // Count, Add Item). Still a prop, so one dialog can differ without the
   // change quietly reaching the others.
   closeClass = 'btn btn--ink btn--sm',
+  // For a short form whose dropdowns must be able to hang past the dialog's
+  // bottom edge (Add New Item). The default body clips, because a long list
+  // dialog scrolls inside .modal-grow instead.
+  overflowVisible = false,
 }) {
   const panel = useRef(null);
 
@@ -58,7 +62,7 @@ export default function Modal({
             <Icon name="xCircle" size={13} /> Close
           </button>
         </div>
-        <div className="modal-body">{children}</div>
+        <div className={`modal-body${overflowVisible ? ' modal-body--overflow' : ''}`}>{children}</div>
       </div>
     </div>
   );

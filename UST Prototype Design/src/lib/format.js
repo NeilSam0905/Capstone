@@ -22,6 +22,9 @@ export const longMonth = m => {
   return `${MONTHS_LONG[+mo - 1]} ${y}`;
 };
 
+/** '2025-08' or '2025-08-21' -> 'August' */
+export const monthName = d => MONTHS_LONG[+String(d).slice(5, 7) - 1] ?? '';
+
 /** '2025-08-21' -> '08/21/2025'. Month/day/year for display only.
  *
  *  Everything in this project STORES dates as ISO 8601 (see the README's

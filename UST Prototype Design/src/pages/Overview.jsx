@@ -15,7 +15,7 @@ export default function Overview({ filters, setPage }) {
   const [productsOpen, setProductsOpen] = useState(false);
   const [fsnBand, setFsnBand] = useState(null);   // 'F' | 'S' | 'N' | null
   const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
-    { key: `overview:products:${filters.supplier}|${filters.category}|${filters.dateRange}` });
+    { key: `overview:products:${filters.supplier}|${filters.category}|${filters.dateRange}|${filters.rangeFrom}|${filters.rangeTo}` });
   const { data: monthly } = useData(() => getMonthlyUnits(filters), [filters], []);
   const { data: meta } = useData(getMeta, []);
   // Feeds the below-ROP count in the KPI row and the On-hand column in the
