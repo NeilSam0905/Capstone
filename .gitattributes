@@ -5,3 +5,7 @@
 *.json text eol=lf
 *.xlsx binary
 *.pdf  binary
+
+# Encrypted store data (scripts/vault.py): opaque bytes, never line-ending converted.
+vault/**/*.enc binary
+.githooks/* text eol=lf

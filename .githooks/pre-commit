@@ -1,0 +1,7 @@
+#!/bin/sh
+# Refuses a commit that would put plain store data in git, or leave vault/
+# behind the data it protects. See scripts/vault.py.
+# Enable once per clone:  git config core.hooksPath .githooks
+PY=python
+command -v "$PY" >/dev/null 2>&1 || PY=python3
+exec "$PY" scripts/vault.py check-commit
