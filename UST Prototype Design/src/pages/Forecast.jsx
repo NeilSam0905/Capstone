@@ -6,7 +6,8 @@ import {
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
 import { LineChart, ScrollForecastChart } from '../components/charts';
-import { num, shortMonth, usDate, modelLabel, isCalendarAdjusted, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, shortMonth, monthName, usDate, isCalendarAdjusted, FSN_TONE, FSN_LABEL } from '../lib/format';
+import SearchSelect from '../components/SearchSelect';
 import { ALL_SUPPLIERS } from '../services/dataService';
 
 const ALL_ITEMS = '__all__';
@@ -100,6 +101,14 @@ export default function Forecast({ filters }) {
   // list spans every supplier — with one selected the topbar already says it.
   const showSupplier = filters.supplier === ALL_SUPPLIERS;
 
+  const itemOptions = useMemo(() => [
+    { value: ALL_ITEMS, label: 'All Items in Category' },
+    ...itemsInCategory.map(p => ({
+      value: p.product_id,
+      label: `${p.item_name}${showSupplier ? ` — ${p.supplier_name}` : ''} (${num(p.total_units)} units)`,
+    })),
+  ], [itemsInCategory, showSupplier]);
+
   if (loading || categoryListLoading) return <Loading label="Loading products…" />;
   if (!activeCategory) {
     return (
@@ -134,26 +143,17 @@ export default function Forecast({ filters }) {
             </div>
             <div className="filter-field">
               <label className="filter-field__label" htmlFor="fc-item">Item</label>
-              <div className="filter">
-                <select
-                  id="fc-item"
-                  value={selectedId}
-                  onChange={e => setSelectedId(
-                    e.target.value === ALL_ITEMS ? ALL_ITEMS : Number(e.target.value))}
-                  style={{ minWidth: 300 }}
-                >
-                  {/* Names the scope, not the category: the category select
-                      beside it already says which one, and repeating it made
-                      the option text grow with the longest category name. */}
-                  <option value={ALL_ITEMS}>All Items in Category</option>
-                  {itemsInCategory.map(p => (
-                    <option key={p.product_id} value={p.product_id}>
-                      {p.item_name}{showSupplier ? ` — ${p.supplier_name}` : ''} ({num(p.total_units)} units)
-                    </option>
-                  ))}
-                </select>
-                <span className="filter__chev">▾</span>
-              </div>
+              {/* Searchable: a category can hold dozens of items. "All Items"
+                  names the scope, not the category: the category select beside
+                  it already says which one. */}
+              <SearchSelect
+                id="fc-item"
+                value={selectedId}
+                onChange={setSelectedId}
+                minWidth={300}
+                placeholder="Search items…"
+                options={itemOptions}
+              />
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -276,9 +276,8 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
               <b>all {num(fd.n_products)} <span>items in</span> {category}</b>
             </div>
             <p className="ftotal__note">
-              Forecast from all of this category&rsquo;s sales taken together
-              ({modelLabel(fd.model_type)}), so it includes slow and
-              non-moving items too.
+              Forecast from all of this category&rsquo;s sales taken together,
+              so it includes slow and non-moving items too.
               {typicalOff != null && (
                 <> Checked against {overall.n_obs} past 30-day period{overall.n_obs === 1 ? '' : 's'},
                   it was typically off by about <b>{num(typicalOff)} units</b>
@@ -319,7 +318,7 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
           reachable state, not a hypothetical. Saying "none is Fast-moving"
           in that case would be false. */}
       {wholeCategory && (
-        <div className="notice notice--info" style={{ marginTop: 14 }}>
+        <div className="notice notice--info" style={{ marginTop: 14, marginBottom: 14 }}>
           {fd.contributors.length > 0 ? (
             <>The {num(fd.n_forecast)} Fast-moving item{fd.n_forecast === 1 ? '' : 's'} below
               {' '}{fd.n_forecast === 1 ? 'is' : 'are'} each forecast on {fd.n_forecast === 1 ? 'its' : 'their'} own,
@@ -498,11 +497,10 @@ function ForecastCard({ title, fd, scope, tags, children }) {
       <div className="card-h">
         <span className="section-h">Demand Forecast — {title}</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span className="tag tag--gold" title={fd.model_type}>{modelLabel(fd.model_type)}</span>
           {tags}
-          <span className="hint">
+          <span className="hint" title={fd.history_end ? `Sales through ${usDate(fd.history_end)}` : undefined}>
             {fd.history_end
-              ? `Based on sales through ${usDate(fd.history_end)}`
+              ? `Based on ${monthName(fd.history_end)} Sales`
               : `Generated ${usDate(fd.snapshot_date)}`}
           </span>
         </div>

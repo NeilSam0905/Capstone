@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { startPrefetch } from './services/prefetch';
 import FilterBar from './components/FilterBar';
 import Overview from './pages/Overview';
 import Forecast from './pages/Forecast';
@@ -10,7 +11,7 @@ import PowerBIDashboard from './pages/PowerBIDashboard';
 import Icon from './components/Icon';
 import ErrorBanner from './components/ErrorBanner';
 import useData from './hooks/useData';
-import { getMeta, getMonths } from './services/dataService';
+import { getMeta, getMonths, CUSTOM_RANGE } from './services/dataService';
 import brandMark from './assets/ustore-mark.png';
 
 // Shell markup and class names come from the redesign prototype
@@ -42,6 +43,8 @@ const UNFILTERED = {
   dateRange: 'All Time',
   supplier: 'All Suppliers',
   category: 'All Categories',
+  rangeFrom: null,   // 'YYYY-MM', only read while dateRange is "Custom Range"
+  rangeTo: null,
 };
 
 /** Which topbar filters each page honours.
@@ -61,9 +64,12 @@ const UNFILTERED = {
  *     is looking at - and would empty the page under them by excluding the
  *     very category they had just selected. Overview and Classification keep
  *     theirs: there category is a refinement of what is shown, not the
- *     subject of it. */
+ *     subject of it.
+ *   - 'customRange' adds "Custom Range" (From/To months) to the date range.
+ *     A page without it that inherits a custom range sees "All Time" instead,
+ *     since its topbar could neither show nor clear the months. */
 const PAGE_FILTERS = {
-  overview:       ['dateRange', 'supplier', 'category'],
+  overview:       ['dateRange', 'customRange', 'supplier', 'category'],
   classification: ['dateRange', 'supplier', 'category'],
   forecast:       ['supplier'],
   reorder:        [],
@@ -75,6 +81,9 @@ export default function App() {
   const [view, setView] = useState('tally');
   const [page, setPage] = useState('overview');
   const [filters, setFilters] = useState(UNFILTERED);
+  // Warm every dashboard page's data in the background from the start, so
+  // the first visit to each paints at once (services/prefetch.js).
+  useEffect(() => { startPrefetch(); }, []);
   if (view === 'tally') return <TallyInterface setView={setView} />;
 
   // Dashboard-shell connectivity probe. If the backend is down, this is
@@ -115,8 +124,15 @@ function Dashboard({ page, setPage, filters, setFilters, setView }) {
   // re-rendered.
   const shown = PAGE_FILTERS[page] ?? [];
   const pageFilters = useMemo(() => {
+    const keys = PAGE_FILTERS[page] ?? [];
     const out = { ...UNFILTERED };
-    (PAGE_FILTERS[page] ?? []).forEach(k => { out[k] = filters[k]; });
+    keys.forEach(k => { if (k in UNFILTERED) out[k] = filters[k]; });
+    if (keys.includes('customRange')) {
+      out.rangeFrom = filters.rangeFrom;
+      out.rangeTo = filters.rangeTo;
+    } else if (out.dateRange === CUSTOM_RANGE) {
+      out.dateRange = UNFILTERED.dateRange;
+    }
     return out;
   }, [page, filters]);
 
