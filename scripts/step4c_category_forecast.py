@@ -167,6 +167,7 @@ sys.path.insert(0, ROOT)
 
 from forecasting.baselines import rolling_mean_fit_predict
 from forecasting.evaluate import make_folds, walk_forward_evaluate
+from forecasting.history import trim_to_history
 from forecasting.calendar_adjust import calendar_capped_fit_predict, load_day_types
 from forecasting.shape import day_shape, load_calendar
 
@@ -278,10 +279,14 @@ def load_category_series(con):
 
 def trim_padding(wide):
     """Cut the series at the last date ANY category sold. Returns
-    (trimmed, history_end, n_padding_days)."""
-    total = wide.sum(axis=1)
-    history_end = total[total > 0].index.max()
-    return wide.loc[:history_end], history_end, len(wide) - len(wide.loc[:history_end])
+    (trimmed, history_end, n_padding_days).
+
+    The rule lives in forecasting/history.py now - six copies of it had
+    accumulated across scripts/, in two shapes and with two behaviours on an
+    all-zero frame. Kept as a name here because scripts/test_calendar_adjustment.py
+    and scripts/test_transformations.py call it as s4c.trim_padding.
+    """
+    return trim_to_history(wide)
 
 
 def error_metrics(actual, pred, scales):

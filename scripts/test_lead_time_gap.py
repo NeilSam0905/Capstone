@@ -55,6 +55,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from forecasting.baselines import rolling_mean_fit_predict
 from forecasting.evaluate import make_folds, walk_forward_evaluate
+from forecasting.history import trim_to_history
 from forecasting.topdown import topdown_tsb_fit_predict
 
 DB_PATH = os.path.join(ROOT, "ustore.db")
@@ -125,8 +126,7 @@ def category_rows(prod, daily, idx):
     cat_of = prod.set_index("product_id")["forecast_category"]
     fact_cat = daily.T.groupby(cat_of.reindex(daily.columns)).sum().T
     fact_cat = fact_cat.loc[:, fact_cat.sum() > 0]
-    total = fact_cat.sum(axis=1)
-    fact_cat = fact_cat.loc[:total[total > 0].index.max()]
+    fact_cat = trim_to_history(fact_cat)[0]
     # Sales-weighted mean lead time per category (Fast + Slow + Non-moving alike,
     # matching step4c's "every item in the category" coverage), rounded to the
     # nearest day for a fold count that is an integer number of days.

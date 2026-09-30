@@ -41,6 +41,7 @@ sys.path.insert(0, ROOT)
 
 from forecasting.baselines import rolling_mean_fit_predict
 from forecasting.evaluate import make_folds, walk_forward_evaluate
+from forecasting.history import trim_to_history
 from forecasting.intermittent import tsb_fit_predict
 
 DB_PATH = os.path.join(ROOT, "ustore.db")
@@ -63,8 +64,7 @@ def load_category_series(con):
     wide = (fact.groupby(["forecast_category", "calendar_date"])["quantity_sold"]
                 .sum().unstack(0).reindex(idx, fill_value=0.0).fillna(0.0).astype(float))
     wide = wide.loc[:, wide.sum() > 0]
-    total = wide.sum(axis=1)
-    return wide.loc[:total[total > 0].index.max()]
+    return trim_to_history(wide)[0]
 
 
 def score(series, model, model_name):

@@ -235,6 +235,7 @@ from forecasting.baselines import (
     ewma_fit_predict, naive_fit_predict, rolling_mean_fit_predict,
 )
 from forecasting.evaluate import make_folds, walk_forward_evaluate
+from forecasting.history import history_index
 from forecasting.intermittent import tsb_fit_predict
 from forecasting.calendar_adjust import calendar_capped_fit_predict, load_day_types
 from forecasting.shape import day_shape, load_calendar as load_shape_calendar
@@ -466,10 +467,7 @@ def build_calendar(fact, dim_date):
     step4c_category_forecast.py does, so a category and its items describe
     the same 30 days. (step5_prescriptive.py::load_series still spans the
     whole panel; its 365-day window makes that a ~6% effect, not 5x.)"""
-    last_sale = fact.loc[fact["quantity_sold"] > 0, "calendar_date"].max()
-    if pd.isna(last_sale):
-        last_sale = fact["calendar_date"].max()
-    idx = pd.date_range(fact["calendar_date"].min(), last_sale, freq="D")
+    idx = history_index(fact)
     breaks = (dim_date.set_index("calendar_date")[SCOPE_COLUMN]
               .reindex(idx).fillna(0).to_numpy(dtype=float))
     return idx, breaks

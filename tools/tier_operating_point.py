@@ -77,7 +77,8 @@ MIN_EFFICIENCIES = [0.02, 0.05, 0.10, 0.15, 0.20, 0.30]
 # buffer_quantile is NOT swept, because in this harness it does nothing.
 # A first pass varied it over 0.70-0.85 and produced byte-identical results at
 # every tier_target/min_efficiency pair. The reason is in the code:
-# validate_policy_holdout.py::fit() takes `q` and never passes it on, and
+# validate_policy_holdout.py::fit() used to take `q` and never pass it on (the
+# dead parameter is gone now), and
 # assign_service_tier()'s `default_q` is reached only on the "no scoreable
 # folds" branch, which no SKU here takes - the tiered arm scores at each SKU's
 # OWN tier quantile. It is a live knob for step4b/step5, where

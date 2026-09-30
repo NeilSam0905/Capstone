@@ -161,9 +161,19 @@ def load(con):
     return eligible, products, prices, idx, build_observed_mask(con, idx)
 
 
-def fit(eligible, prices, split, q, k, shrink=False, observed=None,
+def fit(eligible, prices, split, k, shrink=False, observed=None,
         short_window=None):
-    """Everything the policy commits to, using ONLY data before `split`."""
+    """Everything the policy commits to, using ONLY data before `split`.
+
+    No buffer quantile here, deliberately. This took one until 2026-09-30, was
+    handed args.buffer_quantile by both callers, and never passed it on -
+    resolve_rates settles the RATE, and the buffer is applied later per SKU at
+    its own tier's quantile. The dead parameter is why --buffer-quantile looked
+    like a live knob on the tiered arm when it is not: a sweep across
+    0.70-0.85 returned byte-identical results at every tier setting
+    (tools/tier_operating_point.py). It stays live for step4b/step5, where
+    DEFAULT_BUFFER_QUANTILE sets the published buffer.
+    """
     return resolve_rates(eligible, prices, window=int(DAYS_PER_YEAR),
                          min_sale_days=MIN_SALE_DAYS_FOR_RATE,
                          shrink=shrink, k=k, upto=split, observed=observed,
@@ -442,7 +452,7 @@ def rolling_origins(eligible, products, prices, idx, args, n_origins, observed):
         split = len(idx) - args.holdout_days * (k + 1)
         if split < 200:                    # not enough history left to fit anything
             break
-        fitted = fit(eligible, prices, split, args.buffer_quantile, args.cluster_k,
+        fitted = fit(eligible, prices, split, args.cluster_k,
                      args.shrink, observed=observed, short_window=args.short_window)
         rate_fn = trailing_rate_fn(int(DAYS_PER_YEAR), observed=observed,
                                    short_window=args.short_window,
@@ -614,7 +624,7 @@ def main():
     rate_fn = trailing_rate_fn(int(DAYS_PER_YEAR), observed=observed,
                                short_window=args.short_window,
                                min_sale_days=MIN_SALE_DAYS_FOR_RATE)
-    fitted = fit(eligible, prices, split, args.buffer_quantile, args.cluster_k, args.shrink,
+    fitted = fit(eligible, prices, split, args.cluster_k, args.shrink,
                  observed=observed, short_window=args.short_window)
     tiers = assign_tiers(eligible, products, fitted, split, rate_fn, args)
 

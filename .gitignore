@@ -36,6 +36,15 @@ rawdata/
 data/*.csv
 data/*.xlsx
 docs/*.csv
+# ...and the same at any depth below them. A gitignore "*" stops at a directory
+# boundary, so the three patterns above cover data/x.csv and not
+# data/pre_contract/x.csv - which is how two store-derived files ended up
+# tracked in plain form. scripts/vault.py's PROTECTED list had the identical
+# hole for the identical reason; both are fixed, and they have to agree or the
+# hook refuses a file git is happy to stage.
+data/**/*.csv
+data/**/*.xlsx
+docs/**/*.csv
 /*.xlsx
 .vault_state.json
 *.vaulttmp

@@ -54,6 +54,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from forecasting.baselines import ets_fit_predict
 from forecasting.evaluate import make_folds
+from forecasting.history import trim_to_history
 from forecasting.prophet_model import prophet_fit_predict
 
 DB_PATH = os.path.join(ROOT, "ustore.db")
@@ -80,8 +81,7 @@ def load():
     wide = (fact.groupby(["forecast_category", "calendar_date"]).quantity_sold.sum()
             .unstack(0).reindex(idx, fill_value=0.0).fillna(0.0).astype(float))
     wide = wide.loc[:, wide.sum() > 0]
-    total = wide.sum(axis=1)
-    series = wide.loc[:total[total > 0].index.max()]
+    series = trim_to_history(wide)[0]
     cal = caldf.reindex(series.index).fillna(0.0).astype(float)
     return series, cal
 
