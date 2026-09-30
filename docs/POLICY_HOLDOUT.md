@@ -39,7 +39,9 @@ Tiering beat the flat quantile on **fill at 4 of 4 origins**, and on **efficienc
 | flat q=0.95 | **0.7980** | 2,330.7 | 32,056.9 | 0.287 |
 | normal z*sigma (retired) | **0.6022** | 4,589.9 | 21,029.2 | 0.330 |
 
-Same SKUs, same blocks, same realised demand — only the stock differs. Per-tier operating points **dominate** the flat quantile they replace: more demand met, on no more stock. That is the objective stated as a dominance rather than as a threshold.
+Same SKUs, same blocks, same realised demand — only the stock differs. Per-tier operating points beat the flat quantile they replace here on both axes: more demand met, on no more stock.
+
+> **Narrowed — this dominance does not survive simulation.** The line above is a reorder-point coverage result, and `docs/INVENTORY_SIMULATION.md` adjudicates it against real opening stock and then against a synthetic shelf deep enough to make the whole priced catalogue observable. On the measured shelf the two rules are **not separable** (52 SKUs; Δfill +0.0044, 95% CI [−0.0000, +0.0111]). Once 242 SKUs are observable they separate cleanly from C = 4 upward — and the tiering holds **more** stock at every depth where it wins. **It is a trade, not a dominance.** The gain is real (+1.0 to +2.8 points of fill, P(>0) = 1.00) and it is bought rather than free; at the depth bracketing USTore's actual shelf it is +0.96 points for 0.6% more stock.
 
 ### By service tier
 
@@ -92,7 +94,7 @@ NO interior knee at q = 0.8 on this curve: marginal holding cost goes 4.8 (q=0.8
 ## What this does and does not establish
 
 - **Does:** across 4 rolling origins the policy meets a median **70.6%** of realised demand, beating the flat quantile it replaces on both service and stock, with every unpriced SKU flagged and every made-to-order SKU named rather than silently under-stocked.
-- **Does not:** this is a coverage test of the reorder point, not a full inventory simulation. That needs an opening stock per SKU and `Inventory_Count` is empty — inventing the starting condition and reporting the result as a measurement would be worse than not measuring.
+- **Does not:** this is a coverage test of the reorder point, not a full inventory simulation — the `Inventory_Count` table is empty, so there is no opening stock for most SKUs and inventing one would be worse than not measuring. **Narrowed:** the historical workbook does carry real counts for a minority of SKUs, and `docs/INVENTORY_SIMULATION.md` simulates those. It finds this policy's margin over naive stocking far smaller under simulation than under the coverage test below — 0.6 points against 26 — because a real shelf carries stock across blocks and absorbs variance the buffer is credited with here.
 - **Does not:** the cost inputs remain provisional pending the site visit, which is why holding is reported primarily in **units**.
 - **Does not:** settle the acceptance criterion. This measures the policy against a frontier and reports the operating points it resolves to; adopting a threshold is an adviser decision.
 

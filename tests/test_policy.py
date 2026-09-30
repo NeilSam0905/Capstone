@@ -32,8 +32,9 @@ import numpy as np
 import pytest
 
 from forecasting.policy import (
-    CLUSTER_POOLED, INSUFFICIENT, OBSERVED, cluster_rates, empirical_buffer,
-    policy_fold_errors, resolve_rates, trailing_rate_fn, trailing_window,
+    CLUSTER_POOLED, INSUFFICIENT, OBSERVED, RATE_SOURCES, cluster_rates,
+    empirical_buffer, policy_fold_errors, resolve_rates, trailing_rate_fn,
+    trailing_window,
 )
 
 WINDOW = 365
@@ -550,3 +551,114 @@ def test_every_tier_decision_is_one_of_the_three_states():
         assert t["tier"] in (SERVABLE, PARTIAL, NOT_STOCKABLE)
         assert (t["q"] is None) == (t["tier"] == NOT_STOCKABLE), (
             "an operating point must be present exactly when stock will be committed")
+
+
+# ---------------------------------------------- the rate-window cascade ---
+#
+# docs/WORKLOG_POLICY_AND_ACCEPTANCE.md section 5 ruled the rate window out as
+# "second-order with a real coverage cost": a flat 120-day window bought
+# +2.2pp fill and -15% holding but cost 63 SKUs their rate entirely. The
+# cascade keeps the responsiveness and removes the coverage cost by falling
+# back to the long window instead of flagging. These pin that behaviour - the
+# fallback especially, because losing it re-introduces exactly the regression
+# the cascade exists to prevent, on the one acceptance condition already
+# failing.
+
+def _series(n=400):
+    return np.zeros(n)
+
+
+def test_short_window_none_reproduces_the_committed_rates_exactly():
+    """The isolation property. Without it the window is not a measurable
+    variable but a change tangled up with everything else - the same reason
+    shrink=False exists."""
+    rng = np.random.default_rng(0)
+    series = {k: rng.poisson(0.3, 400).astype(float) for k in range(12)}
+    prices = {k: 100.0 for k in series}
+    base = resolve_rates(series, prices, window=WINDOW, min_sale_days=MIN_SALE_DAYS,
+                         shrink=False)
+    same = resolve_rates(series, prices, window=WINDOW, min_sale_days=MIN_SALE_DAYS,
+                         shrink=False, short_window=None)
+    assert base == same
+
+
+def test_dense_recent_sales_take_the_short_window():
+    v = _series(); v[-100:][::3] = 5.0          # sells only in the last 100 days
+    out = resolve_rates({"A": v}, {"A": 100.0}, window=WINDOW,
+                        min_sale_days=MIN_SALE_DAYS, shrink=False,
+                        short_window=120)["A"]
+    assert out["window_days"] == 120, "the short window was available and not used"
+    assert out["rate_source"] == OBSERVED
+    long_rate = resolve_rates({"A": v}, {"A": 100.0}, window=WINDOW,
+                              min_sale_days=MIN_SALE_DAYS, shrink=False)["A"]["rate"]
+    assert out["rate"] > long_rate, (
+        "a SKU selling only recently must read FASTER on a short window - if it "
+        "does not, the responsiveness the cascade exists for is absent")
+
+
+def test_a_sku_too_thin_for_the_short_window_falls_back_and_is_not_flagged():
+    """The regression this cascade exists to prevent. A flat short window
+    flags these SKUs `insufficient_data`, which pushes acceptance condition 1b
+    (forward demand coverage, already failing at 0.8830) further down. Buying
+    fill by flagging more SKUs moves the problem rather than solving it."""
+    v = _series(); v[20:150][::5] = 4.0          # sold long ago, nothing recent
+    casc = resolve_rates({"B": v}, {"B": 100.0}, window=WINDOW,
+                         min_sale_days=MIN_SALE_DAYS, shrink=False,
+                         short_window=120)["B"]
+    base = resolve_rates({"B": v}, {"B": 100.0}, window=WINDOW,
+                         min_sale_days=MIN_SALE_DAYS, shrink=False)["B"]
+    assert casc["rate_source"] != INSUFFICIENT, "the cascade flagged a SKU it should carry"
+    assert casc["window_days"] == WINDOW
+    assert casc["rate"] == pytest.approx(base["rate"]), \
+        "fallback must reproduce the long-window rate, not approximate it"
+
+
+def test_the_cascade_introduces_no_new_rate_source():
+    """RATE_SOURCES is controlled vocabulary - it reaches
+    Result_Prescriptive.rate_source, backend/app.py and the invariants.
+    `window_days` carries the distinction instead."""
+    rng = np.random.default_rng(1)
+    series = {k: rng.poisson(0.5, 400).astype(float) for k in range(10)}
+    out = resolve_rates(series, {k: 100.0 for k in series}, window=WINDOW,
+                        min_sale_days=MIN_SALE_DAYS, shrink=False, short_window=120)
+    assert {r["rate_source"] for r in out.values()} <= set(RATE_SOURCES)
+    assert {r["window_days"] for r in out.values()} <= {120, WINDOW}
+
+
+def test_the_short_window_uses_the_observed_days_denominator():
+    """A 120-day sum over a 365-day denominator would put the two rates on
+    different bases and make the comparison meaningless."""
+    v = _series(200); v[-60:] = 2.0
+    obs = np.ones(200, dtype=bool); obs[-120:-60] = False   # half the short window unobserved
+    out = resolve_rates({"A": v}, {"A": 100.0}, window=WINDOW,
+                        min_sale_days=MIN_SALE_DAYS, shrink=False,
+                        short_window=120, observed=obs)["A"]
+    assert out["window_days"] == 120
+    assert out["observed_days"] == 60
+    assert out["rate"] == pytest.approx(120.0 / 60.0)
+
+
+def test_the_cascade_never_sees_past_its_origin():
+    """Same leakage property the 365d path already has, at both window
+    lengths - the short window is a new surface for it."""
+    v = _series(); v[:150][::4] = 3.0
+    v_future = v.copy(); v_future[300:] = 99.0        # a future the fit must not see
+    a = resolve_rates({"A": v}, {"A": 100.0}, window=WINDOW,
+                      min_sale_days=MIN_SALE_DAYS, shrink=False,
+                      short_window=120, upto=300)["A"]
+    b = resolve_rates({"A": v_future}, {"A": 100.0}, window=WINDOW,
+                      min_sale_days=MIN_SALE_DAYS, shrink=False,
+                      short_window=120, upto=300)["A"]
+    assert a == b, "the fit changed when only post-origin data changed"
+
+
+def test_rate_fn_and_resolve_rates_pick_the_same_window():
+    """policy_fold_errors replays trailing_rate_fn to size the empirical
+    buffer. If it picks a different window than resolve_rates deployed, the
+    buffer is calibrated against a rate the policy does not make."""
+    v = _series(); v[-100:][::3] = 5.0
+    rec = resolve_rates({"A": v}, {"A": 100.0}, window=WINDOW,
+                        min_sale_days=MIN_SALE_DAYS, shrink=False,
+                        short_window=120)["A"]
+    fn = trailing_rate_fn(WINDOW, short_window=120, min_sale_days=MIN_SALE_DAYS)
+    assert fn(v) == pytest.approx(rec["rate"])

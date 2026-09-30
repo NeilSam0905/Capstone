@@ -20,7 +20,16 @@ time**, which is the decision a continuous-review ROP actually makes. It is
 NOT a full inventory simulation: that needs an opening stock per SKU, and
 `Inventory_Count` is empty in this database. Inventing the starting
 condition and reporting the resulting service level as a measurement would
-be worse than not measuring. Each SKU's scored window is tiled into
+be worse than not measuring.
+
+NARROWED, after the fact: the historical inventory workbook carries real
+monthly counts for a minority of SKUs (27% of the scored population), so for
+those the opening stock does not have to be invented.
+`tools/inventory_simulation.py` simulates them and
+`docs/INVENTORY_SIMULATION.md` reports the result. Read it alongside this
+script's numbers rather than instead of them: the coverage test below scores
+every block from an empty shelf, which makes the buffer look far more
+load-bearing than a simulation with real carried stock finds it to be. Each SKU's scored window is tiled into
 non-overlapping lead-time blocks (14/18/28d, per that SKU's own lead time):
 
     committed = ROP = rate * L + buffer
@@ -144,11 +153,13 @@ def load(con):
     return eligible, products, prices, idx, build_observed_mask(con, idx)
 
 
-def fit(eligible, prices, split, q, k, shrink=False, observed=None):
+def fit(eligible, prices, split, q, k, shrink=False, observed=None,
+        short_window=None):
     """Everything the policy commits to, using ONLY data before `split`."""
     return resolve_rates(eligible, prices, window=int(DAYS_PER_YEAR),
                          min_sale_days=MIN_SALE_DAYS_FOR_RATE,
-                         shrink=shrink, k=k, upto=split, observed=observed)
+                         shrink=shrink, k=k, upto=split, observed=observed,
+                         short_window=short_window)
 
 
 def priced(fitted, pid):
@@ -424,8 +435,10 @@ def rolling_origins(eligible, products, prices, idx, args, n_origins, observed):
         if split < 200:                    # not enough history left to fit anything
             break
         fitted = fit(eligible, prices, split, args.buffer_quantile, args.cluster_k,
-                     args.shrink, observed=observed)
-        rate_fn = trailing_rate_fn(int(DAYS_PER_YEAR), observed=observed)
+                     args.shrink, observed=observed, short_window=args.short_window)
+        rate_fn = trailing_rate_fn(int(DAYS_PER_YEAR), observed=observed,
+                                   short_window=args.short_window,
+                                   min_sale_days=MIN_SALE_DAYS_FOR_RATE)
         tiers = assign_tiers(eligible, products, fitted, split, rate_fn, args)
         df = score(eligible, products, fitted, split, rate_fn,
                    lambda pid: tiers.get(pid, {}).get("q"),
@@ -550,6 +563,10 @@ def main():
                     help="Control: divide units by the FULL window rather than by days "
                          "actually observed, reproducing the pre-correction denominator.")
     ap.add_argument("--out-csv", default=OUT_CSV)
+    ap.add_argument("--short-window", type=int, default=None,
+                    help="Prefer this trailing window where a SKU has enough "
+                         "sale-days in it, falling back to 365d otherwise. "
+                         "Omitted (the default) is the committed behaviour.")
     ap.add_argument("--out-origins-csv", default=OUT_ORIGINS_CSV)
     ap.add_argument("--out-comparison-csv", default=OUT_COMPARISON_CSV)
     ap.add_argument("--out-md", default=OUT_MD)
@@ -565,9 +582,11 @@ def main():
         print(f"holdout of {args.holdout_days} days does not fit in {len(idx)} days")
         return 1
 
-    rate_fn = trailing_rate_fn(int(DAYS_PER_YEAR), observed=observed)
+    rate_fn = trailing_rate_fn(int(DAYS_PER_YEAR), observed=observed,
+                               short_window=args.short_window,
+                               min_sale_days=MIN_SALE_DAYS_FOR_RATE)
     fitted = fit(eligible, prices, split, args.buffer_quantile, args.cluster_k, args.shrink,
-                 observed=observed)
+                 observed=observed, short_window=args.short_window)
     tiers = assign_tiers(eligible, products, fitted, split, rate_fn, args)
 
     print("=" * 78)
@@ -880,8 +899,18 @@ def write_report(args, idx, split, eligible, states, n_priced, tc, comparison, c
                   f"| {r['units_held']:,.1f} | {r['served_per_held']:.3f} |")
     md.append(
         "\nSame SKUs, same blocks, same realised demand — only the stock differs. Per-tier "
-        "operating points **dominate** the flat quantile they replace: more demand met, on no "
-        "more stock. That is the objective stated as a dominance rather than as a threshold.\n")
+        "operating points beat the flat quantile they replace here on both axes: more demand "
+        "met, on no more stock.\n")
+    md.append(
+        "> **Narrowed — this dominance does not survive simulation.** The line above is a "
+        "reorder-point coverage result, and `docs/INVENTORY_SIMULATION.md` adjudicates it "
+        "against real opening stock and then against a synthetic shelf deep enough to make the "
+        "whole priced catalogue observable. On the measured shelf the two rules are **not "
+        "separable** (52 SKUs; Δfill +0.0044, 95% CI [−0.0000, +0.0111]). Once 242 SKUs are "
+        "observable they separate cleanly from C = 4 upward — and the tiering holds **more** "
+        "stock at every depth where it wins. **It is a trade, not a dominance.** The gain is "
+        "real (+1.0 to +2.8 points of fill, P(>0) = 1.00) and it is bought rather than free; at "
+        "the depth bracketing USTore's actual shelf it is +0.96 points for 0.6% more stock.\n")
 
     md.append("### By service tier\n")
     md.append("| Tier | SKUs | Demand | Fill rate | Units short | Units held |")
@@ -936,9 +965,13 @@ def write_report(args, idx, split, eligible, states, n_priced, tc, comparison, c
         f"quantile it replaces on both service and stock, with every unpriced SKU flagged and "
         f"every made-to-order SKU named rather than silently under-stocked.\n"
         "- **Does not:** this is a coverage test of the reorder point, not a full inventory "
-        "simulation. That needs an opening stock per SKU and `Inventory_Count` is empty — "
-        "inventing the starting condition and reporting the result as a measurement would be "
-        "worse than not measuring.\n"
+        "simulation — the `Inventory_Count` table is empty, so there is no opening stock "
+        "for most SKUs and inventing one would be worse than not measuring. **Narrowed:** "
+        "the historical workbook does carry real counts for a minority of SKUs, and "
+        "`docs/INVENTORY_SIMULATION.md` simulates those. It finds this policy's margin over "
+        "naive stocking far smaller under simulation than under the coverage test below — "
+        "0.6 points against 26 — because a real shelf carries stock across blocks and "
+        "absorbs variance the buffer is credited with here.\n"
         "- **Does not:** the cost inputs remain provisional pending the site visit, which is "
         "why holding is reported primarily in **units**.\n"
         "- **Does not:** settle the acceptance criterion. This measures the policy against a "
