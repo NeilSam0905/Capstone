@@ -275,6 +275,23 @@ CREATE TABLE IF NOT EXISTS Inventory_Count (
 );
 """)
 
+# ----- OPERATIONAL TABLE: Product_Status ---------------------------
+# Items the store has marked discontinued from the Tally Interface's
+# Current Inventory dialog. A discontinued item drops out of the tally
+# item pickers (catalog.compute_catalog reports it as is_active = 0).
+#
+# Keyed by item_name, not product_id: step1_apply_mapping.py rebuilds
+# Dim_Product from scratch on every run, and the name is what survives
+# that. Operational like Inventory_Count: no pipeline step clears it.
+# backend/db.py creates the same table for a database built before it.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Product_Status (
+    item_name     TEXT PRIMARY KEY,
+    discontinued  INTEGER NOT NULL DEFAULT 0,
+    changed_at    TEXT
+);
+""")
+
 # ----- OPERATIONAL TABLE: Pipeline_Run -----------------------------
 # One row per end-to-end pipeline run (create_schema.py ->
 # step5_prescriptive.py), written by backend/pipeline.py when the Tally

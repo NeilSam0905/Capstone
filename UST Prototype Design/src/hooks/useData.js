@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getCacheVersion } from '../services/dataService';
+import { getCacheVersion, peekCached } from '../services/dataService';
 
 /**
  * Read through dataService without every screen hand-rolling loading state.
@@ -33,14 +33,34 @@ import { getCacheVersion } from '../services/dataService';
  */
 const snapshots = new Map();   // key -> { version, data }
 
+/* ## Cache peek
+ *
+ * Without a snapshot, the hook also asks dataService whether the loader's
+ * response is already cached (peekCached) - which it is for every page the
+ * prefetcher (services/prefetch.js) has warmed. A hit paints on the first
+ * frame, `key` or not; the real loader still runs straight after and
+ * replaces it if the server has something newer. */
 export default function useData(loader, deps = [], initial = null, { key } = {}) {
   const seed = key != null ? snapshots.get(key) : undefined;
   const fresh = seed && seed.version === getCacheVersion();
 
-  const [state, setState] = useState(
-    fresh ? { data: seed.data, loading: false, error: null }
-          : { data: initial, loading: true, error: null }
-  );
+  const [state, setState] = useState(() => {
+    if (fresh) return { data: seed.data, loading: false, error: null };
+    const cached = peekCached(loader);
+    return cached !== undefined
+      ? { data: cached, loading: false, error: null }
+      : { data: initial, loading: true, error: null };
+  });
+  // A dependency changed (a filter, a category): show the new value at once
+  // if it is already cached, instead of the previous one until it loads.
+  // Adjusted during render (React's pattern for state derived from a prop
+  // change), so the stale value never reaches the screen.
+  const [seededDeps, setSeededDeps] = useState(deps);
+  if (deps.some((d, i) => !Object.is(d, seededDeps[i]))) {
+    setSeededDeps(deps);
+    const cached = peekCached(loader);
+    if (cached !== undefined) setState({ data: cached, loading: false, error: null });
+  }
 
   // Which key the current state belongs to. When the key changes (a filter
   // moved, say) we re-seed from that key's snapshot instead of showing the

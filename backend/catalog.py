@@ -11,6 +11,7 @@ Nothing here invents a number: anything the pipeline has not produced
 (current_stock, days_of_supply) stays None/null rather than being guessed.
 """
 import csv
+import re
 import statistics
 from collections import defaultdict
 
@@ -63,6 +64,17 @@ def load_counted_stock(con):
     }
 
 
+def load_discontinued(con):
+    """Item names the store has marked discontinued (Product_Status). Empty
+    on a database that predates the table."""
+    if not con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Product_Status'"
+    ).fetchone():
+        return set()
+    return {r["item_name"] for r in rows(
+        con, "SELECT item_name FROM Product_Status WHERE discontinued = 1")}
+
+
 def load_current_stock(con, name_by_id):
     """The one current-stock number per product, from the two sources this
     project has: the historical inventory workbook and staff counts typed
@@ -90,12 +102,13 @@ def load_current_stock(con, name_by_id):
     return out
 
 
-def compute_stats(con, date_range=None):
+def compute_stats(con, date_range=None, start=None, end=None):
     """product_id -> measured stats dict. Mirrors generate_fixtures.py.
 
     `date_range` (one of the topbar's labels) windows the *sales* aggregates —
     total_units, adus, avg_monthly, cv, first/last sale and the monthly series
-    — to the months that range covers.
+    — to the months that range covers. For "Custom Range", `start`/`end`
+    ('YYYY-MM', inclusive) are the window; see range_bounds.
 
     It deliberately does NOT window current_stock or days_of_supply. Those
     describe the stockroom as it is now, not a slice of history, so re-cutting
@@ -109,9 +122,16 @@ def compute_stats(con, date_range=None):
     products = rows(con, "SELECT product_id, item_name FROM Dim_Product")
     name_by_id = {p["product_id"]: p["item_name"] for p in products}
 
-    cutoff = range_cutoff(date_range, months_seen(con))
-    where = "WHERE substr(d.calendar_date, 1, 7) >= ?"
-    args = (cutoff,)
+    lo, hi = range_bounds(date_range, months_seen(con), start, end)
+    conds, args = [], []
+    if lo:
+        conds.append("substr(d.calendar_date, 1, 7) >= ?")
+        args.append(lo)
+    if hi:
+        conds.append("substr(d.calendar_date, 1, 7) <= ?")
+        args.append(hi)
+    where = "WHERE " + " AND ".join(conds) if conds else ""
+    args = tuple(args)
 
     agg_sql = """
         SELECT f.product_id,
@@ -141,7 +161,7 @@ def compute_stats(con, date_range=None):
     # is what stops "Last 3 Months" from blanking the stock column for an item
     # that simply did not sell in those three months.
     full_agg = rows(con, agg_sql.format(where=""))
-    if cutoff:
+    if conds:
         win_agg = {a["product_id"]: a for a in rows(con, agg_sql.format(where=where), args)}
         monthly = rows(con, monthly_sql.format(where=where), args)
     else:
@@ -203,23 +223,30 @@ def compute_stats(con, date_range=None):
     return stats, series
 
 
-def compute_catalog(con, date_range=None):
+def compute_catalog(con, date_range=None, start=None, end=None):
     """Dim_Product joined to its measured stats — mirrors dataService.js's
-    CATALOG constant. `date_range` is passed straight to compute_stats; see
-    there for exactly which fields it windows and which it leaves alone."""
+    CATALOG constant. `date_range` (and `start`/`end` for a custom range) is
+    passed straight to compute_stats; see there for exactly which fields it
+    windows and which it leaves alone."""
     products = rows(con, """
         SELECT product_id, item_name, category, unit_price_php, supplier_name,
                payment_status, lead_time_days, fsn_class, is_hvl, entry_date, is_active
         FROM Dim_Product ORDER BY item_name
     """)
-    stats, _series = compute_stats(con, date_range)
+    stats, _series = compute_stats(con, date_range, start, end)
+    discontinued = load_discontinued(con)
 
     catalog = []
     for p in products:
         s = stats.get(p["product_id"], {})
         total_units = s.get("total_units") or 0
+        is_discontinued = p["item_name"] in discontinued
         row = {
             **p,
+            # Marked discontinued by the store: reads as inactive everywhere
+            # is_active is honoured (the tally item pickers among them).
+            "is_active": 0 if is_discontinued else p["is_active"],
+            "discontinued": is_discontinued,
             "supplier_name": p["supplier_name"] or UNATTRIBUTED,
             "category": p["category"] or "Uncategorised",
             "total_units": total_units,
@@ -256,6 +283,28 @@ def months_seen(con):
 RANGE_MONTHS = {"This Month": 1, "Last 3 Months": 3,
                 "Last 6 Months": 6, "Last 12 Months": 12}
 ALL_TIME = "All Time"
+CUSTOM_RANGE = "Custom Range"
+_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def _month_or_none(v):
+    return v if isinstance(v, str) and _MONTH_RE.match(v) else None
+
+
+def range_bounds(date_range, months, start=None, end=None, default_n=None):
+    """(first, last) month ('YYYY-MM') the range admits; either may be None,
+    meaning unbounded on that side.
+
+    "Custom Range" takes `start`/`end` as given (inclusive, whole months; a
+    malformed one is ignored rather than guessed at, and a reversed pair is
+    swapped). Every other label is range_cutoff's lower bound with no upper
+    one."""
+    if date_range == CUSTOM_RANGE:
+        lo, hi = _month_or_none(start), _month_or_none(end)
+        if lo and hi and lo > hi:
+            lo, hi = hi, lo
+        return lo, hi
+    return range_cutoff(date_range, months, default_n), None
 
 
 def range_cutoff(date_range, months, default_n=None):
@@ -276,12 +325,12 @@ def range_cutoff(date_range, months, default_n=None):
     return months[max(0, len(months) - n)]
 
 
-def in_range(month, date_range, months):
+def in_range(month, date_range, months, start=None, end=None):
     # default_n=12 preserves /api/sales/monthly's long-standing behaviour for a
     # missing or unrecognised range. range_cutoff's own default is "no window",
     # which is what the catalog needs so an un-filtered call stays full-history.
-    cutoff = range_cutoff(date_range, months, default_n=12)
-    return cutoff is None or month >= cutoff
+    lo, hi = range_bounds(date_range, months, start, end, default_n=12)
+    return (lo is None or month >= lo) and (hi is None or month <= hi)
 
 
 def quantile(sorted_vals, q):

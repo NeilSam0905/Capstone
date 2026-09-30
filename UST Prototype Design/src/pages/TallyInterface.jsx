@@ -13,6 +13,7 @@ import DataTable from '../components/DataTable';
 import ErrorBanner from '../components/ErrorBanner';
 import Icon from '../components/Icon';
 import ComboBox from '../components/ComboBox';
+import SearchSelect from '../components/SearchSelect';
 import Modal from '../components/Modal';
 import { num, usDate, usDateTime, longMonth } from '../lib/format';
 import brandMark from '../assets/ustore-mark.png';
@@ -46,6 +47,21 @@ function itemsInCategory(products, category) {
   return category === ALL_CATEGORIES ? products : products.filter(p => p.category === category);
 }
 
+/** The Item control of both tally cards: searchable, and its list always
+ *  opens below the field (a native <select> near the bottom of the screen
+ *  flew up over the whole form). `value` is the form's product_id string. */
+function ItemPicker({ items, value, onChange, invalid }) {
+  const options = items.map(p => ({
+    value: String(p.product_id),
+    label: p.category !== 'Uncategorised' ? `${p.item_name} (${p.category})` : p.item_name,
+  }));
+  return (
+    <SearchSelect variant="field" minWidth={0} value={String(value)} options={options}
+                  onChange={onChange} invalid={invalid}
+                  emptyLabel="— Select an item —" placeholder="Search items…" />
+  );
+}
+
 /** Import a .csv/.xlsx and report what happened to every row.
  *
  *  The server archives the upload into rawdata/ and returns counts plus a
@@ -57,7 +73,7 @@ function itemsInCategory(products, category) {
  *  The <input type="file"> is hidden behind its own label — the native
  *  control cannot be styled to match the buttons around it, and it is reset
  *  after every pick so choosing the same file twice still fires onChange. */
-function ImportButton({ onImport, onDone, label = 'Import CSV / Excel', hint }) {
+function ImportButton({ onImport, onDone, label = 'Import CSV / Excel', hint, title }) {
   const input = useRef(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
@@ -82,7 +98,7 @@ function ImportButton({ onImport, onDone, label = 'Import CSV / Excel', hint }) 
     <>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <input ref={input} type="file" accept=".csv,.xlsx" onChange={pick} style={{ display: 'none' }} />
-        <button className="btn btn--ghost btn--sm" disabled={busy}
+        <button className="btn btn--ghost btn--sm" disabled={busy} title={title}
                 onClick={() => input.current?.click()}>
           <Icon name="download" size={13} /> {busy ? 'Importing…' : label}
         </button>
@@ -135,7 +151,9 @@ export default function TallyInterface({ setView }) {
   const [reloadKey, setReloadKey] = useState(0);
   const bump = useCallback(() => setReloadKey(k => k + 1), []);
 
-  const { data: products } = useData(getSellableProducts, [], []);
+  // Re-read on every bump(): adding an item or marking one discontinued
+  // changes this list, and the pickers must follow.
+  const { data: products } = useData(getSellableProducts, [reloadKey], []);
   const { data: recent, loading: recentLoading } = useData(() => getRecentEntries(25), [reloadKey], []);
   // Only the error is read now — the connected/disconnected status bar this
   // also fed was removed. The call stays because it is what detects a
@@ -246,16 +264,8 @@ function SalesInventoryTally({ products, onSaved, recent, recentLoading }) {
 
         <div className="col-2">
           <Field label="Item" error={errors.product_id}>
-            <select value={form.product_id}
-                    className={errors.product_id ? 'is-err' : ''}
-                    onChange={e => set('product_id', e.target.value)}>
-              <option value="">— Select an item —</option>
-              {visible.map(p => (
-                <option key={p.product_id} value={p.product_id}>
-                  {p.item_name}{p.category !== 'Uncategorised' ? ` (${p.category})` : ''}
-                </option>
-              ))}
-            </select>
+            <ItemPicker items={visible} value={form.product_id} invalid={!!errors.product_id}
+                        onChange={v => set('product_id', v)} />
           </Field>
         </div>
 
@@ -394,10 +404,10 @@ function MonthlyInventoryCount({ products, onSaved }) {
         <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
           <Icon name="db" size={14} /> Monthly Inventory Count
         </span>
+        {/* The three actions sit together on one row; their hints live on
+            the line below, where a long import hint cannot push the Import
+            button onto a row of its own. */}
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {data?.workbook_month && (
-            <span className="hint">Latest Inventory Data: {longMonth(data.workbook_month)}</span>
-          )}
           <button className="btn btn--ghost btn--sm" onClick={() => setStockOpen(true)}>
             <Icon name="box" size={13} /> Check current inventory
           </button>
@@ -407,9 +417,13 @@ function MonthlyInventoryCount({ products, onSaved }) {
           <ImportButton
             onImport={file => importInventoryCounts(file, month)}
             onDone={() => { setReloadKey(k => k + 1); onSaved?.(); }}
-            hint={`Item · Units On Hand → ${longMonth(month)}`}
+            title={`Columns: Item · Units On Hand — imported into ${longMonth(month)}`}
           />
         </span>
+      </div>
+      <div className="hint" style={{ marginTop: -4, marginBottom: 12 }}>
+        {data?.workbook_month && <>Latest Inventory Data: {longMonth(data.workbook_month)} · </>}
+        Import columns: Item · Units On Hand → {longMonth(month)}
       </div>
 
       <AddItemModal
@@ -447,16 +461,8 @@ function MonthlyInventoryCount({ products, onSaved }) {
 
         <div className="col-2">
           <Field label="Item" error={errors.product_id}>
-            <select value={form.product_id}
-                    className={errors.product_id ? 'is-err' : ''}
-                    onChange={e => set('product_id', e.target.value)}>
-              <option value="">— Select an item —</option>
-              {visible.map(p => (
-                <option key={p.product_id} value={p.product_id}>
-                  {p.item_name}{p.category !== 'Uncategorised' ? ` (${p.category})` : ''}
-                </option>
-              ))}
-            </select>
+            <ItemPicker items={visible} value={form.product_id} invalid={!!errors.product_id}
+                        onChange={v => set('product_id', v)} />
           </Field>
         </div>
 
@@ -503,7 +509,8 @@ function MonthlyInventoryCount({ products, onSaved }) {
         </div>
       </details>
 
-      <CurrentStockModal open={stockOpen} onClose={() => setStockOpen(false)} />
+      <CurrentStockModal open={stockOpen} onClose={() => setStockOpen(false)}
+                         onChanged={() => { setReloadKey(k => k + 1); onSaved?.(); }} />
     </div>
   );
 }
@@ -553,6 +560,7 @@ function AddItemModal({ open, products, onClose, onAdded }) {
       title="Add New Item"
       subtitle="Adds the item permanently — to the catalogue, the controlled vocabulary and the inventory source."
       width={620}
+      overflowVisible
     >
       <div className="form-grid">
         <div className="col-2">
@@ -615,27 +623,66 @@ function AddItemModal({ open, products, onClose, onAdded }) {
  *  Stock Status screen reads (/api/stock), which take a count entered above
  *  over the historical workbook as soon as it is more recent.
  *
- *  Read-only and deliberately unfiltered: the question this answers is "what
- *  do we have right now", asked mid-count, so it opens over the form rather
- *  than navigating away from it. Items with no stock record at all are absent
- *  rather than shown as zero — the backend only returns rows where
- *  current_stock is not null, and "we have none" and "we have never counted
- *  this" are different statements. */
-function CurrentStockModal({ open, onClose }) {
+ *  It opens over the form rather than navigating away from it, because the
+ *  question it answers ("what do we have right now") comes up mid-count.
+ *  Items with no stock record at all are absent rather than shown as zero —
+ *  the backend only returns rows where current_stock is not null, and "we
+ *  have none" and "we have never counted this" are different statements.
+ *
+ *  A row's on-hand figure can be edited in place. It is saved as this month's
+ *  count for that item, exactly as if it were entered in the Monthly
+ *  Inventory Count form (and replacing any count already recorded for this
+ *  month), so the newest count wins as it always does. An item marked
+ *  discontinued (Product_Status) is tagged here. */
+function CurrentStockModal({ open, onClose, onChanged }) {
+  const [reloadKey, setReloadKey] = useState(0);
   // Only fetch once the dialog is actually opened: this is the whole catalogue
   // with derived stock, and the card renders on every visit to the page.
-  const { data, loading } = useData(() => (open ? getStockPosition() : Promise.resolve(null)), [open], null);
+  const { data, loading } = useData(
+    () => (open ? getStockPosition() : Promise.resolve(null)), [open, reloadKey], null);
   const items = data?.items ?? [];
 
   const [q, setQ] = useState('');
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [supplier, setSupplier] = useState(ALL_SUPPLIERS);
   const [stockOnly, setStockOnly] = useState(false);
+  // { product_id, value } while one row's on-hand figure is being edited.
+  const [editing, setEditing] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [message, setMessage] = useState(null);   // { ok, text }
 
   // Reset the filters each time it opens: the question this answers is asked
   // fresh ("what do we have right now"), and reopening onto someone's stale
   // search looks like missing data.
-  useEffect(() => { if (open) { setQ(''); setCategory(ALL_CATEGORIES); setSupplier(ALL_SUPPLIERS); setStockOnly(false); } }, [open]);
+  useEffect(() => {
+    if (open) {
+      setQ(''); setCategory(ALL_CATEGORIES); setSupplier(ALL_SUPPLIERS); setStockOnly(false);
+      setEditing(null); setMessage(null);
+    }
+  }, [open]);
+
+  function changed(text) {
+    setMessage({ ok: true, text });
+    setReloadKey(k => k + 1);
+    onChanged?.();
+  }
+
+  async function saveQuantity(item) {
+    setBusyId(item.product_id);
+    const result = await saveInventoryCount({
+      product_id: item.product_id,
+      count_month: thisMonth(),
+      quantity: editing.value,
+      note: 'Adjusted from Current inventory',
+    });
+    setBusyId(null);
+    if (!result.ok) {
+      setMessage({ ok: false, text: Object.values(result.errors || {})[0] || 'Could not save that figure.' });
+      return;
+    }
+    setEditing(null);
+    changed(`${item.item_name}: on hand set to ${num(result.count.quantity)} for ${longMonth(result.count.count_month)}.`);
+  }
 
   const categories = [...new Set(items.map(i => i.category || 'Uncategorised'))].sort();
   const suppliers = [...new Set(items.map(i => i.supplier_name || UNATTRIBUTED))].sort();
@@ -649,13 +696,62 @@ function CurrentStockModal({ open, onClose }) {
     && (!stockOnly || i.current_stock > 0));
 
   const columns = [
-    { key: 'item_name',      label: 'Item', strong: true, truncate: true, width: '34%' },
-    { key: 'category',       label: 'Category', truncate: true, width: '18%' },
-    { key: 'supplier_name',  label: 'Supplier', truncate: true, width: '22%' },
-    { key: 'current_stock',  label: 'On hand', num: true, strong: true, width: '12%', render: num },
     {
-      key: 'days_of_supply', label: 'Days left', num: true, width: '14%',
+      key: 'item_name', label: 'Item', strong: true, width: '31%',
+      render: (v, row) => (
+        <span className="stock-item">
+          <span className="cell-trunc" title={v}>{v}</span>
+          {row.discontinued && <span className="tag tag--crit">Discontinued</span>}
+        </span>
+      ),
+    },
+    { key: 'category',       label: 'Category', truncate: true, width: '17%' },
+    { key: 'supplier_name',  label: 'Supplier', truncate: true, width: '18%' },
+    {
+      key: 'current_stock', label: 'On hand', num: true, strong: true, width: '11%',
+      render: (v, row) => (editing?.product_id === row.product_id ? (
+        <input
+          type="number" min="0" step="1" className="stock-edit"
+          value={editing.value} autoFocus aria-label={`Units on hand for ${row.item_name}`}
+          onChange={e => setEditing(x => ({ ...x, value: e.target.value }))}
+          onKeyDown={e => {
+            if (e.key === 'Enter') saveQuantity(row);
+            if (e.key === 'Escape') { e.stopPropagation(); setEditing(null); }
+          }}
+        />
+      ) : num(v)),
+    },
+    {
+      key: 'days_of_supply', label: 'Days left', num: true, width: '9%',
       render: v => v == null ? <span className="muted">—</span> : Math.round(v),
+    },
+    {
+      key: 'product_id', label: '', width: '14%',
+      render: (id, row) => {
+        const busy = busyId === id;
+        if (editing?.product_id === id) {
+          return (
+            <span className="stock-actions">
+              <button className="btn btn--ink btn--sm" disabled={busy} onClick={() => saveQuantity(row)}>
+                {busy ? 'Saving…' : 'Save'}
+              </button>
+              <button className="btn btn--ghost btn--sm" disabled={busy} onClick={() => setEditing(null)}>Cancel</button>
+            </span>
+          );
+        }
+        // A Discontinue/Restore button belongs here too (the backend's
+        // PUT /api/products/<id>/status and setProductDiscontinued are in
+        // place); held back from the UI for now.
+        return (
+          <span className="stock-actions">
+            <button className="btn btn--ghost btn--sm" disabled={busy}
+                    title="Correct the units on hand (saved as this month's count)"
+                    onClick={() => { setMessage(null); setEditing({ product_id: id, value: String(row.current_stock ?? 0) }); }}>
+              Edit
+            </button>
+          </span>
+        );
+      },
     },
   ];
 
@@ -668,6 +764,7 @@ function CurrentStockModal({ open, onClose }) {
       open={open}
       onClose={onClose}
       title="Current inventory"
+      width={1100}
       subtitle={loading ? 'Loading…' : items.length === 0 ? 'No item has a stock record yet.'
         : `${num(inStock.length)} item${inStock.length === 1 ? '' : 's'} with stock on hand`
           + (out > 0 ? ` · ${num(out)} counted at zero` : '')
@@ -693,7 +790,7 @@ function CurrentStockModal({ open, onClose }) {
                 <option value={ALL_SUPPLIERS}>{ALL_SUPPLIERS}</option>
                 {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-              <label className="check">
+              <label className={`check check--chip${stockOnly ? ' is-on' : ''}`}>
                 <input type="checkbox" checked={stockOnly} onChange={e => setStockOnly(e.target.checked)} />
                 In stock only
               </label>
@@ -704,6 +801,12 @@ function CurrentStockModal({ open, onClose }) {
                 ? <>Showing <b>{num(shown.length)}</b> of {num(items.length)} items</>
                 : <>Showing all {num(items.length)} items</>}
             </div>
+
+            {message && (
+              <div className={`notice notice--${message.ok ? 'ok' : 'warn'}`} style={{ marginBottom: 10 }}>
+                {message.text}
+              </div>
+            )}
 
             <div className="modal-grow">
               {shown.length === 0
@@ -717,7 +820,7 @@ function CurrentStockModal({ open, onClose }) {
                       rowKey: `st${i.product_id}`,
                     }))}
                     pageSize={12}
-                    minWidth={720}
+                    minWidth={860}
                   />}
             </div>
           </>
