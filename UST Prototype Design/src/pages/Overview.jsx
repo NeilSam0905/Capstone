@@ -117,7 +117,7 @@ export default function Overview({ filters, setPage }) {
         </div>
         <div className="card card__pad">
           <div className="card-h"><span className="section-h">Units by Category</span></div>
-          <Donut data={catData} />
+          <Donut data={catData} groupBelow={0.1} />
         </div>
       </div>
 
