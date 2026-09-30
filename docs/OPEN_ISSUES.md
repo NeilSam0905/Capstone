@@ -93,48 +93,6 @@ step 4's default matching exactly. Per `CLAUDE.md` the assertion is reported,
 not relaxed: whoever owns that script decides whether the check should read
 `step4`'s rows only.
 
-### 10. The vault pre-commit hook still cannot be enabled
-`.githooks/pre-commit` shells out to `python scripts/vault.py check-commit`,
-which refuses any commit that stages a plain protected file. That is the guard
-against exactly what happened on `origin/gambe` (issue 11), and it is **not
-enabled in this clone**: `core.hooksPath` is unset and `.git/hooks/` holds
-nothing but samples. Enabling it is one command —
-
-```bash
-git config core.hooksPath .githooks
-```
-
-— but doing that today would block **every** commit, for two independent
-reasons. Both have to clear first:
-
-1. **The key.** `check_commit()` calls `load_keys()` before it checks anything,
-   so with no `USTORE_KEY` it raises before reaching the staged-file test. Fixed
-   as far as it can be: `cryptography` was undeclared in all four
-   `requirements/` files, so `vault.py` died with `ModuleNotFoundError` rather
-   than saying what was wrong — the precise failure mode
-   `requirements/requirements.txt`'s own header exists to prevent
-   ("`rapidfuzz` is in here precisely because it was such a case"). Now pinned
-   at `cryptography==50.0.1`, and `vault.py status` reports the real blocker:
-   *"no USTORE_KEY found in the environment or backend/.env"*.
-2. **Nine tracked files the hook would refuse.** `vault.py`'s `PROTECTED` list
-   is `["ustore.db", "data/*.csv", "data/*.xlsx", "docs/*.csv", "*.xlsx"]`, and
-   this branch tracks nine files matching it in plain form:
-   `data/cold_start_donor{,_origins}.csv`,
-   `data/inventory_{simulation,stock_depth,synthetic_cover}.csv`,
-   `data/policy_holdout_{comparison,frontier,origins}.csv` and
-   `docs/SESSION_RESULTS_2026-09-23.csv`. That is deliberate — they were
-   committed before the merge brought in the `.gitignore` that ignores them,
-   because the alternative was losing them — but it means the hook and the
-   index currently disagree. Once the key arrives they need
-   `python scripts/vault.py lock`, then untracking with
-   `git rm --cached`, before the hook can go on.
-
-Related and now closed: `.gitignore` carried `ustore.db` but no `ustore.db.*`,
-so a database copy under any other name was stageable anywhere in the tree —
-`git add -A -- data/` picked up 10 MB of real sales, prices and supplier names
-from `data/pre_contract/` before it was caught. The pattern is in place and
-`git add -A -- data/` now stages nothing.
-
 ### 11. The client tally-sheet workbooks are still committed on `origin/gambe`
 All five raw workbooks — supplier names, item prices, daily sales volumes — sit
 at the tip of `origin/gambe` under `drive-download-20260724T120738Z-1-001/`:
@@ -288,6 +246,51 @@ either.
 
 Kept as a record so the same ground isn't re-covered.
 
+- **The vault pre-commit hook was not enabled, and could not be** (was open
+  issue 10 — number left vacant above, as 8 is, since `README.md` and this file
+  cite the others by number). `.githooks/pre-commit` refuses any commit that
+  stages a plain protected file — the guard against exactly what put five client
+  workbooks on `origin/gambe` (issue 11). It is on now, and all three things
+  that were in the way are cleared.
+  - **`cryptography` was undeclared** in all four `requirements/` files, so
+    `vault.py` died with `ModuleNotFoundError` instead of saying what was wrong
+    — the case `requirements.txt`'s own header exists to catch. Pinned at
+    `cryptography==50.0.1`. `/usr/bin/python3` carries it too, so the hook does
+    not depend on having the venv on PATH.
+  - **`USTORE_KEY` arrived** (2026-09-30), in `backend/.env`, which `.gitignore`
+    covers. `check_commit()` calls `load_keys()` before it inspects anything
+    staged, so without the key it refused *every* commit, not just bad ones.
+  - **Nine result CSVs were tracked in plain form** and the hook would have
+    refused them — `data/cold_start_donor{,_origins}.csv`,
+    `data/inventory_{simulation,stock_depth,synthetic_cover}.csv`,
+    `data/policy_holdout_{comparison,frontier,origins}.csv`,
+    `docs/SESSION_RESULTS_2026-09-23.csv`. They are in `vault/` now and
+    untracked (`git rm --cached`, files left on disk).
+  - **And the hook file was committed `100644`.** Enabling `core.hooksPath` gave
+    a hook git silently declines to run: it prints *"the hook was ignored
+    because it's not set as executable"* as a **hint** and commits anyway.
+    Found by turning it on and watching the first commit sail through with plain
+    data staged. Now `100755`, which git tracks, so it is fixed for everyone
+    rather than per clone. **A configured-but-inert hook is worse than no hook**
+    — it reports success either way.
+  - Tested in both directions rather than assumed: `git add -f
+    data/cold_start_donor.csv` then commit is refused and HEAD does not move;
+    an ordinary commit passes.
+- **The seven vault conflicts.** `vault.py` has no per-file flag and both
+  blanket flags (`lock --prefer-local`, `unlock --prefer-vault`) destroy one
+  side wholesale, but `status()` tests `cur == man` *before* the conflict
+  branches — so writing the vault's bytes to a local path flips that file to
+  `ok` and out of the conflict set. That is how these were taken one at a time:
+  the vault's copy for `robust_metric_comparison.csv` (two genuinely different
+  runs — **still needs Neil's word on which is current**),
+  `rebuild_sales_long.csv` (358 rows wrote the string `nan` where the vault
+  writes an empty field), `USTore_sales_long_with_zeros.csv` (CRLF vs LF) and
+  `model_benchmark_summary.csv` (float precision); the local copy for
+  `category_assignment_audit.csv` and `demand_clusters.csv` (the vault's say
+  `Uncategorised` where the current rules say `Shirts & Tops`) and for
+  `ustore.db` (the vault held Neil's Sept-29 database; it now holds the rebuilt
+  one, and his stays recoverable at `4d8d34a:vault/ustore.db.enc`, blob
+  `db4a65f7`). `vault.py status` reads 165 ok, 0 conflict, 0 new.
 - **`storage_category` was wiped by every `step1` run and never restored**
   (was open issue 8 — the number is left vacant above rather than reused, since
   `README.md` and this file both cite the others by number).
