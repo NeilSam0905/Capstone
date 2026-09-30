@@ -1371,6 +1371,48 @@ def _forecastable_ids(c):
         c, "SELECT DISTINCT product_id FROM Result_Forecast")}
 
 
+def _monthly_history(c, product_ids):
+    """Observed units per month, summed over exactly `product_ids`, with the
+    number of days the store tallied in that month.
+
+    Sent alongside a forecast so the Demand Forecast chart can show the months
+    leading up to it. It covers the same items the forecast does - for a
+    category, only the forecast contributors - so the history and the forecast
+    on one chart are totals of the same thing.
+
+    `tally_days` is what lets the chart put a month on the same axis as the
+    daily forecast (units / tally_days = units per day). It counts every day
+    the store tallied ANY sales, from these items' first sale on: a tally day
+    with no row for these items is a real zero and belongs in the average. A
+    month nobody tallied at all is simply absent."""
+    ids = list(product_ids)
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
+    return dbmod.rows(c, f"""
+        WITH tally AS (
+            SELECT DISTINCT d.calendar_date AS date, d.date_id
+            FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        ),
+        mine AS (
+            SELECT date_id, SUM(quantity_sold) AS units
+            FROM Fact_Sales WHERE product_id IN ({marks})
+            GROUP BY date_id
+        ),
+        first_sale AS (
+            SELECT MIN(t.date) AS date
+            FROM tally t JOIN mine m ON m.date_id = t.date_id
+            WHERE m.units > 0
+        )
+        SELECT substr(t.date, 1, 7) AS month,
+               SUM(COALESCE(m.units, 0)) AS units,
+               COUNT(*) AS tally_days
+        FROM tally t LEFT JOIN mine m ON m.date_id = t.date_id
+        WHERE t.date >= (SELECT date FROM first_sale)
+        GROUP BY 1 ORDER BY 1
+    """, ids)
+
+
 def _has_forecast_table(c):
     tables = {r[0] for r in c.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
@@ -1465,6 +1507,7 @@ def get_forecast(product_id):
             "is_heuristic": bool(forecast_rows[0]["is_heuristic"]),
             "snapshot_date": forecast_rows[0]["snapshot_date"],
             "forecast": forecast_rows,
+            "history": _monthly_history(c, [product_id]),
             "metrics": metrics,
         },
     })
@@ -1554,6 +1597,7 @@ def get_forecast_category(category):
             "n_forecast": len(contributors),
             "total_30d": round(sum(r["yhat_30d"] or 0 for r in contributors), 3),
             "forecast": rows,
+            "history": _monthly_history(c, [r["product_id"] for r in contributors]),
             "contributors": contributors,
         },
     })
