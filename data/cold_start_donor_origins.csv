@@ -1,0 +1,5 @@
+origin,window_end,split,n_cold_start,n_cold_start_scored,n_cold_start_with_demand,window_demand,cold_start_demand,gone_quiet_demand,forward_coverage
+2026-05-03,2026-07-31,731,11,11,11,11834.0,296.0,0.0,0.975
+2026-02-02,2026-05-02,641,40,40,29,8184.0,848.0,0.0,0.8964
+2025-11-04,2026-02-01,551,78,78,38,17073.0,3748.0,12.0,0.7798
+2025-08-06,2025-11-03,461,103,103,25,16482.0,1365.0,0.0,0.9172
