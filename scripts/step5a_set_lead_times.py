@@ -46,10 +46,16 @@ and anything uncategorized").
 Safe to re-run: recomputes and overwrites lead_time_days for every
 product each time.
 """
+import os
 import re
 import sqlite3
+import sys
 
 import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from forecasting.category import storage_category_sql
 
 DB_PATH = "ustore.db"
 
@@ -85,7 +91,9 @@ def classify(item_name, category):
 
 def main():
     con = sqlite3.connect(DB_PATH)
-    df = pd.read_sql("SELECT product_id, item_name, category FROM Dim_Product", con)
+    df = pd.read_sql(
+        f"SELECT product_id, item_name, {storage_category_sql(con)} "
+        "FROM Dim_Product", con)
 
     results = df.apply(
         lambda r: classify(r["item_name"], r["category"]), axis=1, result_type="expand"
