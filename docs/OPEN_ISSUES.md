@@ -321,6 +321,82 @@ either.
 
 Kept as a record so the same ground isn't re-covered.
 
+- **Six copies of "where the real history ends", and three things they hid.**
+  The rule — end the series at the last date any SKU sold, not at the last row
+  of the zero-filled panel — was written out six times across `scripts/`, in
+  two shapes: index-building (`step4_forecast_model.build_calendar`,
+  `step5_prescriptive.history_index`) and wide-frame trimming
+  (`step4c_category_forecast.trim_padding`, `tune_category_forecast_params`,
+  `test_category_forecast_shape`, `test_lead_time_gap`). Now one module,
+  `forecasting/history.py`, with `history_end` / `history_index` /
+  `trim_to_history`; `trim_padding` is kept as a name because two research
+  scripts call it as `s4c.trim_padding`. Verified by rebuilding the database
+  from scratch twice: identical both times, every table, count and the 480-row
+  digest.
+  - The four wide-frame copies had **no NaN guard** — `total[total > 0].index.max()`
+    is NaT on an all-zero frame and `wide.loc[:NaT]` raises, so a caller with
+    no sales crashed where the index-building pair degraded gracefully. Nothing
+    hits it today. It is the kind of divergence that makes two copies of a rule
+    stop being one rule.
+  - `scripts/model_benchmark.py` never got the rule at all, which is why
+    `tools/service_frontier.py` still measures 821 days against the deployed
+    798 and its `EXP_SKUS_POSITIVE_DEMAND = 208` passes while the pipeline
+    reports 214. Unchanged here — fixing it moves every published benchmark
+    table — but it is now visibly the one holdout rather than one of seven
+    implementations.
+  - `forecasting/observed_day.py`'s docstring asserted the opposite ("they are
+    observed, and they stay in") about the same 23 days. Corrected, with the
+    workbook evidence and a note that `observed_mask_from_index` reads
+    `Dim_Date.is_tally_date`, which is 1 on all 23 — so the module would still
+    count them if it ever shipped. It is research code; nothing deployed
+    imports it.
+- **Two files a rebuild could not reproduce, for two different reasons.**
+  `data/USTore_sales_long_with_zeros.csv` and `data/rebuild_sales_long.csv`
+  went `local-changed` against the vault after every rebuild.
+  - step0 writes with `csv.writer`, which defaults to **CRLF**, while the
+    vault's copy is LF — identical content, 75,121 bytes larger, one per line.
+    64 of the repo's 93 `to_csv` calls already pin `lineterminator="\n"`; this
+    was the writer that does not go through pandas. Pinned.
+  - `rebuild_extract_tbs.py` read the supplier mapping with `astype(str)`,
+    which renders a blank cell as the **literal string "nan"**.
+    `data/supplier_mapping.csv` deliberately leaves `supplier_name` empty on
+    two rows — "(Paid)" and "Subli. Shirt 2 colors", both annotated *"no
+    supplier can be recovered from these rows"* — so 179 sales rows were
+    attributed to a supplier named `nan`. It round-tripped invisibly because
+    `read_csv` maps `nan` back to NULL. Now `dtype=str` + `fillna("")`, which
+    is what `step1_apply_mapping.py` does with the same file. The mapping file
+    itself is untouched (`CLAUDE.md`).
+
+    Both now match the vault byte-for-byte, which also confirms the earlier
+    "take the vault's copy" calls on these two were the right ones.
+- **`vault.py`'s guard stopped at depth 1, and `lock` and `check-commit`
+  disagreed about it.** `is_protected` pairs fnmatch with a depth check — the
+  check is what makes `*.xlsx` mean the repo root rather than every folder — so
+  `data/pre_contract/*.csv` were outside the guard entirely, two store-derived
+  files tracked in plain form while the hook reported nothing to refuse. The
+  data/docs patterns are now `RECURSIVE` and opt out of the depth check.
+
+  Widening `is_protected` alone would have built a trap: `local_files()` globs
+  with `Path.glob`, whose `*` stops at a directory boundary where fnmatch's does
+  not, so the hook would have refused a file the vault could never store —
+  neither committable nor vaultable. `local_files()` uses `rglob` for those
+  patterns now. Both files are vaulted and untracked; **0 tracked files at any
+  depth would be refused**.
+
+  `.gitignore` had the identical hole for the identical reason — a gitignore
+  `*` also stops at a directory boundary, so `data/*.csv` never covered
+  `data/pre_contract/`. Untracking the two files surfaced it immediately: they
+  reappeared as untracked rather than disappearing. `data/**/*.csv` and its two
+  siblings close it. The two lists have to agree, or the hook refuses a file
+  git is happy to stage.
+- **A dead parameter that made a flag look live.**
+  `validate_policy_holdout.fit()` took `q`, was handed `args.buffer_quantile` by
+  both callers, and never passed it on — `resolve_rates` settles the rate, and
+  the buffer is applied later at each SKU's own tier quantile. That is why
+  `--buffer-quantile` appeared to control the tiered arm and did not; a sweep
+  over 0.70–0.85 returned byte-identical results at every tier setting. Removed.
+  The flag stays live for `step4b`/`step5`.
+
 - **The vault pre-commit hook was not enabled, and could not be** (was open
   issue 10 — number left vacant above, as 8 is, since `README.md` and this file
   cite the others by number). `.githooks/pre-commit` refuses any commit that

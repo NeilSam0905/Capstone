@@ -268,8 +268,13 @@ def convert(files, out_path):
         key=lambda x: (x[0], x[1][2].upper(), x[1][1].upper()),
     )
 
+    # lineterminator="\n" because csv.writer defaults to CRLF, which made this
+    # the one committed input a rebuild could not reproduce byte-for-byte - the
+    # vault's copy is LF and every rebuild here rewrote it 75,121 bytes larger,
+    # one per line, with identical content. 64 of the repo's 93 to_csv calls
+    # already pin it; this is the writer that does not go through pandas.
     with open(out_path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["Date", "Item", "Total Quantity", "Supplier"])
         for _, (date_str, item, supplier) in rows:
             w.writerow([date_str, item, fmt_qty(agg[(date_str, item, supplier)]), supplier])

@@ -132,6 +132,8 @@
  "data/policy_holdout_frontier.csv": "820e342f8da793a68894835dbf8ef6608295736a42d41c4b7e6ebef68a7ee328",
  "data/policy_holdout_frontier_by_origin.csv": "3af4fdcd996d5e695647ae0a44902dd96ad0d35e82e4b080bba404c75aca87c2",
  "data/policy_holdout_origins.csv": "96d169fc546ff3c27bfa361d9460db669f45ecb5b851bc209daa39dee5efae58",
+ "data/pre_contract/model_benchmark_summary.csv": "dedbe22b76a86d7569a17bfb947e1eb24c284599dc4c4ae04bc83c30b605d324",
+ "data/pre_contract/prescriptive_results_preview.csv": "021af4a993af6850329a49e84415fb84f98eac339bf5973c18ebebcfd3427741",
  "data/rebuild_batch_sales_2023.csv": "48a6643a6ecf55ce8317ca7d3df5a3e83a979455809d37a7796d0a317d1bf68c",
  "data/rebuild_day_status.csv": "b59d60b1cd1df2d79ae5af9c5fe457761609923e3d4f8fc5f0af075b2394af72",
  "data/rebuild_extract_report.csv": "3be1a535b55e8b1dae22dee15e9bc1f1080c76866fb0eb87d8dbee3a3ad96218",
@@ -165,5 +167,5 @@
  "docs/price_suffix_audit.csv": "0990c83e688335520edf6d47894cabf0783c1e02b323464d156b1133e932d5a6",
  "docs/products_without_forecast.csv": "32a58460ab4ec260718a8dcf74de2b0d7e853fcbda9a089e82477e1532519c63",
  "docs/unpriced_products.csv": "dcfa730bf272c4763f325a1cf1a78bcd894fe25efb5c0607804146f54fb08554",
- "ustore.db": "008907b465c66d17bce5a73a9b469bf37f1be68e3ffe150535053f37e8dae6be"
+ "ustore.db": "35291d3daff079b7b6ae9d18b774664e1cfc32b42ff043f85f37882c4dcf46d0"
 }
