@@ -504,9 +504,10 @@ function niceAxis(v) {
   return { max: Math.ceil((v || 1) / step) * step, step };
 }
 
-/** The months before the forecast as a light line, one point per month, then
- *  the forecast month in full, day by day - on one horizontally scrolling
- *  timeline that opens on the forecast.
+/** The months before the forecast as a compact grey overview, one point per
+ *  month, then the forecast month in full, day by day. The history is squeezed
+ *  into about a third of the width so the whole timeline normally fits; on a
+ *  narrow screen it scrolls horizontally and opens on the forecast.
  *
  *  The two parts share the value axis, so the history is plotted as each
  *  month's AVERAGE UNITS PER DAY (units / tally_days) rather than its total:
@@ -515,10 +516,11 @@ function niceAxis(v) {
  *  floor. The month total is still in the tooltip.
  *
  *  `history` is [{ month, units, tally_days }] - a month missing from it was
- *  never tallied and breaks the line rather than dipping to zero.
+ *  never tallied and is left off the timeline (the line joins its neighbours;
+ *  the month labels show the jump) rather than dipping to zero.
  *  `forecast` is the Result_Forecast rows [{ forecast_date, yhat, yhat_lower,
  *  yhat_upper }]. */
-export function ScrollForecastChart({ history, forecast, height = 290, monthW = 56, dayW = 22 }) {
+export function ScrollForecastChart({ history, forecast, height = 290, monthMax = 56, dayMin = 16 }) {
   const scrollRef = useRef(null);
   const dragRef = useRef(null);
   const frameRef = useRef(0);
@@ -527,23 +529,18 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthW = 
   const [atEnd, setAtEnd] = useState(true);
   const [dragging, setDragging] = useState(false);
 
-  // One slot per calendar month from the first to the last with history, so
-  // an untallied month still takes its place on the timeline.
+  // One slot per TALLIED month only: an untallied month is skipped, so the
+  // line runs straight from the month before the gap to the month after it.
   const model = useMemo(() => {
-    const byMonth = new Map((history ?? []).map(r => [ymIndex(r.month), r]));
-    const keys = [...byMonth.keys()];
-    const months = [];
-    if (keys.length) {
-      for (let k = Math.min(...keys); k <= Math.max(...keys); k++) {
-        const r = byMonth.get(k);
-        months.push({
-          k,
-          units: r ? r.units : null,
-          tallyDays: r ? r.tally_days : 0,
-          perDay: r && r.tally_days ? r.units / r.tally_days : null,
-        });
-      }
-    }
+    const months = (history ?? [])
+      .filter(r => r.units != null && r.tally_days > 0)
+      .map(r => ({
+        k: ymIndex(r.month),
+        units: r.units,
+        tallyDays: r.tally_days,
+        perDay: r.units / r.tally_days,
+      }))
+      .sort((a, b) => a.k - b.k);
     const days = (forecast ?? []).map(r => ({
       date: r.forecast_date,
       yhat: r.yhat,
@@ -551,13 +548,39 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthW = 
       hi: r.yhat_upper ?? r.yhat,
     }));
     const total = days.reduce((s, d) => s + (d.yhat ?? 0), 0);
-    const peak = Math.max(0, ...months.map(m => m.perDay ?? 0), ...days.map(d => d.hi ?? 0));
+    const peak = Math.max(0, ...months.map(m => m.perDay), ...days.map(d => d.hi ?? 0));
     return { months, days, total, peak };
   }, [history, forecast]);
+
+  // The visible width of the timeline, so the history can be squeezed into a
+  // compact overview beside the forecast instead of running off-screen.
+  const [viewW, setViewW] = useState(0);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setViewW(el.clientWidth);
+    const ro = new ResizeObserver(() => setViewW(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const { months, days, total, peak } = model;
   const padX = 12, padR = 20, padT = 34, padB = 44, AX = 50;
   const H = height;
+  // History gets about a third of the view (never more than `monthMax` a
+  // month, never less than 12px); the forecast gets the rest, at least
+  // `dayMin` a day. Everything fits without scrolling unless the view is very
+  // narrow.
+  let monthW = monthMax, dayW = dayMin;
+  if (viewW > 0) {
+    const avail = viewW - padX - padR;
+    const histW = months.length
+      ? Math.min(months.length * monthMax, Math.max(avail * (days.length ? 0.34 : 1), months.length * 12))
+      : 0;
+    if (months.length) monthW = histW / months.length;
+    // -1: keep sub-pixel rounding from tipping it into a scrollbar
+    if (days.length) dayW = Math.max(dayMin, (avail - histW - 1) / days.length);
+  }
   const X0 = padX + months.length * monthW;          // where the forecast begins
   const W = X0 + days.length * dayW + padR;
   const mx = i => padX + i * monthW + monthW / 2;
@@ -641,7 +664,7 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthW = 
       target = { kind: 'day', i: j, cx: dx(j) };
     } else if (lx < X0 && months.length) {
       const i = Math.min(months.length - 1, Math.max(0, Math.floor((lx - padX) / monthW)));
-      if (months[i].perDay != null) target = { kind: 'month', i, cx: mx(i) };
+      target = { kind: 'month', i, cx: mx(i) };
     }
     if (!target) { setHover(null); return; }
     if (hover?.kind === target.kind && hover?.i === target.i) return;
@@ -656,15 +679,22 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthW = 
     if (dragging) setDragging(false);
   }
 
-  // History line, broken wherever a month was never tallied.
-  const segs = [];
-  let cur = [];
-  months.forEach((m, i) => {
-    if (m.perDay == null) { if (cur.length) segs.push(cur); cur = []; return; }
-    cur.push(`${cur.length ? 'L' : 'M'}${mx(i).toFixed(1)},${y(m.perDay).toFixed(1)}`);
-  });
-  if (cur.length) segs.push(cur);
-  const histPath = segs.map(sg => sg.join(' ')).join(' ');
+  // History line and its area fill (untallied months are already left out).
+  const histPath = months.map((m, i) => `${i ? 'L' : 'M'}${mx(i).toFixed(1)},${y(m.perDay).toFixed(1)}`).join(' ');
+  const histArea = months.length > 1
+    ? `${histPath} L${mx(months.length - 1).toFixed(1)},${plotBottom} L${mx(0).toFixed(1)},${plotBottom} Z`
+    : '';
+  // "May 24" labels, as often as the squeezed month width allows. Counted back
+  // from the last month whose label clears the forecast divider, so the last
+  // one never runs into the forecast's first day label; ones that would be
+  // clipped at the left edge are dropped.
+  const LABEL_HALF = 20;
+  const labelStep = Math.max(1, Math.ceil((2 * LABEL_HALF) / monthW));
+  let lastLabel = months.length - 1;
+  while (days.length && lastLabel >= 0 && mx(lastLabel) + LABEL_HALF > X0 - 6) lastLabel--;
+  const labelMonth = i => i <= lastLabel && (lastLabel - i) % labelStep === 0 && mx(i) >= LABEL_HALF - 4;
+  // Month and day labels share one baseline.
+  const AXIS_Y = plotBottom + 16;
 
   const band = days.length
     ? days.map((d, j) => `${j === 0 ? 'M' : 'L'}${dx(j).toFixed(1)},${y(d.hi).toFixed(1)}`).join(' ')
@@ -700,7 +730,9 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthW = 
     <div className="sfc">
       <div className="sfc__bar">
         <span className="hint">
-          {atEnd ? '← Scroll or drag left to see past months' : 'Past months · average units sold per day'}
+          {atStart && atEnd
+            ? 'Past months · average units sold per day, then the forecast day by day'
+            : atEnd ? '← Scroll or drag left to see earlier months' : 'Past months · average units sold per day'}
         </span>
         {!atEnd && (
           <button type="button" className="btn btn--ghost btn--sm" onClick={toForecast}>
@@ -758,17 +790,6 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthW = 
                   <line key={v} x1={0} y1={y(v)} x2={W} y2={y(v)} stroke="var(--line)" strokeWidth="1" />
                 ))}
 
-                {/* Untallied months: shaded, so the break in the line reads
-                    as missing data rather than as a drop in sales */}
-                {months.map((m, i) => (m.perDay == null ? (
-                  <g key={m.k}>
-                    <rect x={mx(i) - monthW / 2} y={padT} width={monthW} height={plotBottom - padT}
-                          fill="var(--muted)" fillOpacity="0.07" />
-                    <text x={mx(i)} y={plotBottom - 8} textAnchor="middle" fontSize="9"
-                          fontStyle="italic" fill="var(--muted)">no tally</text>
-                  </g>
-                ) : null))}
-
                 {/* Hover guide */}
                 {hover && (
                   <line x1={hover.cx} y1={padT} x2={hover.cx} y2={plotBottom}
@@ -776,18 +797,26 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthW = 
                         strokeWidth="1" strokeDasharray="3 3" />
                 )}
 
-                {/* Past months: the light preview line */}
+                {/* Past months: a compact grey overview - line over a fading
+                    area, hollow points - so the forecast stays the detail */}
+                <defs>
+                  <linearGradient id="sfc-hist-grad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--text-2)" stopOpacity="0.16" />
+                    <stop offset="100%" stopColor="var(--text-2)" stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+                {histArea && <path d={histArea} fill="url(#sfc-hist-grad)" />}
                 <path d={histPath} fill="none" stroke="var(--text-2)" strokeOpacity="0.7" strokeWidth="2"
                       strokeLinejoin="round" strokeLinecap="round" />
-                {months.map((m, i) => (m.perDay == null ? null : (
+                {months.map((m, i) => (
                   <circle key={m.k} cx={mx(i)} cy={y(m.perDay)}
-                          r={hover?.kind === 'month' && hover.i === i ? 5 : 3}
+                          r={hover?.kind === 'month' && hover.i === i ? 5 : 2.5}
                           fill={hover?.kind === 'month' && hover.i === i ? 'var(--text-2)' : 'var(--card)'}
-                          stroke="var(--text-2)" strokeWidth="1.8" />
-                )))}
+                          stroke="var(--text-2)" strokeWidth="1.6" />
+                ))}
 
                 {/* Hand-off from the last month into the first forecast day */}
-                {lastMonth?.perDay != null && days.length > 0 && (
+                {lastMonth && days.length > 0 && (
                   <line x1={mx(months.length - 1)} y1={y(lastMonth.perDay)} x2={dx(0)} y2={y(days[0].yhat)}
                         stroke="var(--accent)" strokeWidth="1.8" strokeDasharray="4 4" strokeOpacity="0.8" />
                 )}
@@ -807,27 +836,20 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthW = 
                   </g>
                 )}
 
-                {/* X axis - history: month, with the year under each January,
-                    the first month and the last (the one on screen at open);
-                    forecast: day numbers, then the month */}
-                {months.map((m, i) => (
-                  <g key={m.k}>
-                    <text x={mx(i)} y={plotBottom + 14} textAnchor="middle" fontSize="10" fill="var(--muted)">
-                      {MONTH_ABBR[m.k % 12]}
-                    </text>
-                    {(i === 0 || i === months.length - 1 || m.k % 12 === 0) && (
-                      <text x={mx(i)} y={plotBottom + 32} textAnchor="middle" fontSize="11" fontWeight="700"
-                            fill="var(--text-2)">{Math.floor(m.k / 12)}</text>
-                    )}
-                  </g>
-                ))}
+                {/* X axis, one baseline for both parts - history: "May 24"
+                    as often as fits; forecast: day numbers, then the month */}
+                {months.map((m, i) => (labelMonth(i) ? (
+                  <text key={m.k} x={mx(i)} y={AXIS_Y} textAnchor="middle" fontSize="10.5" fill="var(--muted)">
+                    {MONTH_ABBR[m.k % 12]} {String(Math.floor(m.k / 12)).slice(2)}
+                  </text>
+                ) : null))}
                 {days.map((d, j) => {
                   const dom = +d.date.slice(8, 10);
                   // The first day and each 1st carry their month, so a horizon
                   // that crosses a month boundary reads "Jul 9 … Aug 1".
                   const withMonth = j === 0 || dom === 1;
                   return (withMonth || [8, 15, 22, 29].includes(dom)) ? (
-                    <text key={d.date} x={dx(j)} y={plotBottom + 14} textAnchor="middle" fontSize="10"
+                    <text key={d.date} x={dx(j)} y={AXIS_Y} textAnchor="middle" fontSize="10.5"
                           fontWeight={withMonth ? 700 : 400} fill="var(--accent-deep)">
                       {withMonth ? `${MONTH_ABBR[+d.date.slice(5, 7) - 1]} ${dom}` : dom}
                     </text>

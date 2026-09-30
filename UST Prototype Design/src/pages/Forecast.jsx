@@ -492,7 +492,7 @@ function ForecastPanel({ productId, itemName, forecastMeta }) {
 }
 
 /**
- * The one forecast chart: a light monthly preview of past demand running
+ * The one forecast chart: a compact grey monthly overview of past demand running
  * into the next 30 days' forecast in full daily detail, on a timeline that
  * opens on the forecast and scrolls left through the history (see
  * ScrollForecastChart).
