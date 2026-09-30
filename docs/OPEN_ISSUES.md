@@ -80,45 +80,6 @@ same pass as this entry. What is still missing is a `rawdata/` check at the top
 of step 1 that names the four workbooks, and a decision about where they are
 meant to live (issue 11).
 
-### 8. `storage_category` is wiped by every `step1` run and never restored
-`step1_apply_mapping.py:360` does `DELETE FROM Dim_Product` and then appends
-`build_dim_product()`'s ten columns, which do not include `storage_category` or
-`forecast_category` — so both go NULL on every run after the first.
-`step1b_categorize_products.py:164` backfills `storage_category` only when the
-column is **absent**, so it never heals a column that exists and is empty. From
-the second pipeline run onward `forecasting.category.storage_category_sql()`
-therefore COALESCEs to `category`, which `step1b` has just overwritten with the
-semantic label — the exact collision `085e01f` was written to prevent, returning
-one run later.
-
-Verified end to end on 2026-09-30 by running the whole pipeline **twice** over a
-from-scratch database — not simulated. After the second run `storage_category`
-is NULL on all 519 rows and `step1b` does not restore it:
-
-- `step5a_set_lead_times.py` — `lead_time_days` does **not** move (122 at 14d,
-  371 at 18d, 26 at 28d either way): `category` only separates two tiers that
-  are both 18 days. But 144 SKUs move from `default (confirmed non-apparel)` to
-  `default (uncategorized)`, so the tier label stops meaning what it says.
-- `tools/cold_start_donor_test.py` — the `category` donor rule moves from fill
-  **0.1412**, +0.0010 against the matched-stock control ("the label buys
-  something") to fill **0.1384**, −0.0006 ("the label costs fill").
-  **`docs/COLD_START_ANALOG.md`'s conclusion inverts.**
-- `pytest tests/test_cold_start_donor.py` still passes. Those 12 tests are
-  synthetic by design — "no ustore.db - so these pin the REASONING" — so nothing
-  in the suite guards that pinned figure against a database-state regression.
-
-**Everything that ships survives.** `Result_Prescriptive` is bit-identical after
-the second run (same sha256), `pytest` is 517/517, invariants 22/22 and the
-acceptance verdict unchanged. The damage is confined to the cold-start analysis,
-and no gate anywhere catches it — which is what makes it worth fixing before
-someone re-runs the pipeline and quotes the flipped number.
-
-The fix is one line: make the backfill depend on the values rather than on the
-column, `UPDATE Dim_Product SET storage_category = category WHERE
-storage_category IS NULL`, run unconditionally before the `category` overwrite.
-Not applied — it changes how `step1b` interacts with the categorisation Neil
-owns, so it is his call.
-
 ### 9. `verify_rebuild_state.py`'s `model_type` check cannot pass on this tree
 `scripts/verify_rebuild_state.py:184` asserts that the set of `model_type`
 values in `Result_Forecast` equals `{step4.DEFAULT_MODEL}`. That holds on the
@@ -185,9 +146,79 @@ Two failures remain, and neither is a code defect:
 | `model_type matches step4's configured default` | Issue 9 — the assertion cannot hold alongside `step4b`'s `policy_rate` rows. |
 | `Result_Category_Prophet_Metrics` exists | `scripts/forecast_category_prophet.py` needs `prophet`, which `requirements/requirements-prophet.txt` deliberately keeps out of the default install. |
 
+Both of those scripts sit **outside** `backend/pipeline.py`, so a rebuild drops
+all three tables again and they have to be re-run by hand afterwards. That is
+why the same check reads 15/20 immediately after a rebuild and 26/28 once they
+have been run.
+
 One thing to watch: `rebuild_extract_tbs.py` writes
 `data/day_status_vocabulary.csv` from its keyword rules when the file is absent,
 and that file is a **human-editable override** whose `status` column wins on a
 later run. The vault holds a copy that may carry review edits; the one generated
 here on 2026-09-30 is unreviewed, so unlock the vault's version before trusting
 either.
+
+---
+
+## Resolved
+
+Kept as a record so the same ground isn't re-covered.
+
+- **`storage_category` was wiped by every `step1` run and never restored**
+  (was open issue 8 — the number is left vacant above rather than reused, since
+  `README.md` and this file both cite the others by number).
+  `step1_apply_mapping.py:360` does `DELETE FROM Dim_Product` and re-appends
+  `build_dim_product()`'s ten columns, which do not include `storage_category`
+  or `forecast_category`, so both went NULL on every run after the first.
+  `step1b`'s backfill was guarded on the column being **absent**, so it fired
+  exactly once and could never heal a column that existed and was empty. From
+  the second pipeline run onward `category.storage_category_sql()`'s COALESCE
+  fell through to `category`, which `step1b` had just overwritten with the
+  semantic label — the collision `085e01f` fixed, arriving one run later.
+  - **Found by actually running the pipeline twice**, not by reading it.
+    `Result_Prescriptive` came back bit-identical both times (the two
+    lead-time tiers `category` separates are both 18 days), which is why it
+    had gone unnoticed — but the cold-start `category` donor rule moved from
+    fill **0.1412**, +0.0010 against its matched-stock control, to **0.1384**,
+    −0.0006, inverting `docs/COLD_START_ANALOG.md`. 517/517 tests, 22/22
+    invariants and the acceptance verdict were all unchanged while that
+    happened.
+  - **Fixed** by backfilling on the value rather than on the column's
+    existence, with `category NOT IN (<step1b's own labels>)` so a re-run of
+    `step1b` alone — or a row added through the Tally Interface, which
+    `backend/app.py` defaults to `"Uncategorised"` — can never write a
+    forecast category into the storage slot.
+  - **`tests/test_step1b_storage_category.py` is the gate that was missing.**
+    Three cases against an in-memory fixture: first run, second pipeline run,
+    and `step1b` alone. The middle one fails without the fix
+    (`('Outerwear', None) == ('Outerwear', 'APPAREL')`), which is the check
+    that makes the other two worth having. `tests/test_cold_start_donor.py`
+    could never have caught this — it is synthetic by design, "no ustore.db -
+    so these pin the REASONING".
+- **Prophet.** Superseded rather than fixed: step 4 no longer uses Prophet at
+  all, so the `cmdstan` question (Block 5 / B5) is closed. Nothing in the repo
+  imports `prophet`. See `docs/ROLLING_MEAN_FORECAST.md`.
+- **`Overview.jsx`'s "Items Below / Near ROP" KPI was stale.** It now computes
+  the same reorder-now count `Reorder.jsx` does (stock ≤ reorder point, both
+  real), with a copy pass across the screen.
+- **No PDF export on the Batch Sales Report.** Now server-rendered by
+  `backend/batch_pdf.py` at `GET /api/reports/batch.pdf?month=YYYY-MM`
+  (`&inline=1` to view rather than download). Four things worth keeping:
+  - The blocker was the dependency, not the work — `weasyprint` needs
+    GTK/Pango/Cairo on Windows and `reportlab` ships a C extension.
+    **`fpdf2` is pure Python from a plain wheel.**
+  - The PDF and the on-screen report share one builder
+    (`app.build_batch_report`), so they cannot disagree — both report 15
+    suppliers / 114 line items / 2,637 units for 2026-04.
+  - **Latin-1, deliberately.** fpdf2's built-in Helvetica is Latin-1 and
+    embedding a Unicode TTF would mean shipping a licensed font. All 539
+    catalogue names are already Latin-1, so nothing is lost; money prints as
+    `PHP 1,234.00` because ₱ (U+20B1) is not.
+  - Totals are **unit counts**, not peso figures — the BIR constraint holds:
+    this is an internal counting document, not an invoice.
+- **`ustore.db` predated `Result_Prescriptive` / `Closure_Log` / the Wave 1
+  schema.** It had never been rebuilt since the original ETL work, and
+  `backend/db.py`'s unconditional `CREATE INDEX ... ON Result_Prescriptive`
+  meant every API call 500'd. Rebuilt from scratch; every documented invariant
+  reproduced exactly. **A stale-but-present database fails differently, and less
+  visibly, than a missing one** — that lesson generalised into open issue 6.

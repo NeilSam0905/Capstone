@@ -163,7 +163,35 @@ def assign_categories(con):
     cols = {r[1] for r in con.execute("PRAGMA table_info(Dim_Product)")}
     if "storage_category" not in cols:
         con.execute("ALTER TABLE Dim_Product ADD COLUMN storage_category TEXT")
-        con.execute("UPDATE Dim_Product SET storage_category = category")
+
+    # Preserve on VALUE, not on the column's existence. This backfill used to
+    # sit inside the branch above, so it fired exactly once - on the run that
+    # added the column. step1_apply_mapping.py opens with
+    # "DELETE FROM Dim_Product" and re-appends build_dim_product()'s ten
+    # columns, which do not include this one, so every run after the first left
+    # storage_category NULL on all 519 rows, category.storage_category_sql()'s
+    # COALESCE fell through to `category` - which the executemany below has
+    # just overwritten with the semantic label - and the collision 085e01f
+    # fixed arrived one run later instead. Result_Prescriptive did not move
+    # (the two lead-time tiers `category` separates are both 18 days), but the
+    # cold-start `category` donor rule went from fill 0.1412 to 0.1384,
+    # inverting docs/COLD_START_ANALOG.md. tests/test_step1b_storage_category.py
+    # is the gate that was missing; its second-run case fails without this.
+    #
+    # NOT IN is what makes it safe to run at any point: it keeps whatever
+    # non-semantic tag `category` holds - step1's storage groupings
+    # (APPAREL / NON-APPAREL / MAIN STORAGE) - and refuses to copy one of our
+    # own labels into the storage slot, which is what a re-run of this script
+    # alone, or a row added through the Tally Interface (backend/app.py
+    # defaults new products to "Uncategorised"), would otherwise leave there.
+    # A NULL `category` makes NOT IN evaluate NULL, so those rows are skipped
+    # and storage_category stays NULL - correct, there is no tag to keep.
+    labels = [label for label, _pattern in CATEGORY_RULES] + [RESIDUE]
+    con.execute(
+        "UPDATE Dim_Product SET storage_category = category "
+        "WHERE storage_category IS NULL "
+        "AND category NOT IN (%s)" % ",".join("?" * len(labels)),
+        labels)
 
     con.executemany(
         "UPDATE Dim_Product SET forecast_category = ?, category = ? "
