@@ -6,16 +6,16 @@
 > circulated previously, the difference is flagged rather than silently reconciled. Provisional
 > figures are labelled provisional in place.
 
-> **Amended 30 September 2026 after the three working branches were merged.** The forecasting
-> line, the policy line and the frontend were developed on separate branches and brought into one
-> tree on this date. Running every gate against the merged result found five defects that were
-> invisible while the halves were apart, one of which — a 23-day run of zero-fill sitting in the
-> denominator of every demand rate — had been diagnosed in `docs/FORECASTING_EXPLORATION_NOTES.md`
-> §2.5 and fixed only in the two forecast steps, because the prescriptive stage that also needed
-> it was on another branch. Correcting it moved the acceptance verdict and retired one of this
-> project's own claims. **Sections 4.1 to 4.3 are as transcribed before that correction**; what it
-> moved is recorded in §4.4 under *A correction entered after these figures were transcribed*,
-> which is current where the two disagree.
+> **Amended 30 September – 1 October 2026, after the working branches were merged and the July
+> tallies arrived.** The forecasting line, the policy line and the frontend were developed on
+> separate branches and brought into one tree. Running every gate against the merged result found
+> five defects that were invisible while the halves were apart, one of which — a 23-day run of
+> zero-fill sitting in the denominator of every demand rate — had been diagnosed in
+> `docs/FORECASTING_EXPLORATION_NOTES.md` §2.5 and fixed only in the two forecast steps, because
+> the prescriptive stage that also needed it was on another branch. The July 2026 tally sheets were
+> then completed, which added 5,950 units and turned those 23 days into real trading days.
+> **Sections 4.1 to 4.3 are as transcribed before both changes**; §4.4's *A correction, and the
+> data that superseded it* carries the current figures and is authoritative where they disagree.
 
 > **Reconciled 23 September 2026 against the policy layer.** This chapter was first consolidated on
 > 16 September 2026, before `docs/PRESCRIPTIVE_CONTRACT.md`, `docs/ACCEPTANCE_STANDARD.md`,
@@ -701,10 +701,11 @@ and run by `tools/acceptance_standard.py`, which exits non-zero when the system 
 | 3 | **Not dominated** — no simpler policy gives ≥ service at ≤ stock | none | dominated by none | ✅ |
 | 4 | **Evidence integrity** — headline windows ≥ 90% observed, the rest disclosed | 3 of 4 + disclosure | 3 headline, 1 disclosed | ✅ |
 
-> **Superseded 2026-09-30.** Condition 1b now passes at 0.9080 and the verdict is ACCEPTED —
-> 14 of 14 — on four re-anchored origins. The change is a correction to the rate denominators, not
-> a tuned threshold, and it is not a like-for-like pass. See *A correction entered after these
-> figures were transcribed* in §4.4 before quoting anything in Table 28 or 29.
+> **Superseded 2026-10-01.** Condition 1b now measures **0.8937** against the same a priori 0.90
+> and the verdict is still **NOT ACCEPTED — 13 of 14**, on these same four origins. The figure moved
+> because July 2026's tallies were completed, not because any threshold was touched. It is directly
+> comparable with the 0.8830 below. See §4.4's *A correction, and the data that superseded it*,
+> which also explains why an intermediate measurement briefly read 0.9080 on four shifted windows.
 
 **Current verdict: NOT ACCEPTED — 13 of 14 checks pass.** That failure is reported, not repaired,
 and it is the proof that the thresholds were not written to be cleared: they would read the same if
@@ -1587,7 +1588,7 @@ covered subset is shown, labelled as the covered subset.
 | Consolidate the tally workbooks into a single integrated dataset | **Met.** 84,399 sales records, 89,232 units, 519 canonical items, 19 suppliers, zero transformation exceptions |
 | Classify products as Fast / Slow / Non-moving with a sensitivity check | **Met.** 58 F (6 HVL) / 228 S / 233 N at the 80th percentile, re-run at the 75th and 85th |
 | Forecast demand for the fast-moving items | **Met in substance, not against the stated criterion, and the criterion has since been replaced.** 58 of 58 Fast SKUs scored on 12 walk-forward folds; 2.6× better than persistence; MAPE ≤ 20% cleared by 1 of 58 and shown below to be structurally invalid on this demand. `MAPE ≤ 20%` is retired in favour of a four-condition acceptance standard. Prophet does not appear: it was superseded by a benchmarked rolling mean, which is a reported result rather than a gap. The qualification that matters is downstream — the demand object the prescriptive stage consumes is a **rate**, not this forecast, and `Result_Forecast` is read by nothing |
-| Compute reorder point, safety stock and EOQ | **Met, provisionally.** *(Figures superseded — 214 priced / 52 flagged / 480 rows, verdict ACCEPTED 14 of 14; see the correction section below.)* 208 SKUs priced under two ordering-cost scenarios from measured lead time and derived holding cost, with a further **58 flagged** rather than silently omitted; every figure flagged pending the site visit. Against the four-condition standard the verdict is **NOT ACCEPTED — 13 of 14 checks pass**, the failure being forward demand coverage at 0.8830 against an a priori 0.90. On the 27% of SKUs with real opening stock the policy meets 93.5% of demand against 67.5% for not replenishing |
+| Compute reorder point, safety stock and EOQ | **Met, provisionally.** *(Figures superseded — 210 priced / 58 flagged / 478 rows of 268 eligible, verdict NOT ACCEPTED 13 of 14 at coverage 0.8937; see §4.4's correction section for the full before/after.)* 208 SKUs priced under two ordering-cost scenarios from measured lead time and derived holding cost, with a further **58 flagged** rather than silently omitted; every figure flagged pending the site visit. Against the four-condition standard the verdict is **NOT ACCEPTED — 13 of 14 checks pass**, the failure being forward demand coverage at 0.8830 against an a priori 0.90. On the 27% of SKUs with real opening stock the policy meets 93.5% of demand against 67.5% for not replenishing |
 | Deliver a dashboard and an automated batch sales report | **Partially met.** Seven working screens over the live database, with PDF / CSV / XLSX export; the Power BI report file itself is specified but unbuilt, and one of its five views is blocked on inventory coverage |
 
 ### Principal findings
@@ -1703,104 +1704,124 @@ Stated once, in the form it should be defended in:
 > **decision standard**: price the items that carry the trade and say so explicitly where you
 > cannot; beat the no-model alternative at every origin rather than on average; do not be dominated
 > on service and cost together; and disclose the share of every window that is evidence rather than
-> assumption. Measured on four rolling holdout origins, the system prices 214 of 266 eligible SKUs,
-> flags the remaining 52 rather than emitting silent zeros, and beats naive stocking at 4 of 4
+> assumption. Measured on four rolling holdout origins, the system prices 210 of 268 eligible SKUs,
+> flags the remaining 58 rather than emitting silent zeros, and beats naive stocking at 4 of 4
 > origins.
 >
-> Two of this project's own conditions have returned verdicts against it. Forward demand coverage
-> failed at 0.8830 against an a priori 0.90 and was reported rather than tuned. And when a later
-> correction to the rate denominators moved every buffer, the standard's own Pareto condition showed
-> that the service tiering — a contribution of this project — is no longer justified as it was
-> claimed. That is reported here too.
+> **One of this project's own conditions returns a verdict against it.** Forward demand coverage
+> reaches 0.8937 against an a priori 0.90, so the standard reports NOT ACCEPTED. The threshold has
+> not been moved, and the shortfall is decomposed rather than explained away: 99.8% of it is demand
+> from SKUs with no sales history at all before the decision point, which nothing fitted on sales
+> history can forecast.
 
-The last paragraph is the point of the whole apparatus, and it is worth being explicit about why.
 An acceptance standard that has never returned a verdict against the system it measures is
-indistinguishable from a certificate. This one has done so twice, once against a headline claim of
-its own author's making, and the mechanism that did it was built before the claim it retired.
+indistinguishable from a certificate. This one does, on the figure the project would most like to
+clear, and the threshold it fails was written before the measurement existed.
 
-### A correction entered after these figures were transcribed
+### A correction, and the data that superseded it
 
-Every figure above is transcribed from the artifact named beside it, and nothing above was
-recomputed for this chapter. That discipline is kept here: rather than revise the tables in place,
-this section records a correction applied on 2026-09-30 — after the merge of the three working
-branches — and states exactly what it moved. **Where this section and a table above disagree, this
-section is current.**
+Sections 4.1 to 4.3 are transcribed from the artifacts named beside them. Two things happened after
+that transcription, in this order, and the second changed the meaning of the first. **Where this
+section and a table above disagree, this section is current.**
 
-**The correction.** `scripts/step5_prescriptive.py::load_series` reindexed every series onto the
-full `Fact_Sales` span. step0 zero-fills blank cells to month end for the dense months, so the panel
-runs to 2026-07-31 while the tallies stop 2026-07-08 — and the 23 days between are step0's fill, not
-23 days on which the store sold nothing. Checked against the source rather than inferred: the
-"JULY 2026 - TBS" sheet carries a date column for every day of the month and does not contain one
-literal zero anywhere in it. Every cell is blank or positive, so a blank means "not written up yet".
-Those days nonetheless carry 176 `Fact_Sales` rows each, which is what made the observability mask
-count them as evidence — 23 days in the denominator of every trailing rate, contributing nothing to
-the numerator.
+**First, a measurement error was corrected.** `step5_prescriptive.py::load_series` reindexed every
+series onto the full `Fact_Sales` span. step0 zero-fills blank cells to month end for the dense
+months, so the panel ran to 2026-07-31 while the tallies stopped at 2026-07-08 — and those 23 days
+nonetheless carried 176 `Fact_Sales` rows each, which made the observability mask count them as
+evidence. 23 days sat in the denominator of every trailing rate contributing nothing to the
+numerator. The defect was diagnosed in `docs/FORECASTING_EXPLORATION_NOTES.md` §2.5 and fixed in
+the two forecast steps at the time; that note recorded that the prescriptive stage was **not**
+fixed. The two halves were on different branches, and merging them is what allowed the diagnosis to
+be finished.
 
-The defect was diagnosed in `docs/FORECASTING_EXPLORATION_NOTES.md` §2.5 and fixed in the two
-forecast steps at the time; the note recorded that the prescriptive stage was **not** fixed. Those
-two halves sat in different branches. Merging them is what allowed the diagnosis to be finished.
+**Then the data caught up.** The tally sheets for July 2026 were completed and the panel rebuilt:
+75,120 → 75,151 rows, **89,232 → 95,182 units**, and the last date anything actually sold moved
+from 2026-07-08 to **2026-07-31**. The 23 days are no longer zero-fill; they are real trading days.
+The correction's code is unchanged and still correct — it ends the series at the last date anything
+sold — but it now has nothing to trim, and the history span is the full 821 days again.
 
-***Table 42. What the correction moved.***
+That sequence matters for reading the rest of this chapter, because the intermediate state produced
+three figures that were artifacts of a trimmed span rather than properties of the system, and all
+three have since reverted.
 
-| Quantity | As transcribed above | After the correction |
-| --- | ---: | ---: |
-| History span | 2024-05-02 .. 2026-07-31 (821 d) | 2024-05-02 .. **2026-07-08 (798 d)** |
-| Days counted as evidence | 682 of 821 | **659 of 798** |
-| SKUs priced / flagged | 208 / 58 | **214 / 52** |
-| `Result_Prescriptive` rows | 474 | **480** |
-| Priced share | 0.7820 | **0.8045** |
-| Mean safety stock (empirical) | 7.46 | **13.442** |
-| Pooled forward demand coverage | 0.8830 ❌ | **0.9080 ✅** |
-| Verdict | NOT ACCEPTED — 13 of 14 | **ACCEPTED — 14 of 14** |
+***Table 42. Where the figures stand, through both changes.***
 
-**The verdict flip is not a like-for-like pass, and must not be quoted as one.** The rolling origins
-are anchored off the end of history, so trimming 23 days moved all four: 2026-05-03 / 2026-02-02 /
-2025-11-04 / 2025-08-06 became **2026-04-10 / 2026-01-10 / 2025-10-12 / 2025-07-14**. Before and
-after are therefore different windows. Six SKUs that could not be priced before are priced now —
-`Eco Bag @ 130`, `Eco Bag CGEEE!`, `Keychain @180`, `Kit Set` and two `UST OAT MUG` variants, 1,533
-lifetime units between them, 1.7% of the catalogue — which genuinely raises coverage; but the
-windows changed as well, and `validate_policy_holdout.py` has no facility to pin origins to
-absolute dates, so the two causes cannot be separated without altering a verification script. The
-a priori threshold was not touched. The ground it is measured on moved. **Table 28's ceiling
-argument — that 0.8832 is the limit for any method fitted on sales history, and 0.8830 captures
-99.98% of it — was computed on the superseded origins and does not transfer to the new ones.**
+| Quantity | As transcribed in §4.1 | After the correction | **Current** |
+| --- | ---: | ---: | ---: |
+| History span, days | 821 | 798 | **821** |
+| Days counted as evidence | 682 of 821 | 659 of 798 | **682 of 821** |
+| `Fact_Sales` rows / units | 84,399 / 89,232 | 84,399 / 89,232 | **84,430 / 95,182** |
+| Eligible SKUs | 266 | 266 | **268** |
+| SKUs priced / flagged | 208 / 58 | 214 / 52 | **210 / 58** |
+| `Result_Prescriptive` rows | 474 | 480 | **478** |
+| Priced share | 0.7820 | 0.8045 | **0.7836** |
+| Mean safety stock, empirical | 7.46 | 13.442 | **14.782** |
+| Pooled forward coverage | 0.8830 ❌ | 0.9080 ✅ | **0.8937 ❌** |
+| Verdict | NOT ACCEPTED 13/14 | ACCEPTED 14/14 | **NOT ACCEPTED 13/14** |
 
-**The tiering no longer earns its place as claimed.** With the buffers corrected, the flat-quantile
-frontier was scored at every rolling origin rather than only at the development set — a distinction
-this chapter's own §4.2 insists on elsewhere and which the comparison table had not been subject to:
+**The verdict reverting is the sound reading, and the intermediate pass was the unsound one.** The
+rolling origins are anchored off the end of history, so the trimmed span had moved all four of them
+and 0.9080 was not comparable with the 0.8830 originally reported. With July tallied the span is
+full and the origins are the original four — 2026-05-03, 2026-02-02, 2025-11-04, 2025-08-06 — so
+**0.8937 is directly comparable with 0.8830**, measured on the same windows. The improvement is
+attributable to the new data, not to a shifted goalpost. Table 29's ceiling argument, that 0.8832
+is the limit for any method fitted on sales history, was computed on these same origins and so does
+transfer; 0.8937 exceeding it is the new July sales changing which SKUs had history, not a method
+beating a proven bound.
 
-***Table 43. The tiered policy against the flat frontier, per origin.***
+**And the service tiering is vindicated, having briefly appeared not to be.** With the trimmed span,
+scoring the flat-quantile frontier at every origin — not only at the development set, which is the
+distinction §4.2 insists on elsewhere — put the tiering on the efficient frontier at 3 of 4 origins,
+and a 30-configuration sweep of `tier_target` × `min_efficiency` found **none** that reached 4 of 4.
+On the current data the same measurements reverse:
+
+***Table 43. The tiered policy against the flat frontier, per origin, current data.***
 
 | Origin | Tiered policy | Cheapest flat q reaching that fill | Margin |
 | --- | --- | --- | ---: |
-| 2026-04-10 *(development set)* | 0.6916 @ 20,005.5 | q = 0.85 → 19,708.5 | **−297 (dominated)** |
-| 2026-01-10 | 0.6639 @ 18,003.0 | q = 0.85 → 18,125.8 | +123 |
-| 2025-10-12 | 0.7654 @ 19,294.4 | q = 0.95 → 28,311.3 | +9,017 |
-| 2025-07-14 | 0.5709 @ 8,822.5 | q = 0.90 → 10,648.4 | +1,826 |
+| 2026-05-03 | 0.6403 @ 12,158.3 | q = 0.85 → 16,096.1 | **+3,938** |
+| 2026-02-02 | 0.9149 @ 28,925.9 | q = 0.95 → 37,484.1 | **+8,558** |
+| 2025-11-04 | 0.7277 @ 18,279.7 | q = 0.90 → 19,061.8 | +782 |
+| 2025-08-06 | 0.5987 @ 6,795.7 | q = 0.85 → 7,794.0 | +998 |
 
-The tiering is on the efficient frontier at **3 of 4** origins and is dominated only on the window
-it was designed on, by 1.5%. `tools/tier_operating_point.py` then swept 30 combinations of
-`tier_target` and `min_efficiency`, asking of each whether any flat quantile dominates it at **all
-four** origins — a stricter bar than the gate's majority, deliberately, because a search permitted
-to miss one window will find the configuration that misses the awkward one. **None of the 30
-qualified.** Sixteen reach 3 of 4; fourteen reach 2. The deployed operating point ranks **12th of
-those 16** on units served per unit held, and `tier_target = 0.90, min_efficiency = 0.30` reaches
-25% better efficiency on 25% less stock for roughly 4 percentage points of fill — a trade about how
-much service the store buys, not a correction, so the defaults are unchanged and the evidence is
-recorded in `docs/SERVICE_LEVEL_FRONTIER.md`.
+No flat quantile dominates the tiering at **any** origin, and `tools/tier_operating_point.py` now
+finds **13 of 30** configurations clearing that 4-of-4 bar with the deployed operating point among
+them — so no change to `tier_target = 0.90, min_efficiency = 0.10` is indicated. The sweep's bar is
+deliberately stricter than the gate's majority, because a search permitted to miss one window will
+find the configuration that misses the awkward one.
 
-So §4.4's statement that the tiering-versus-cascade question is "still not resolved, though it is
-now resolvable" is superseded on the tiering half: the adjudication has been run, and it does not
-find for the tiering. Two claims elsewhere in this chapter survive and are restated only in
-magnitude. The **empirical buffer still dominates** the retired `z·σ` — 0.6328 fill on 16,205.3
-units against 0.6123 on 20,109.2 — but by **19.4% less stock rather than 27%**. And
-`docs/PRESCRIPTIVE_CONTRACT.md`'s 120-day cascade comparison has not been re-measured since the
-correction; its figures are pre-correction and are not restated here.
+The lesson is worth more than the figure. A measurement artefact produced a false negative about
+this project's own contribution, and it survived two gates before a third caught it: the holdout's
+original pair of checks compared the tiering against `flat q=0.80` specifically and could not see a
+dominator at q=0.85, and `tools/acceptance_standard.py`'s condition 3 read four hand-picked rows
+from `data/policy_holdout_comparison.csv` while the dominating point sat unread in
+`data/policy_holdout_frontier.csv` beside it. Both now judge against the whole frontier at every
+rolling origin, which is why the reversal was detectable at all. **Widening what a gate compares
+against is not weakening it**, and the a priori constants — `ALLOW_DOMINATION = False` and the four
+thresholds — were not touched in either direction.
 
-**What this section is evidence of.** The correction was not found by review. It was found by
-merging three branches and running every gate against the result, and the two verdicts it produced
-against this project's own claims were produced by this project's own instruments. That is the
-argument for the apparatus, and it is a stronger one than any figure it reports.
+**One claim restated in magnitude, one not restated at all.** The empirical buffer still dominates
+the retired `z·σ`: 0.5874 fill on 12,631.7 units against 0.5844 on 18,433.7, **31.5% less stock**
+where `docs/PRESCRIPTIVE_CONTRACT.md` §4 says 27%. `PRESCRIPTIVE_CONTRACT.md`'s 120-day cascade
+comparison has not been re-measured since either change and its figures are superseded; it is not
+restated here.
+
+**What the new data cost the forecast, which is the honest direction.** Scored against a fully
+tallied July the item model's mean MASE moves from 1.668 to **1.970**, and the category model beats
+"repeat the last 30 days" in **7 of 12** categories rather than 12 of 12. Nothing about the models
+changed. July 2026 sold 6,997 units, and the previous panel represented most of that month as
+fabricated zeros, which the models predicted accurately and meaninglessly. The worse figure is the
+better measurement.
+
+**Nine pinned assertions the new data outgrew, reported and not adjusted.**
+`tools/assert_invariants.py` fails seven — `Fact_Sales` rows 84,430 against 84,399, units 95,182
+against 89,232, zero-quantity rows 67,708 against 68,541, `Dim_Product` 520 against 519,
+`fsn_class = S` 229 against 228, products with a row 287 against 286, products with units 268
+against 266 — and `tests/test_degenerate_forecast.py` and `tests/test_policy.py` fail one each on
+the same figures. None is a defect; each is a contract figure the data has passed. They fail on the
+branch the data arrived from as well, which did not update either file. Changing them revises
+figures this chapter and the README quote throughout, so it is a decision for the team rather than
+a consequence of a merge.
 
 ### Limitations
 
@@ -1872,9 +1893,10 @@ reported failure into a pass, so it is exactly the kind of change that should no
 party it flatters.
 
 **Whether the service tiering or the short-window cascade is the better policy is still not
-resolved, though it is now resolvable.** *(Partly answered — the tiering half has since been
-adjudicated and does not find for the tiering; see the correction section above. The cascade half
-stands as written, and has not been re-measured since the correction.)* Reorder-point coverage and the inventory simulation
+resolved, though it is now resolvable.** *(The tiering half is answered and finds FOR the tiering:
+no flat quantile dominates it at any of the four origins, and 13 of 30 operating points clear that
+bar with the deployed one among them. An intermediate measurement on a trimmed span briefly found
+the opposite — see §4.4. The cascade half stands as written and has not been re-measured.)* Reorder-point coverage and the inventory simulation
 disagree in sign, and the simulation's differences sat below what 28 to 45 observable SKUs could
 resolve. The synthetic-cover method built to adjudicate the tiering against the flat quantile
 applies unchanged to this pair and has not been run on it. What the tiering adjudication does
@@ -1883,12 +1905,13 @@ question to put to the cascade is not "which wins" but "what does each cost". Th
 is unchanged in the meantime, and both alternatives are measured, flagged and defaulted off rather
 than deleted.
 
-**Whether to move the service tiering's operating point is a new decision, and a trade rather
-than a fix.** The sweep finds no configuration on the efficient frontier at all four origins, and
-the deployed point ranks 12th of the 16 that reach three. `tier_target = 0.90,
-min_efficiency = 0.30` buys 25% better efficiency on 25% less stock for about 4 percentage points
-of fill. Which side of that the store wants is not a question the evidence answers, and changing
-the default moves every reorder point, so it is left open rather than taken.
+**Whether to move the service tiering's operating point is a trade, not a fix.** The deployed
+point is on the efficient frontier at all four origins, so nothing is wrong with it; but 12 other
+configurations also clear that bar, and they are not all the same purchase.
+`tier_target = 0.90, min_efficiency = 0.30` reaches 0.6421 units served per unit held against the
+deployed 0.5362 — 20% better efficiency on 22% less stock — for about 4 percentage points of fill.
+Which side of that the store wants is not a question the evidence answers, and changing the default
+moves every reorder point, so it is left open rather than taken.
 
 **Whether the predictive stage should be wired into the chain** — materialising the policy's rate and
 empirical interval into `Result_Forecast` so the descriptive → predictive → prescriptive progression
@@ -1938,8 +1961,8 @@ rather than asserted.
 | Table 38 — the four misread numbers | Synthesised from the four sources above: `docs/DEGENERATE_FORECAST.md`, `docs/ACCEPTANCE_STANDARD.md` §1, `docs/INVENTORY_SIMULATION.md`, `docs/WORKLOG_POLICY_AND_ACCEPTANCE.md` §5 |
 | Tables 39–40 | `backend/app.py`, `UST Prototype Design/src/`, `docs/POWERBI_DASHBOARD_PLAN.md` |
 | Table 41 | Every table above, plus `docs/BUILD_PLAN_RECONCILIATION.md` for the objective descriptors |
-| Table 42 — what the correction moved | `scripts/step5_prescriptive.py::history_index` (the fix) and `forecasting/history.py` (the shared rule); before/after read from `scripts/step4b_policy_forecast.py`, `scripts/step5_prescriptive.py` and `tools/acceptance_standard.py` output either side of the change; the padding diagnosis is `docs/FORECASTING_EXPLORATION_NOTES.md` §2.5, and the source check is the `JULY 2026 - TBS` sheet of `rawdata/USTore TBS OCTOBER A.Y. 2025-2026.xlsx`. Recorded in `docs/OPEN_ISSUES.md` issue 12. **Recomputed for this section, unlike every table above it** |
-| Table 43 — the tiering against the flat frontier | `data/policy_holdout_frontier_by_origin.csv` and `data/policy_holdout_origins.csv`, both from `scripts/validate_policy_holdout.py`; the 30-configuration sweep is `tools/tier_operating_point.py` and `data/tier_operating_point.csv`; the operating-point trade is written up in `docs/SERVICE_LEVEL_FRONTIER.md`. **Recomputed for this section** |
+| Table 42 — the figures through both changes | The fix is `forecasting/history.py` (the shared rule) called from `step5_prescriptive.py::load_series`; the diagnosis is `docs/FORECASTING_EXPLORATION_NOTES.md` §2.5. The three columns are read from `scripts/step4b_policy_forecast.py`, `scripts/step5_prescriptive.py` and `tools/acceptance_standard.py` output at each of the three states. The July 2026 panel arrived in `vault/data/USTore_sales_long_with_zeros.csv.enc`; the pre-completion source check was the `JULY 2026 - TBS` sheet of `rawdata/USTore TBS OCTOBER A.Y. 2025-2026.xlsx`, which held a date column for every day and no literal zero anywhere. Recorded in `docs/OPEN_ISSUES.md` issue 12. **Recomputed for this section, unlike every table above it** |
+| Table 43 — the tiering against the flat frontier | `data/policy_holdout_frontier_by_origin.csv` and `data/policy_holdout_origins.csv`, both written by `scripts/validate_policy_holdout.py`; the 30-configuration sweep is `tools/tier_operating_point.py` and `data/tier_operating_point.csv`. The superseded 3-of-4 reading is in that file's history and in `docs/SERVICE_LEVEL_FRONTIER.md`, kept rather than deleted because a measurement that no longer decides anything is still a correct measurement of what it measured. **Recomputed for this section** |
 | §4.1 gates and their falsifiability | `scripts/step5_prescriptive.py` (`run_gates`); `tests/test_gates_can_fail.py` |
 | §4.2 degeneracy | `docs/DEGENERATE_FORECAST.md`, pinned by `tests/test_degenerate_forecast.py` |
 | §4.2 service level | `docs/SERVICE_LEVEL_FRONTIER.md` (Divergence #22) |
