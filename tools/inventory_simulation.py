@@ -336,7 +336,7 @@ def run_origin(eligible, products, prices, idx, observed, split, workbook, args,
     the reorder points is synthetic - only the opening condition is, and it is
     labelled `synthetic` in `stock_basis` on every row.
     """
-    fitted = vph.fit(eligible, prices, split, args.buffer_quantile, args.cluster_k,
+    fitted = vph.fit(eligible, prices, split, args.cluster_k,
                      args.shrink, observed=observed,
                      short_window=getattr(args, "short_window", None))
     rate_fn = trailing_rate_fn(int(DAYS_PER_YEAR), observed=observed,

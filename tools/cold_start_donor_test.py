@@ -277,10 +277,10 @@ def assert_no_leakage(eligible, prices, products, split, args, observed):
     groups = label_maps(eligible, products, args.price_bands[0])
     rate_fn = trailing_rate_fn(int(DAYS_PER_YEAR), observed=observed,
                                min_sale_days=MIN_SALE_DAYS_FOR_RATE)
-    a = donor_rates(eligible, vph.fit(eligible, prices, split, args.buffer_quantile,
+    a = donor_rates(eligible, vph.fit(eligible, prices, split,
                                       DEFAULT_CLUSTER_K, False, observed=observed),
                     groups[CATEGORY], rate_fn, split)
-    b = donor_rates(blanked, vph.fit(blanked, prices, split, args.buffer_quantile,
+    b = donor_rates(blanked, vph.fit(blanked, prices, split,
                                      DEFAULT_CLUSTER_K, False, observed=observed),
                     groups[CATEGORY], rate_fn, split)
     bad = [g for g in set(a) | set(b) if abs(a.get(g, float("nan")) - b.get(g, float("nan"))) > 1e-12]
@@ -303,7 +303,7 @@ def run_origin(eligible, products, prices, idx, args, k, observed):
     split = len(idx) - args.holdout_days * (k + 1)
     if split < 200:
         return None
-    fitted = vph.fit(eligible, prices, split, args.buffer_quantile, DEFAULT_CLUSTER_K,
+    fitted = vph.fit(eligible, prices, split, DEFAULT_CLUSTER_K,
                      False, observed=observed)
     rate_fn = trailing_rate_fn(int(DAYS_PER_YEAR), observed=observed,
                                min_sale_days=MIN_SALE_DAYS_FOR_RATE)

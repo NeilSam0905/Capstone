@@ -135,29 +135,44 @@ of 90/120/180/270 days:
 
 | Window | Forward coverage (pooled) | Worst origin | Min SKUs priced |
 | --- | ---: | ---: | ---: |
-| 365 (committed) | 0.8830 | 0.7798 | 150 |
-| 90 / 120 / 180 / 270 | **0.8830** | **0.7798** | **150** |
+| 365 (committed) | 0.8937 | 0.7798 | 150 |
+| 90 / 120 / 180 / 270 | **0.8937** | **0.7798** | **150** |
 
-Identical at every setting. The 63 SKUs keep their rate. Acceptance condition 1b is untouched,
+Identical at every setting. *(Re-measured 1 October 2026 at all five windows. The pooled figure was
+0.8830 before July 2026's tallies were completed; the worst origin and the minimum priced count are
+unchanged, and the invariance — which is the claim this table exists to make — is exact.)* The 63 SKUs keep their rate. Acceptance condition 1b is untouched,
 which was the condition this lever could not be allowed to damage.
 
 ### What it buys, and the finding that came out of measuring it
 
 On the **full** population at the development origin — not the fixed population §5 used:
 
+> **Re-measured 1 October 2026.** The figures below were taken before the merge of the three
+> working branches and before July 2026's tally sheets were completed, which added 5,950 units and
+> moved the last recorded sale from 2026-07-08 to 2026-07-31. Both tables in this section have been
+> re-run on the current data: the first changed and is restated, the second did not change at all
+> and stands as written. The superseded first table was 0.6188 / 15,122 · 0.6412 / 13,305 ·
+> 0.6851 / 14,751 · 0.6603 / 12,758.
+
 | Window | Operating point | Fill | Units held |
 | --- | --- | ---: | ---: |
-| 365 | flat q=0.80 | 0.6188 | 15,122 |
-| **120 cascade** | **flat q=0.80** | **0.6412** | **13,305** |
-| 365 | tiered (committed) | **0.6851** | 14,751 |
-| 120 cascade | tiered | 0.6603 | 12,758 |
+| 365 | flat q=0.80 | 0.5874 | 12,631.7 |
+| **120 cascade** | **flat q=0.80** | **0.5893** | **11,043.1** |
+| 365 | tiered (committed) | **0.6403** | 12,158.3 |
+| 120 cascade | tiered | 0.5998 | 10,545.7 |
 
-**The cascade dominates the flat baseline it is measured against** — +2.2pp on 12% less stock,
-with coverage preserved. It reproduces §5's gain *and* removes §5's cost.
+**The cascade still costs less stock, but its service gain has collapsed into noise.** Against the
+flat 365-day baseline it buys **+0.19pp of fill on 12.6% less stock** — the stock saving is intact
+and close to the 12% recorded before, but the fill gain was +2.2pp and is now a fifth of a
+percentage point. It passes a dominance test by the `>=` / `<=` convention used throughout this
+document, and it should not be described as a service improvement at this margin. Coverage is
+preserved, so §5's cost is still removed; what is no longer supportable is "it reproduces §5's
+gain".
 
-**But it does not stack with the tiering.** Applied on top, it loses 2.5pp. Under the inventory
-simulation the same interference appears with the signs reversed, which is itself worth
-recording given that measure corrected the tiering claim:
+**And it stacks with the tiering even worse than recorded.** Applied on top it now loses **4.0pp**
+of fill rather than 2.5pp, while saving 13.3% of stock. Under the inventory simulation the same
+interference appears with the signs reversed — and that table, unlike this one, is unchanged by the
+new data:
 
 | | 365d | 120d cascade |
 | --- | ---: | ---: |
@@ -169,6 +184,10 @@ recording given that measure corrected the tiering claim:
 Under simulation the best fill is **flat q=0.80 with the cascade**, and adding the tiering on
 top makes it *worse on both axes* (0.9395 → 0.9371 fill, 10,729 → 10,828 held).
 
+All eight figures in that table reproduce exactly on the current data. It runs on the 28 to 45 SKUs
+that carry a real stock count, at three origins that all precede July 2026, so the completed July
+tallies cannot reach it — which is why the two tables in this section moved differently.
+
 **The reading: the short window and the service tiering are substitutes, and they interfere.**
 Both put stock where demand can use it — the tiering across SKUs, the window across time.
 Applied together the tiering reads the more responsive rate's fold errors, concludes less
@@ -177,7 +196,9 @@ buffer is needed, and over-trims.
 ### What is settled and what is not
 
 - **Settled:** the coverage cost that closed this lever is removed by the cascade, and the
-  cascade dominates the flat 365d baseline on the better-powered measure.
+  cascade costs 12.6% less stock than the flat 365d baseline on the better-powered measure.
+  *(Restated 1 October 2026: the accompanying service gain was +2.2pp when first measured and is
+  +0.19pp now, so "dominates" overstates it. The stock saving is the part that held.)*
 - **Not settled:** whether `cascade + flat` or `tiered + 365d` is the better policy. The two
   measures disagree in sign, and the simulation's differences (0.3–0.9pp, 14–43 units on 4,565)
   are below what 28–45 observable SKUs can resolve — the same limit
