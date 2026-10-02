@@ -304,6 +304,15 @@ about 15 dead items a month with no loss of coverage, and that rules based on re
 next month's sales against 69% now (`SESSION_SUMMARY_2026-09-30.md` §4.2, measured before the July
 update; re-check). Changing the rule changes the pinned F = 58 check.
 
+**Status (done, in code):** `step3` now never classes an item Fast if it sold nothing in the last
+`STALE_DAYS = 90` days (it was 180). Re-checked on the July data with `tools/fsn_recency_check.py` (Fast
+list rebuilt before each of the last 12 months): the 90-day rule drops 16.4 dead items a month on average
+(180 days: 12.4) and next month's coverage is unchanged (63.0% with or without the rule). The 77–83% figure
+above was for fixed-size recent-sales lists, a different rule, and was not re-tested. On the current data
+Fast goes 58 → 30, and the 6 HVL items are all among those demoted (HVL 6 → 0). Takes effect at the next
+pipeline run. The pinned F = 58 and `is_hvl` = 6 in `tools/assert_invariants.py` now fail and were **not**
+edited (CLAUDE.md); the group approves new values.
+
 ### 4.2 Non-moving definition differs from the manuscript
 
 **Found:** `step3` marks an item Non-moving only if it has **no Fact_Sales rows at all**. The 19 items that
@@ -312,6 +321,12 @@ Non-moving as no recorded sales.
 
 **Fix (code + group decision):** classify zero-unit items as N; this changes S = 229 → 210 and N = 233 →
 252 (pinned values).
+
+**Status (done, in code):** `step3` classes an item N when it has no recorded sales, rows or not. The
+percentile cutoff is still computed over every item with a row (zero-unit ones included), so this only
+re-labels those 19 items and moves no other item's class. Together with 4.1 the current data gives
+F 30 / S 238 / N 252 (S would be 210 from this change alone). Pinned S = 228 and N = 233 fail and were not
+edited.
 
 ### 4.3 The calendar check: real but small, and sensitive to timing
 
@@ -325,6 +340,12 @@ which is why the results workbook now looks worse than before.
   alignment (the script exists in a scratch folder; it reuses `test_calendar_adjustment.py`).
 - After 2.2, test a per-category enrollment raise.
 
+**Status:** the test is now `scripts/test_calendar_adjustment_starts.py` (writes
+`data/calendar_adjustment_starts.csv`) and reproduces the figures above exactly. The results workbook has a
+**Calendar Check** tab with all 30 alignments, and its Read Me quotes the 30-start average next to the
+single-alignment caveat. The per-category enrollment raise is **still blocked on 2.2**: it needs first-term
+enrollment dates in `calendar_ranges.csv`, a protected file.
+
 ### 4.4 Other model notes
 
 - **Prophet** still loses on the current data (categories 55.3% vs 46.5%, items 88.6% vs 64.5%, same
@@ -333,6 +354,16 @@ which is why the results workbook now looks worse than before.
   promotion and discontinuation advisories were not built (now listed as Recommendations in the errata).
 - **Prediction targets** (#1 "will it sell in 30 days", #2 "weeks to next sale") looked useful, but their
   scripts were never committed (`SESSION_SUMMARY_2026-09-30.md` §3.9); none is in `scripts/` or `tools/`.
+
+  **Status:** rebuilt from that description as `scripts/test_prediction_targets.py` (walk-forward over the
+  last 12 months, no peeking; writes `data/prediction_targets_results.csv`). Not the laptop's code, and
+  the laptop's gain does **not** reproduce. All items: #1 AUC 0.942 model vs 0.942 rule, #2 C-index 0.899 vs
+  0.894. Items sold in the last 90 days (the honest subset): #1 AUC 0.835 vs 0.829, #2 C-index 0.784 vs
+  0.767; on yes/no calls the simple rule is better (accuracy 82.6% vs 80.8%, wrong idle flags 5.8% vs
+  9.3%). Not worth a "sales outlook" chip yet.
+- **Prophet** and **HVL**: no change. Prophet already only shapes the days. The Stock Depletion Rate needs
+  initial consignment stock, which exists for about a sixth of rows (`REMEDIATION_MASTER_v2.md`), and the
+  advisories were moved to Recommendations in the errata, so they stay unbuilt.
 
 ---
 

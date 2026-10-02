@@ -22,13 +22,16 @@ USTore_Forecast_Testing_Summary.xlsx.)
 
   More History Test  accuracy when the models see only the last 3-18 months
   What-If Scenarios  error if bulk orders / closures were known in advance
+  Calendar Check     the school-calendar rule at 30 different window start dates
   Grouping Search    whether fewer / re-mixed categories forecast better
 
 The three CICS tabs are read from data/cics_*.csv - run
 scripts/compare_cics_categorization.py first. More History Test is read from
 data/history_length_*.csv - run scripts/test_history_length.py first, and
-What-If Scenarios from data/what_if_test.csv - run scripts/test_what_if.py, and
-Grouping Search from data/grouping_search_*.csv - run scripts/search_groupings.py.
+What-If Scenarios from data/what_if_test.csv - run scripts/test_what_if.py,
+Calendar Check from data/calendar_adjustment_starts.csv - run
+scripts/test_calendar_adjustment_starts.py, and Grouping Search from
+data/grouping_search_*.csv - run scripts/search_groupings.py.
 
 Scores are recomputed with the production code (the same walk-forward test
 step4 / step4c use, via scripts/test_calendar_adjustment.py) and checked
@@ -250,6 +253,14 @@ def sheet_readme(wb, f):
                          f"items), and the calendar rule was set after seeing two of them, {f['cal_effect']}. "
                          f"Without the calendar rule, items are off by {f['item_base']:.1f}% instead of "
                          f"{item['wmape']:.1f}%, and categories by {f['cat_base']:.1f}% instead of {cat['wmape']:.1f}%."),
+        ("Calendar rule, fairly", "Which 12 windows are tested decides whether they straddle a break or a rush, so one "
+                                  "set of windows can make the calendar rule look good or bad by chance. Re-run with the "
+                                  f"windows starting on {f['starts']['item']['n']} different days, it lowers the error on "
+                                  f"average: items {f['starts']['item']['base']:.1f}% to {f['starts']['item']['capped']:.1f}% "
+                                  f"(better at {f['starts']['item']['helped']} of {f['starts']['item']['n']}), categories "
+                                  f"{f['starts']['category']['base']:.1f}% to {f['starts']['category']['capped']:.1f}% "
+                                  f"(better at {f['starts']['category']['helped']} of {f['starts']['category']['n']}). "
+                                  "Quote this average, not one set of windows (Calendar Check tab)."),
         ("Items that stopped selling", f"{item['n'] - live['n']} of the {item['n']} items have not sold in a year. They "
                                        f"are forecast near zero and sold nothing, so their MASE looks perfect. Average "
                                        f"item MASE is {item['mase_avg']:.2f} with them and {live['mase_avg']:.2f} for the "
@@ -268,6 +279,8 @@ def sheet_readme(wb, f):
                               "the last 3 to 18 months. Real data only."),
         ("What-If Scenarios", "How low the error could go if the store logged bulk orders or closures in advance. "
                               "Not what the app does."),
+        ("Calendar Check", "The school-calendar rule tested with the 12 windows starting on 30 different days, with and "
+                           "without the rule."),
         ("Grouping Search", "Whether fewer or re-mixed categories forecast better, chosen on older months and scored on "
                             "newer ones the search never saw."),
         ("All methods tried", "USTore_Forecast_Testing_Summary.xlsx."),
@@ -659,6 +672,42 @@ def sheet_what_if(wb, wi, n_closed):
         ws.row_dimensions[r].height = 15 * max(2, -(-len(text) // 120))
 
 
+def sheet_calendar_starts(wb, starts):
+    """The calendar rule scored at 30 window alignments (scripts/test_calendar_adjustment_starts.py)."""
+    ws = wb.create_sheet("Calendar Check")
+    r = title(ws, "Does the School-Calendar Rule Help? Tested at 30 Different Start Dates", [
+        "The usual test uses 12 past 30-day windows ending on the last day of data. Where they start decides which of them "
+        "straddle a break or an enrollment rush, so the result moves with it.",
+        "Here the same test is repeated with 0 to 29 days cut off the end of the data, so the windows start on 30 "
+        "different days. Error % = all units missed / all units sold. Green = the rule lowered the error."])
+    rows, fills = [], {}
+    wide = starts.pivot(index=["days_cut", "data_end"], columns="level",
+                        values=["first_window", "base_wmape", "capped_wmape"]).reset_index()
+    for i, (_, x) in enumerate(wide.iterrows()):
+        row = [str(x[("data_end", "")]), str(x[("first_window", "category")])]
+        for j, lvl in enumerate(("category", "item")):
+            base, cap = x[("base_wmape", lvl)], x[("capped_wmape", lvl)]
+            row += [base, cap, cap - base]
+            if cap < base:
+                fills[(i, 3 + 3 * j)] = GOOD_FILL
+        rows.append(row)
+    headers = ["Data ends", "First window starts",
+               "Categories: error % without rule", "Categories: with rule", "Categories: change (points)",
+               "Items: error % without rule", "Items: with rule", "Items: change (points)"]
+    fmt = {2: "0.0", 3: "0.0", 4: "+0.0;-0.0;0.0", 5: "0.0", 6: "0.0", 7: "+0.0;-0.0;0.0"}
+    r = table(ws, r, headers, rows, fmt, [13, 15, 14, 12, 12, 14, 12, 12], fills)
+
+    r += 2
+    ws.cell(row=r, column=1, value="AVERAGE OVER ALL START DATES").font = Font(name=FONT, size=11, bold=True, color="1F4E78")
+    for lvl, label in (("category", "Categories"), ("item", "Items")):
+        g = starts[starts.level == lvl]
+        r += 1
+        ws.cell(row=r, column=1, value=label).font = BOLD_FONT
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=len(headers))
+        ws.cell(row=r, column=2, value=f"{g.base_wmape.mean():.1f}% without the rule, {g.capped_wmape.mean():.1f}% with it; "
+                                       f"the rule lowered the error at {int(g.helped.sum())} of {len(g)} start dates.").font = BODY_FONT
+
+
 def sheet_grouping_search(wb, cand, path):
     ws = wb.create_sheet("Grouping Search")
     r = title(ws, "Would Fewer or Different Categories Forecast Better?", [
@@ -872,6 +921,10 @@ def main():
     if not all(os.path.exists(p) for p in gs):
         raise SystemExit("missing data/grouping_search_*.csv - run scripts/search_groupings.py first")
     gs_cand, gs_path = pd.read_csv(gs[0]), pd.read_csv(gs[1])
+    starts_path = os.path.join(ROOT, "data", "calendar_adjustment_starts.csv")
+    if not os.path.exists(starts_path):
+        raise SystemExit(f"missing {starts_path} - run scripts/test_calendar_adjustment_starts.py first")
+    starts = pd.read_csv(starts_path)
     con = sqlite3.connect("file:%s?mode=ro" % DB_PATH, uri=True)
     # All three versions are kept: "capped" is what the app ships; "base" (no calendar
     # rule) is quoted on the Read Me so the rule's in-sample gain is visible.
@@ -939,6 +992,10 @@ def main():
     facts["cal_effect"] = ("so these scores are slightly flattering" if all(helps) else
                            "yet on these windows the rule makes the forecasts worse, not better" if not any(helps) else
                            "and on these windows it helps one level and hurts the other")
+    # The fairer figure: the same test at 30 window alignments (Calendar Check tab).
+    facts["starts"] = {lvl: dict(n=len(g), base=g.base_wmape.mean(), capped=g.capped_wmape.mean(),
+                                 helped=int(g.helped.sum()))
+                       for lvl, g in starts.groupby("level")}
 
     cat = cat.sort_values(["key", "fold"]).assign(lead=lambda d: [(k,) for k in d.key])
     item = item.assign(avg=item.key.map(its.avg_actual)).sort_values(["avg", "key", "fold"], ascending=[False, True, True])
@@ -959,6 +1016,7 @@ def main():
     sheet_cics_mapping(wb, cics)
     sheet_history(wb, hist_summ, hist_per, span_months)
     sheet_what_if(wb, what_if, n_closed)
+    sheet_calendar_starts(wb, starts)
     sheet_grouping_search(wb, gs_cand, gs_path)
     wb.save(OUT)
 
@@ -967,6 +1025,9 @@ def main():
               "(median %.3f, below 1: %s)" % (s["level"], s["wmape"], s["bias"], s["beats"], MAPE_TARGET,
                                              s["target"], s["mase_avg"], s["mase_med"], s["mase_below"]))
     print("  without the calendar rule: items WMAPE %.1f%%, categories %.1f%%" % (facts["item_base"], facts["cat_base"]))
+    for lvl, s in facts["starts"].items():
+        print("  calendar rule over %d start dates (%s): %.1f%% -> %.1f%%, helped at %d"
+              % (s["n"], lvl, s["base"], s["capped"], s["helped"]))
     print("  worked example: %s, forecast %.1f vs actual %.0f" % (example["item"], example["forecast"], example["actual"]))
     print("Wrote", os.path.relpath(OUT, ROOT))
     return 0
