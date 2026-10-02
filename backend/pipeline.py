@@ -127,6 +127,10 @@ STEPS = [
     # keeping the two forecast steps together. It sits after step1b because it
     # needs forecast_category. Optional: without it the screen falls back to
     # summing the item forecasts, so a failure here must not stop step5.
+    # 2023 synthetic history into its own table (never Fact_Sales), read by
+    # step4 / step4c as extra TRAINING history. Needs step1b's categories.
+    # Optional: without it the forecasts train on real sales only.
+    ("synthetic2023", "scripts/load_synthetic_2023.py", "Load 2023 synthetic training history", True, DEFAULT_TIMEOUT_S, "seconds"),
     ("step4", "scripts/step4_forecast_model.py", "Forecast demand by item", True, DEFAULT_TIMEOUT_S, "~10 s"),
     ("step4c", "scripts/step4c_category_forecast.py", "Forecast demand by category", True, DEFAULT_TIMEOUT_S, "~15 s"),
     ("step5a", "scripts/step5a_set_lead_times.py", "Set supplier lead times", False, DEFAULT_TIMEOUT_S, "~5 s"),

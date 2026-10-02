@@ -91,6 +91,17 @@ ANY item sold (history_end), and the forecast window starts the day after it.
 step4_forecast_model.py uses the same rule, so a category figure and its
 items describe the same 30 calendar days.
 
+--- 2023 synthetic history (training only) ---
+
+When scripts/load_synthetic_2023.py has filled Fact_Sales_Synthetic, each
+category's series is extended back to 2023-02-01 with it (product-matched and
+category-only rows; forecasting/synthetic_history.py). Folds are laid out from
+the end, so every scored window and the forecast dates are real; 2023-09..2024-04
+has no data (zero-filled, passed as missing to the Prophet shape). The 6-month
+average and the 365-day calendar ratios never reach back that far, so in
+practice only the day-by-day shape and MASE's scale can move.
+--no-synthetic trains on real sales only.
+
 --- What gets written ---
 
   Result_Category_Forecast          one row per category per forecast day
@@ -169,6 +180,7 @@ from forecasting.baselines import rolling_mean_fit_predict
 from forecasting.evaluate import make_folds, walk_forward_evaluate
 from forecasting.calendar_adjust import calendar_capped_fit_predict, load_day_types
 from forecasting.shape import day_shape, load_calendar
+from forecasting import synthetic_history as sh
 
 DB_PATH = os.path.join(ROOT, "ustore.db")
 
@@ -281,6 +293,22 @@ def trim_padding(wide):
     return wide.loc[:history_end], history_end, len(wide) - len(wide.loc[:history_end])
 
 
+def extend_with_synthetic(con, series, use=True):
+    """(series, n_pre, gap): `series` (trimmed, one column per category) with
+    the 2023 synthetic TRAINING history prepended (forecasting/synthetic_history.py),
+    the number of days prepended, and the mask of prepended days with no data at
+    all (2023-09..2024-04, zero-filled here). Unchanged with use=False or no
+    synthetic table. A synthetic category with no real column is not added."""
+    syn = sh.load(con) if use else None
+    ext, n_pre, gap = sh.extend_index(series.index, syn)
+    if not n_pre:
+        return series, 0, gap
+    by_cat = sh.by_category(syn)
+    out = pd.DataFrame({c: sh.prepend(series[c].to_numpy(float), by_cat.get(c), ext, n_pre)
+                        for c in series.columns}, index=ext)
+    return out, n_pre, gap
+
+
 def error_metrics(actual, pred, scales):
     """MAE / RMSE / MAPE / MASE over one category's 30-day folds. Same
     definitions as step4_forecast_model.py::error_metrics; MASE's denominator
@@ -335,12 +363,17 @@ def main():
                          "(default: %(default)s; see the docstring)")
     ap.add_argument("--no-db-write", action="store_true",
                     help="run and report, leave the database untouched")
+    ap.add_argument("--no-synthetic", action="store_true",
+                    help="train on real sales only (default: also the 2023 synthetic "
+                         "history in Fact_Sales_Synthetic, when loaded)")
     args = ap.parse_args()
     model_type = args.model
 
     con = sqlite3.connect(DB_PATH)
     wide, panel_end = load_category_series(con)
     series, history_end, n_padding = trim_padding(wide)
+    real_start = series.index[0]
+    series, n_pre, gap = extend_with_synthetic(con, series, use=not args.no_synthetic)
     cal = load_calendar(con)
     model = MODELS[model_type]({"day_types": load_day_types(con, series.index, HORIZON)})
 
@@ -352,6 +385,11 @@ def main():
           f"| min_train {MIN_TRAIN}  (identical to step4 / model_benchmark.py)")
     print(f"Series: {series.shape[1]} categories x {len(series)} days "
           f"({series.index[0].date()} .. {history_end.date()})")
+    print("Training history: " + (
+        f"real from {real_start.date()} + 2023 synthetic from {series.index[0].date()} "
+        f"({n_pre} days prepended, {int(gap.sum())} of them with no data; "
+        f"training only - every scored window is real)"
+        if n_pre else "real only"))
     print(f"Panel runs to {panel_end.date()}; last day any item sold is "
           f"{history_end.date()} -> {n_padding} trailing padding days excluded "
           f"from fitting and validation.")
@@ -369,7 +407,8 @@ def main():
         metrics, reason = validate(cat, v, model, model_type)
         level = float(np.asarray(model(v, HORIZON), dtype=float).ravel()[0])
         total = level * HORIZON
-        weights, used = day_shape(args.shape, v, series.index, cal, dates)
+        # The no-data gap goes in as NaN: Prophet skips missing days.
+        weights, used = day_shape(args.shape, np.where(gap, np.nan, v), series.index, cal, dates)
         shape_used[cat] = (used, float(weights.max() * HORIZON), float(weights.min() * HORIZON))
         row_model = model_type if used == "flat" else f"{model_type}+{used}_shape"
 

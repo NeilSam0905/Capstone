@@ -18,17 +18,22 @@ Run:
     python app.py
 Serves on http://127.0.0.1:5000. The frontend dev server proxies /api to
 this port (see vite.config.js) so no CORS is needed in normal dev use;
-flask-cors is enabled anyway as a fallback for direct access.
+flask-cors is enabled as a fallback, limited to the dashboard's own
+addresses (auth.allowed_origins).
+
+Every /api route except /api/auth/* needs a signed-in session (auth.py).
 """
 import csv
 import io
+import math
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from flask import Flask, Response, g, jsonify, request
 from flask_cors import CORS
 
+import auth
 import batch_export
 import batch_pdf
 import catalog
@@ -38,7 +43,10 @@ import validation
 import names                  # after pipeline: it needs scripts/ on sys.path
 
 app = Flask(__name__)
-CORS(app)
+auth.configure(app)
+# Only the dashboard may call this API from a browser, and it sends the
+# session cookie, hence supports_credentials.
+CORS(app, origins=auth.allowed_origins(), supports_credentials=True)
 
 # The plain data files are gitignored; after a fresh clone or a pull they come
 # from the encrypted vault/ (scripts/vault.py). Never overwrites local work.
@@ -209,6 +217,58 @@ def _close_con(_exc):
     c = g.pop("con", None)
     if c is not None:
         c.close()
+
+
+# ------------------------------------------------------------------- auth
+
+# Reachable signed out: the login form needs these three.
+PUBLIC_PATHS = {"/api/auth/login", "/api/auth/logout", "/api/auth/session"}
+
+
+@app.before_request
+def _require_login():
+    """Every /api route needs a signed-in user, and every write must come from
+    the dashboard's own address (see auth.origin_allowed for why CORS alone
+    does not cover writes). CORS preflights pass through: they carry no
+    cookie and change nothing."""
+    if request.method == "OPTIONS" or not request.path.startswith("/api/"):
+        return None
+    if request.method not in auth.SAFE_METHODS and not auth.origin_allowed(request):
+        return jsonify({"ok": False, "error": "This request did not come from the dashboard."}), 403
+    if request.path in PUBLIC_PATHS:
+        return None
+    if not auth.current_user():
+        return jsonify({"ok": False, "auth_required": True,
+                        "error": "Your session has ended. Sign in again."}), 401
+    return None
+
+
+@app.get("/api/auth/session")
+def get_session():
+    user = auth.current_user()
+    return jsonify({"authenticated": user is not None, "user": user})
+
+
+@app.post("/api/auth/login")
+def login():
+    payload = request.get_json(silent=True) or {}
+    addr = request.remote_addr or "?"
+    wait = auth.locked_for(addr)
+    if wait:
+        return jsonify({"ok": False, "error": f"Too many wrong attempts. Try again in {wait} seconds."}), 429
+    if not str(payload.get("username") or "").strip() or not payload.get("password"):
+        return jsonify({"ok": False, "error": "Enter your username and password."}), 400
+    user = auth.check_login(con(), payload.get("username"), payload.get("password"), addr)
+    if user is None:
+        return jsonify({"ok": False, "error": "Wrong username or password."}), 401
+    auth.sign_in(user)
+    return jsonify({"ok": True, "user": user})
+
+
+@app.post("/api/auth/logout")
+def logout():
+    auth.sign_out()
+    return jsonify({"ok": True})
 
 
 def _bool_flag(v):
@@ -772,7 +832,46 @@ ORDER_QTY_NOTE = (
 
 @app.get("/api/reorder")
 def get_reorder():
-    c = con()
+    items = _reorder_items(con())
+    if items is None:
+        return jsonify({
+            "available": False,
+            "reason": "Dim_Parameters is empty - no lead times, ordering or holding costs "
+                      "have been collected yet (Block 5, the USTore site visit).",
+            "data": None,
+        })
+
+    due = [i for i in items if i["needs_reorder"]]
+    eoq_over = sum(
+        1 for i in items if i["scenarios"].get("low_admin_cost", {}).get("exceeds_annual_demand")
+    )
+
+    return jsonify({
+        "available": True,
+        "reason": None,
+        "data": {
+            "items": items,
+            "summary": {
+                "priced_skus": len(items),
+                "with_stock_count": sum(1 for i in items if i["current_stock"] is not None),
+                "no_stock_count": sum(1 for i in items if i["current_stock"] is None),
+                "reorder_now": len(due),
+                "approaching_rop": sum(1 for i in items if i["approaching_rop"]),
+                "suggested_units_total": sum(i["suggested_order_qty"] for i in due),
+                "suppliers_affected": len({i["supplier_name"] for i in due if i["supplier_name"]}),
+                "review_period_days": REVIEW_PERIOD_DAYS,
+                "order_qty_note": ORDER_QTY_NOTE,
+                "eoq_exceeding_annual_demand": eoq_over,
+            },
+        },
+    })
+
+
+def _reorder_items(c):
+    """Every SKU in Result_Prescriptive with its stock position and what to do
+    about it, sorted by name - or None when the prescriptive step has nothing
+    (Dim_Parameters empty). Shared by /api/reorder and the forecast guidance,
+    so the two can never suggest different order quantities for one item."""
     n_params = c.execute("SELECT COUNT(*) FROM Dim_Parameters").fetchone()[0]
     reorder_rows = dbmod.rows(c, """
         SELECT rp.*, p.item_name, p.supplier_name
@@ -781,12 +880,7 @@ def get_reorder():
         ORDER BY p.item_name, rp.ordering_cost_scenario
     """)
     if n_params == 0 or not reorder_rows:
-        return jsonify({
-            "available": False,
-            "reason": "Dim_Parameters is empty - no lead times, ordering or holding costs "
-                      "have been collected yet (Block 5, the USTore site visit).",
-            "data": None,
-        })
+        return None
 
     by_product = {}
     for r in reorder_rows:
@@ -856,31 +950,7 @@ def get_reorder():
                 item["annual_demand"] and scen["eoq"] > item["annual_demand"]
             )
 
-    items = sorted(by_product.values(), key=lambda i: i["item_name"])
-    due = [i for i in items if i["needs_reorder"]]
-    eoq_over = sum(
-        1 for i in items if i["scenarios"].get("low_admin_cost", {}).get("exceeds_annual_demand")
-    )
-
-    return jsonify({
-        "available": True,
-        "reason": None,
-        "data": {
-            "items": items,
-            "summary": {
-                "priced_skus": len(items),
-                "with_stock_count": sum(1 for i in items if i["current_stock"] is not None),
-                "no_stock_count": sum(1 for i in items if i["current_stock"] is None),
-                "reorder_now": len(due),
-                "approaching_rop": sum(1 for i in items if i["approaching_rop"]),
-                "suggested_units_total": sum(i["suggested_order_qty"] for i in due),
-                "suppliers_affected": len({i["supplier_name"] for i in due if i["supplier_name"]}),
-                "review_period_days": REVIEW_PERIOD_DAYS,
-                "order_qty_note": ORDER_QTY_NOTE,
-                "eoq_exceeding_annual_demand": eoq_over,
-            },
-        },
-    })
+    return sorted(by_product.values(), key=lambda i: i["item_name"])
 
 
 # ---------------------------------------------------------------- stock
@@ -1001,7 +1071,8 @@ def import_inventory_counts():
         pid = _lookup(products, item)
         if pid is None:
             names.hold_row(c, "inventory", item, qty, storage.filename, count_month=month,
-                           note=(str(note).strip() if note else None))
+                           note=(str(note).strip() if note else None),
+                           entered_by=auth.current_user())
             held[item] = held.get(item, 0) + 1
             continue
 
@@ -1057,12 +1128,14 @@ def add_inventory_count():
 
     c.execute("""
         INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged)
-        VALUES (?, ?, ?, ?, 'local', ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT (product_id, count_month) DO UPDATE SET
             quantity = excluded.quantity,
             note = excluded.note,
+            counted_by = excluded.counted_by,
             date_logged = excluded.date_logged
-    """, (product_id, count_month, quantity, note, datetime.now().isoformat(timespec="seconds")))
+    """, (product_id, count_month, quantity, note, auth.current_user(),
+          datetime.now().isoformat(timespec="seconds")))
     c.commit()
 
     product = dbmod.one(c, "SELECT item_name FROM Dim_Product WHERE product_id = ?", (product_id,))
@@ -1199,8 +1272,8 @@ def set_closure(iso_date):
     # immediately, same dual-write shape as add_event() below).
     c.execute("""
         INSERT INTO Closure_Log (closure_date, is_closed, reason, created_by, date_logged)
-        VALUES (?, ?, ?, 'local', ?)
-    """, (iso_date, closed, reason, datetime.now().isoformat(timespec="seconds")))
+        VALUES (?, ?, ?, ?, ?)
+    """, (iso_date, closed, reason, auth.current_user(), datetime.now().isoformat(timespec="seconds")))
     c.execute("UPDATE Dim_Date SET is_store_closed = ? WHERE calendar_date = ?", (closed, iso_date))
     c.commit()
     return jsonify({"ok": True})
@@ -1213,7 +1286,7 @@ def get_recent_entries():
     limit = request.args.get("limit", default=50, type=int)
     rows = dbmod.rows(con(), """
         SELECT f.sale_id, f.product_id, d.calendar_date, f.quantity_sold,
-               UPPER(f.transaction_type) AS transaction_type, f.imputation_flag, f.is_censored,
+               UPPER(f.transaction_type) AS transaction_type, f.imputation_flag, f.is_censored, f.entered_by,
                p.item_name, COALESCE(p.supplier_name, ?) AS supplier_name
         FROM Fact_Sales f
         JOIN Dim_Date d ON d.date_id = f.date_id
@@ -1234,7 +1307,7 @@ def get_entries_by_date():
         return jsonify({"ok": False, "errors": {"calendar_date": "date=YYYY-MM-DD is required."}}), 400
     rows = dbmod.rows(con(), """
         SELECT f.sale_id, f.product_id, d.calendar_date, f.quantity_sold,
-               UPPER(f.transaction_type) AS transaction_type, f.imputation_flag, f.is_censored,
+               UPPER(f.transaction_type) AS transaction_type, f.imputation_flag, f.is_censored, f.entered_by,
                p.item_name, COALESCE(p.supplier_name, ?) AS supplier_name
         FROM Fact_Sales f
         JOIN Dim_Date d ON d.date_id = f.date_id
@@ -1264,9 +1337,11 @@ def add_entry():
     # Stored in lower case like every historical row ('sale'); shown in upper case.
     cur = c.execute("""
         INSERT INTO Fact_Sales
-            (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag, transaction_type)
-        VALUES (?, ?, ?, 0, 0, ?)
-    """, (product_id, date_row["date_id"], quantity_sold, transaction_type.lower()))
+            (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag,
+             transaction_type, entered_by)
+        VALUES (?, ?, ?, 0, 0, ?, ?)
+    """, (product_id, date_row["date_id"], quantity_sold, transaction_type.lower(),
+          auth.current_user()))
     c.commit()
 
     product = dbmod.one(c, "SELECT item_name, supplier_name FROM Dim_Product WHERE product_id = ?", (product_id,))
@@ -1278,6 +1353,7 @@ def add_entry():
         "quantity_sold": quantity_sold,
         "calendar_date": calendar_date,
         "transaction_type": transaction_type,
+        "entered_by": auth.current_user(),
         "is_local": False,
     }
     return jsonify({"ok": True, "entry": entry})
@@ -1326,6 +1402,7 @@ def import_tally():
     dates = {r["calendar_date"]: r["date_id"]
              for r in dbmod.rows(c, "SELECT date_id, calendar_date FROM Dim_Date")}
     today_iso = date.today().isoformat()
+    user = auth.current_user()
     imported = 0
     rejected = []
     held = {}
@@ -1356,15 +1433,16 @@ def import_tally():
         pid = _lookup(products, item)
         if pid is None:
             names.hold_row(c, "tally", item, qty, storage.filename, calendar_date=iso,
-                           transaction_type=ttype.lower())
+                           transaction_type=ttype.lower(), entered_by=user)
             held[item] = held.get(item, 0) + 1
             continue
 
         c.execute("""
             INSERT INTO Fact_Sales
-                (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag, transaction_type)
-            VALUES (?, ?, ?, 0, 0, ?)
-        """, (pid, dates[iso], qty, ttype.lower()))
+                (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag,
+                 transaction_type, entered_by)
+            VALUES (?, ?, ?, 0, 0, ?, ?)
+        """, (pid, dates[iso], qty, ttype.lower(), user))
         imported += 1
 
     c.commit()
@@ -1404,8 +1482,9 @@ def add_event():
     c = con()
     cur = c.execute("""
         INSERT INTO Event_Log (event_date, event_name, event_description, created_by, date_logged)
-        VALUES (?, ?, ?, 'local', ?)
-    """, (calendar_date, event_name, event_description, datetime.now().isoformat(timespec="seconds")))
+        VALUES (?, ?, ?, ?, ?)
+    """, (calendar_date, event_name, event_description, auth.current_user(),
+          datetime.now().isoformat(timespec="seconds")))
     c.execute("UPDATE Dim_Date SET is_event_day = 1 WHERE calendar_date = ?", (calendar_date,))
     c.commit()
 
@@ -1415,7 +1494,7 @@ def add_event():
         "calendar_date": calendar_date,
         "event_name": event_name,
         "event_description": event_description,
-        "created_by": "local",
+        "created_by": auth.current_user(),
         "is_local": False,
     }
     return jsonify({"ok": True, "event": event})
@@ -1538,6 +1617,187 @@ _FORECAST_PENDING = {
 }
 
 
+# ------------------------------------------------------ forecast guidance
+
+# Flagged dates no more than this many days apart are one window: a weekend or
+# a holiday inside an exam week must not split it, and two exam periods two
+# months apart must not merge into one "10/09 to 12/20" stretch.
+WINDOW_GAP_DAYS = 3
+
+GUIDANCE_DAYS = 30            # the horizon the forecast and the advice cover
+REORDER_LIST_LIMIT = 8        # items named in a category's "reorder these" list
+
+
+def _date_runs(dates, gap=WINDOW_GAP_DAYS):
+    """ISO dates -> [{"start", "end", "days"}], one per unbroken window."""
+    runs = []
+    for d in sorted(set(dates)):
+        if runs and (date.fromisoformat(d) - date.fromisoformat(runs[-1]["end"])).days <= gap:
+            runs[-1]["end"] = d
+            runs[-1]["days"] += 1
+        else:
+            runs.append({"start": d, "end": d, "days": 1})
+    return runs
+
+
+def _calendar_window(c, start, end):
+    """What the school calendar and the event log hold between two dates:
+    the calendar signals the forecast is fitted on, so the advice can name
+    them rather than leave a spike on the chart unexplained."""
+    days = dbmod.rows(c, """
+        SELECT calendar_date, is_store_closed, is_enrollment_period, is_exam_week, is_sem_break
+        FROM Dim_Date WHERE calendar_date BETWEEN ? AND ? ORDER BY calendar_date
+    """, (start, end))
+    events = dbmod.rows(c, """
+        SELECT event_date AS date, event_name AS name FROM Event_Log
+        WHERE event_date BETWEEN ? AND ? ORDER BY event_date
+    """, (start, end)) if "Event_Log" in _table_names(c) else []
+
+    def runs(col):
+        return _date_runs([d["calendar_date"] for d in days if d[col]])
+
+    return {
+        "start": start, "end": end,
+        "enrollment": runs("is_enrollment_period"),
+        "exams": runs("is_exam_week"),
+        "sem_break": runs("is_sem_break"),
+        "closed_days": sum(1 for d in days if d["is_store_closed"]),
+        "events": events,
+    }
+
+
+def _busiest_week(rows, total):
+    """The 7 consecutive forecast days with the most demand."""
+    if len(rows) < 7 or total <= 0:
+        return None
+    sums = [sum(r["yhat"] for r in rows[i:i + 7]) for i in range(len(rows) - 6)]
+    i = max(range(len(sums)), key=sums.__getitem__)
+    return {"start": rows[i]["forecast_date"][:10], "end": rows[i + 6]["forecast_date"][:10],
+            "units": round(sums[i], 1), "share": round(sums[i] / total, 3)}
+
+
+def _item_stock_advice(pid, stats, reorder, rate, total, high, today):
+    """Stock against the forecast for one item, and the one thing to do.
+
+    Dates are projected from TODAY at the forecast's average daily rate, not
+    along the forecast's own dates: the forecast starts the day after the last
+    tally, which can be weeks ago, and "order by" a date already gone is no
+    advice at all. The reorder point and the suggested quantity are
+    Result_Prescriptive's (shared with Reorder Alerts via _reorder_items), so
+    this page and that one cannot disagree about an item."""
+    st = stats.get(pid, {})
+    r = reorder.get(pid)
+    stock = st.get("current_stock")
+    rop = r["reorder_point"] if r else None
+    out = {
+        "current_stock": stock, "stock_as_of": st.get("stock_as_of"), "reorder_point": rop,
+        "days_cover": None, "runs_out_on": None, "order_by": None,
+        "suggested_order_qty": r["suggested_order_qty"] if r else None,
+        "to_cover_30d": None, "to_cover_30d_high": None,
+    }
+    if total < 0.5:
+        return out, "no_demand"
+    if stock is None:
+        return out, "count_stock"
+
+    out["to_cover_30d"] = max(0, math.ceil(total - stock))
+    out["to_cover_30d_high"] = max(0, math.ceil(high - stock))
+    if rate > 0:
+        out["days_cover"] = round(stock / rate, 1)
+        out["runs_out_on"] = (today + timedelta(days=int(stock / rate))).isoformat()
+        if rop is not None and stock > rop:
+            out["order_by"] = (today + timedelta(days=int((stock - rop) / rate))).isoformat()
+
+    if r and r["needs_reorder"]:
+        return out, "reorder_now"
+    if out["order_by"] and out["order_by"] <= (today + timedelta(days=GUIDANCE_DAYS - 1)).isoformat():
+        return out, "order_by"
+    if out["to_cover_30d"] > 0:
+        return out, "short"                    # no ROP to warn earlier, but the month outruns stock
+    if out["to_cover_30d_high"] > 0:
+        return out, "watch"                    # covers the expected month, not a busy one
+    return out, "covered"
+
+
+def _category_stock_advice(product_ids, stats, reorder, total):
+    """A category's stock position is the items in it: which of them are at
+    their reorder point now, from the same rule as Reorder Alerts. Category
+    stock is not summed against the category forecast - counts exist for only
+    some items, and a partial sum against a whole-category figure would make
+    every category look short."""
+    ids = set(product_ids)
+    counted = sum(1 for pid in ids if stats.get(pid, {}).get("current_stock") is not None)
+    due = sorted((reorder[pid] for pid in ids if pid in reorder and reorder[pid]["needs_reorder"]),
+                 key=lambda i: -i["suggested_order_qty"])
+    out = {
+        "items_total": len(ids), "items_counted": counted,
+        "reorder_now_total": len(due),
+        "reorder_units_total": sum(i["suggested_order_qty"] for i in due),
+        "reorder_now": [{k: i[k] for k in ("product_id", "item_name", "supplier_name", "current_stock",
+                                           "reorder_point", "suggested_order_qty")}
+                        for i in due[:REORDER_LIST_LIMIT]],
+    }
+    if total < 0.5:
+        return out, "no_demand"
+    if due:
+        return out, "reorder_items"
+    if counted == 0:
+        return out, "count_stock"
+    return out, "covered"
+
+
+def _forecast_guidance(c, forecast, history, product_ids, single_item):
+    """The forecast chart, read out in plain terms for whoever orders stock:
+    how much to expect, against what has been selling, when the busy days
+    are, what the calendar holds, and what to do about stock.
+
+    Everything here is derived from numbers the pipeline already produced
+    (Result_Forecast / Result_Category_Forecast, Result_Prescriptive, the
+    stock counts) - it explains them, it does not add a second forecast.
+    Returns None when there is nothing to read."""
+    rows = [r for r in forecast if r.get("yhat") is not None]
+    if not rows:
+        return None
+    n = len(rows)
+    total = sum(r["yhat"] for r in rows)
+    low = sum(r["yhat"] if r.get("yhat_lower") is None else r["yhat_lower"] for r in rows)
+    high = sum(r["yhat"] if r.get("yhat_upper") is None else r["yhat_upper"] for r in rows)
+    rate = total / n
+    today = date.today()
+    start, end = rows[0]["forecast_date"][:10], rows[-1]["forecast_date"][:10]
+
+    # The last month on record, as units per tally day - the same axis the
+    # chart puts history on, so "up 20%" matches what the eye sees there.
+    recent = next((h for h in reversed(history or []) if h.get("tally_days")), None)
+    recent_rate = recent["units"] / recent["tally_days"] if recent else None
+
+    # Calendar for the days the advice is about: the coming 30 from today, or
+    # the forecast's own window when that has not started yet.
+    cal_start = max(today.isoformat(), start)
+    cal_end = (date.fromisoformat(cal_start) + timedelta(days=GUIDANCE_DAYS - 1)).isoformat()
+
+    stats, _ = catalog.compute_stats(c)
+    reorder = {i["product_id"]: i for i in (_reorder_items(c) or [])}
+    if single_item:
+        stock, action = _item_stock_advice(product_ids[0], stats, reorder, rate, total, high, today)
+    else:
+        stock, action = _category_stock_advice(product_ids, stats, reorder, total)
+
+    return {
+        "window": {"start": start, "end": end, "days": n, "passed": end < today.isoformat()},
+        "expected": {"total": round(total, 1), "low": round(low, 1), "high": round(high, 1),
+                     "per_day": round(rate, 2)},
+        "recent": ({"month": recent["month"], "per_day": round(recent_rate, 2)} if recent else None),
+        "change_pct": (round(100 * (rate - recent_rate) / recent_rate) if recent_rate else None),
+        "busiest_week": _busiest_week(rows, total),
+        "calendar": _calendar_window(c, cal_start, cal_end),
+        "scope": "item" if single_item else "category",
+        "stock": stock,
+        "action": action,
+        "today": today.isoformat(),
+    }
+
+
 @app.get("/api/forecast")
 def get_forecast_general():
     c = con()
@@ -1602,6 +1862,7 @@ def get_forecast(product_id):
     snapshot_date = forecast_rows[0]["snapshot_date"]
     last_sale_date = _last_sale_date(c, product_id)
     days_since_last_sale, likely_discontinued = _discontinued_flags(last_sale_date, snapshot_date)
+    history = _monthly_history(c, [product_id])
 
     return jsonify({
         "available": True,
@@ -1618,8 +1879,9 @@ def get_forecast(product_id):
             "days_since_last_sale": days_since_last_sale,
             "likely_discontinued": likely_discontinued,
             "forecast": forecast_rows,
-            "history": _monthly_history(c, [product_id]),
+            "history": history,
             "metrics": metrics,
+            "guidance": _forecast_guidance(c, forecast_rows, history, [product_id], single_item=True),
         },
     })
 
@@ -1749,6 +2011,7 @@ def get_forecast_category(category):
         SELECT product_id FROM Dim_Product
         WHERE COALESCE(forecast_category, 'Uncategorised') = ?
     """, (category,))]
+    history = _monthly_history(c, series_ids, until=head["history_end"])
 
     return jsonify({
         "available": True,
@@ -1766,9 +2029,10 @@ def get_forecast_category(category):
             "total_30d": round(sum(r["yhat"] or 0 for r in cat_rows), 3),
             "contributors_total_30d": round(sum(r["yhat_30d"] or 0 for r in contributors), 3),
             "forecast": cat_rows,
-            "history": _monthly_history(c, series_ids, until=head["history_end"]),
+            "history": history,
             "contributors": contributors,
             "metrics": metrics,
+            "guidance": _forecast_guidance(c, cat_rows, history, series_ids, single_item=False),
         },
     })
 
@@ -1826,6 +2090,8 @@ def _category_forecast_from_items(c, category):
     _flag_discontinued(contributors, head["snapshot_date"] if head else None)
 
     total = round(sum(r["yhat_30d"] or 0 for r in contributors), 3)
+    ids = [r["product_id"] for r in contributors]
+    history = _monthly_history(c, ids)
     return jsonify({
         "available": True,
         "reason": None,
@@ -1842,9 +2108,10 @@ def _category_forecast_from_items(c, category):
             "total_30d": total,
             "contributors_total_30d": total,
             "forecast": rows,
-            "history": _monthly_history(c, [r["product_id"] for r in contributors]),
+            "history": history,
             "contributors": contributors,
             "metrics": [],
+            "guidance": _forecast_guidance(c, rows, history, ids, single_item=False),
         },
     })
 
@@ -1890,6 +2157,10 @@ def get_advisories():
             )
         return rows
 
+    # "Upcoming" is the store's own today. SQLite's date('now') is UTC, which
+    # in Manila is still yesterday until 8 a.m.
+    today = date.today().isoformat()
+
     # Upcoming events from Event_Log
     upcoming_events = dbmod.rows(c, """
         SELECT e.event_date, e.event_name, e.event_description,
@@ -1897,60 +2168,57 @@ def get_advisories():
                d.semester_id, d.semester_week
         FROM Event_Log e
         LEFT JOIN Dim_Date d ON d.calendar_date = e.event_date
-        WHERE e.event_date >= date('now')
+        WHERE e.event_date >= ?
         ORDER BY e.event_date
         LIMIT 10
-    """)
+    """, (today,))
 
-    # Upcoming calendar periods (enrollment, exams) from Dim_Date
+    # Upcoming calendar periods (enrollment, exams) from Dim_Date. Every
+    # upcoming flagged date, grouped into windows below: this used to take the
+    # first 30 flagged dates and report the first and last of them as one
+    # range, which turned midterms (Oct 9-14) and finals (Dec 14-20) into
+    # "Exams scheduled 10/09 to 12/20" - ten weeks of quiet that are not there.
     upcoming_periods = dbmod.rows(c, """
-        SELECT calendar_date, semester_id, semester_week,
-               is_enrollment_period, is_exam_week, is_event_day, is_sem_break
+        SELECT calendar_date, is_enrollment_period, is_exam_week
         FROM Dim_Date
-        WHERE calendar_date >= date('now')
-          AND (is_enrollment_period = 1 OR is_exam_week = 1 OR is_event_day = 1)
+        WHERE calendar_date >= ?
+          AND (is_enrollment_period = 1 OR is_exam_week = 1)
         ORDER BY calendar_date
-        LIMIT 30
-    """)
+    """, (today,))
 
     advisories = []
 
-    # Build advisories from calendar signals
-    period_types = {}
-    for row in upcoming_periods:
-        if row["is_enrollment_period"]:
-            period_types.setdefault("enrollment", []).append(row["calendar_date"])
-        if row["is_exam_week"]:
-            period_types.setdefault("exam_week", []).append(row["calendar_date"])
+    def span(run):
+        return (_us_date(run["start"]) if run["start"] == run["end"]
+                else f"{_us_date(run['start'])} to {_us_date(run['end'])}")
 
-    if "enrollment" in period_types:
-        dates = period_types["enrollment"]
+    # One advisory per window, so each carries its own dates.
+    for run in _date_runs([r["calendar_date"] for r in upcoming_periods if r["is_enrollment_period"]]):
         advisories.append({
             "type": "enrollment",
             "severity": "high",
             "title": "Enrollment Period Approaching",
-            "description": f"Enrollment runs {_us_date(dates[0])} to {_us_date(dates[-1])}. "
+            "description": f"Enrollment runs {span(run)}. "
                            "Historically the highest-volume sales window — "
                            "ensure Fast-moving items (uniforms, IDs, school supplies) are stocked.",
-            "date_range": [dates[0], dates[-1]],
+            "date_range": [run["start"], run["end"]],
             "has_forecast": has_forecast,
-            "basis": f"{len(dates)} upcoming date(s) in Dim_Date carry is_enrollment_period = 1. "
+            "basis": f"{run['days']} upcoming date(s) in Dim_Date carry is_enrollment_period = 1. "
                      "The items below are the Fast-moving class (step3's 80th-percentile ADUS "
                      "cut), which is what an enrollment surge draws on.",
             "items": affected_items(("F",)),
         })
 
-    if "exam_week" in period_types:
-        dates = period_types["exam_week"]
+    for run in _date_runs([r["calendar_date"] for r in upcoming_periods if r["is_exam_week"]]):
         advisories.append({
             "type": "exam_week",
             "severity": "medium",
             "title": "Exam Week Upcoming",
-            "description": f"Exams scheduled {_us_date(dates[0])} to {_us_date(dates[-1])}. "
+            "description": f"Exams scheduled {span(run)}. "
                            "Expect reduced foot traffic; delay non-urgent restocking.",
-            "date_range": [dates[0], dates[-1]],
+            "date_range": [run["start"], run["end"]],
             "has_forecast": has_forecast,
-            "basis": f"{len(dates)} upcoming date(s) in Dim_Date carry is_exam_week = 1. "
+            "basis": f"{run['days']} upcoming date(s) in Dim_Date carry is_exam_week = 1. "
                      "Restocking these Fast movers can wait until after the window.",
             "items": affected_items(("F",)),
         })
@@ -1984,12 +2252,12 @@ def get_advisories():
             LIMIT 5
         """)
         if fast_items:
-            names = ", ".join(i["item_name"] for i in fast_items[:3])
+            top_names = ", ".join(i["item_name"] for i in fast_items[:3])
             advisories.insert(0, {
                 "type": "forecast_alert",
                 "severity": "high",
                 "title": "Top Forecasted Demand — Next 30 Days",
-                "description": f"Highest projected demand: {names}. "
+                "description": f"Highest projected demand: {top_names}. "
                                "Review stock levels against the forecast on the Demand Forecast page.",
                 "date_range": None,
                 "has_forecast": True,

@@ -14,6 +14,9 @@ venv/
 .env
 .env.local
 
+# session-signing key the backend generates on first start (backend/auth.py)
+backend/.secret_key
+
 # raw inventory workbook (~131MB, mostly embedded product photos) - too big for
 # GitHub's 100MB limit; USTore_inventory_excel_long.csv has the usable data
 Copy of USTORE INVENTORY REPORT (1).xlsx

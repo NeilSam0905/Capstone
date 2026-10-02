@@ -80,11 +80,23 @@ function schedule(delay) {
 }
 
 let started = false;
+let unsubscribe = null;
 
 /** Start warming (idempotent), and re-warm after every write. */
 export function startPrefetch() {
   if (started) return;
   started = true;
   schedule(START_DELAY_MS);
-  onCacheCleared(() => schedule(REWARM_DELAY_MS));
+  unsubscribe = onCacheCleared(() => schedule(REWARM_DELAY_MS));
+}
+
+/** Stop warming, on sign-out. Every request would answer 401 then, and each
+ *  one clears the cache - which would schedule the next re-warm, forever. */
+export function stopPrefetch() {
+  if (!started) return;
+  started = false;
+  generation += 1;              // a run already in flight stops at its next step
+  clearTimeout(timer);
+  unsubscribe?.();
+  unsubscribe = null;
 }

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { startPrefetch } from './services/prefetch';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { startPrefetch, stopPrefetch } from './services/prefetch';
 import FilterBar from './components/FilterBar';
+import Login from './pages/Login';
 import Overview from './pages/Overview';
 import Forecast from './pages/Forecast';
 import Classification from './pages/Classification';
@@ -11,8 +12,11 @@ import PowerBIDashboard from './pages/PowerBIDashboard';
 import Icon from './components/Icon';
 import ErrorBanner from './components/ErrorBanner';
 import useData from './hooks/useData';
-import { getMeta, getMonths, CUSTOM_RANGE } from './services/dataService';
+import {
+  getMeta, getMonths, CUSTOM_RANGE, getSession, logout, onAuthExpired, clearApiCache,
+} from './services/dataService';
 import brandMark from './assets/ustore-mark.png';
+import { displayUser } from './lib/format';
 
 // Shell markup and class names come from the redesign prototype
 // ("design-reference/chrome.jsx"); only the routing is ours.
@@ -78,22 +82,66 @@ const PAGE_FILTERS = {
 };
 
 export default function App() {
+  // undefined while the session is being checked, null when signed out.
+  const [user, setUser] = useState(undefined);
+  const [expired, setExpired] = useState(false);
+  // Read by the expiry listener, which is registered once: a 401 that lands
+  // after Sign out (a request already in flight) is not "your session ended".
+  const signedIn = useRef(false);
+  useEffect(() => { signedIn.current = !!user; }, [user]);
+
+  useEffect(() => {
+    let live = true;
+    getSession()
+      .then(s => { if (live) setUser(s.authenticated ? s.user : null); })
+      // Backend unreachable: show the login form, whose submit reports why.
+      .catch(() => { if (live) setUser(null); });
+    // Any request answered "session ended" puts the login page back.
+    const off = onAuthExpired(() => {
+      stopPrefetch();
+      if (signedIn.current) setExpired(true);
+      signedIn.current = false;
+      setUser(null);
+    });
+    return () => { live = false; off(); };
+  }, []);
+
+  const signOut = useCallback(async () => {
+    signedIn.current = false;
+    stopPrefetch();
+    try { await logout(); } catch { /* signed out locally either way */ }
+    clearApiCache();
+    setExpired(false);
+    setUser(null);
+  }, []);
+
+  if (user === undefined) return null;
+  if (!user) {
+    return <Login expired={expired} onLogin={u => { setExpired(false); setUser(u); }} />;
+  }
+  // Keyed on the user so signing in again starts from a fresh screen.
+  return <Shell key={user} user={user} signOut={signOut} />;
+}
+
+function Shell({ user, signOut }) {
   const [view, setView] = useState('tally');
   const [page, setPage] = useState('overview');
   const [filters, setFilters] = useState(UNFILTERED);
   // Warm every dashboard page's data in the background from the start, so
-  // the first visit to each paints at once (services/prefetch.js).
+  // the first visit to each paints at once (services/prefetch.js). Only once
+  // signed in: before that every request would be refused.
   useEffect(() => { startPrefetch(); }, []);
-  if (view === 'tally') return <TallyInterface setView={setView} />;
+  if (view === 'tally') return <TallyInterface setView={setView} user={user} signOut={signOut} />;
 
   // Dashboard-shell connectivity probe. If the backend is down, this is
   // what tells the user why every widget below is stuck loading — without
   // it, a failed fetch just leaves every screen spinning with no reason
   // given (dataService.js's request() throws a specific message for this).
-  return <Dashboard page={page} setPage={setPage} filters={filters} setFilters={setFilters} setView={setView} />;
+  return <Dashboard page={page} setPage={setPage} filters={filters} setFilters={setFilters}
+                    setView={setView} user={user} signOut={signOut} />;
 }
 
-function Dashboard({ page, setPage, filters, setFilters, setView }) {
+function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut }) {
   const { error: connectionError } = useData(getMeta, []);
 
   // The batch report's month lives here rather than inside that page because
@@ -162,6 +210,10 @@ function Dashboard({ page, setPage, filters, setFilters, setView }) {
         </nav>
 
         <div className="nav__foot">
+          <div className="nav__user">
+            <span>Signed in as <b>{displayUser(user)}</b></span>
+            <button className="nav__signout" onClick={signOut}>Sign out</button>
+          </div>
           <button className="nav__back" onClick={() => setView('tally')} title="Back to Tally Interface">
             <Icon name="db" size={14} /><span>Back to Tally Interface</span>
           </button>

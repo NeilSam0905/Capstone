@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS Fact_Sales (
     imputation_flag          INTEGER DEFAULT 0, -- 1 = split from a price-grouped record
     tally_date_flag          INTEGER DEFAULT 0, -- 1 = historical tally, 0 = live daily record
     transaction_type         TEXT    DEFAULT 'sale',
+    entered_by               TEXT,             -- signed-in user who entered a live row;
+                                               -- NULL for pipeline-loaded rows
     FOREIGN KEY (product_id) REFERENCES Dim_Product (product_id),
     FOREIGN KEY (date_id)    REFERENCES Dim_Date (date_id)
 );
@@ -290,7 +292,22 @@ CREATE TABLE IF NOT EXISTS Pending_Import_Row (
     transaction_type  TEXT,               -- tally rows, lower case
     note              TEXT,               -- inventory rows
     source_file       TEXT,
-    held_at           TEXT
+    held_at           TEXT,
+    entered_by        TEXT                -- who imported it; carried into Fact_Sales
+);
+""")
+
+# ----- OPERATIONAL TABLE: App_User ---------------------------------
+# Accounts that can sign in to the backend API (backend/auth.py), with
+# werkzeug password hashes. The default staff account is created on the
+# first login attempt against an empty table. Operational: no pipeline
+# step reads or clears it. backend/db.py creates the same table for a
+# database built before it.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS App_User (
+    username       TEXT PRIMARY KEY,
+    password_hash  TEXT NOT NULL,
+    created_at     TEXT
 );
 """)
 

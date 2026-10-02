@@ -30,6 +30,18 @@ Classification (primary, 80th percentile):
     distribution computed over SKUs that have at least one sale.
   - Slow (S): everything else.
 
+Recency: an item that sold NOTHING in the last STALE_DAYS (180) days is
+never Fast, whatever its ADUS - it is classed Slow. ADUS is over full
+history, and its denominator only counts days the item is on the sheet,
+so an item that drops off the sheets keeps its old score forever: "UST
+T-Shirt (College Shirt)" sold 44 units in May 2024 (on the sheet 23
+days, ADUS 1.91), was never tallied again, and stayed Fast. Before this
+rule 26 of the 58 Fast items had sold nothing in the last 180 days. The
+window ends at the last date ANY item sold (not the panel's zero-padded
+end), the same reference step4 / step4c use. The percentile cutoff is
+still computed over every moving SKU, so the rule only demotes; it never
+changes the cutoff another item is measured against.
+
 HVL (High-Velocity Limited) is a reporting flag only, not a 4th
 fsn_class value (the column is CHECK-constrained to F/S/N): a Fast item
 with fewer than 30 active tally dates is flagged HVL so it isn't read
@@ -49,6 +61,7 @@ THRESHOLDS = [75, 80, 85]
 PRIMARY_THRESHOLD = 80
 HVL_MIN_DATES = 30
 EXCLUDE_CENSORED_DAYS = True
+STALE_DAYS = 180
 
 
 def load_fact(con):
@@ -56,9 +69,11 @@ def load_fact(con):
     Tally Interface leave the shelf but are not demand, so they must not raise an
     item's ADUS. Case-insensitive: the interface used to store 'SALE'."""
     return pd.read_sql(
-        "SELECT product_id, date_id, quantity_sold, imputation_flag, is_censored FROM Fact_Sales "
-        "WHERE LOWER(COALESCE(transaction_type, 'sale')) = 'sale'",
-        con,
+        """SELECT f.product_id, f.date_id, d.calendar_date, f.quantity_sold,
+                  f.imputation_flag, f.is_censored
+           FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+           WHERE LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'""",
+        con, parse_dates=["calendar_date"],
     )
 
 
@@ -68,6 +83,14 @@ def main():
     products = pd.read_sql("SELECT product_id, item_name, entry_date FROM Dim_Product", con)
 
     fact = load_fact(con)
+
+    # ---- recency: days since each SKU's last sale, up to the last day anything sold ----
+    sold = fact[fact["quantity_sold"] > 0]
+    last_any_sale = sold["calendar_date"].max()
+    last_sale = sold.groupby("product_id")["calendar_date"].max()
+    days_since_sale = (last_any_sale - products["product_id"].map(last_sale)).dt.days
+    # No sale ever counts as stale too (such an SKU has ADUS 0 and is Slow or N anyway).
+    stale = (days_since_sale.isna() | (days_since_sale >= STALE_DAYS)).to_numpy()
     if EXCLUDE_CENSORED_DAYS:
         censored = fact["is_censored"] == 1
         print(f"Dropping {int(censored.sum())} censored zero-sale rows "
@@ -81,7 +104,7 @@ def main():
         active_tally_dates=("date_id", "nunique"),
     ).reset_index()
 
-    df = products.merge(agg, on="product_id", how="left")
+    df = products.assign(stale=stale).merge(agg, on="product_id", how="left")
     df["weighted_units"] = df["weighted_units"].fillna(0.0)
     df["active_tally_dates"] = df["active_tally_dates"].fillna(0).astype(int)
     df["ADUS"] = np.where(
@@ -94,7 +117,8 @@ def main():
     # ---- classify at each threshold, over the moving population only ----
     cutoffs = {t: moving["ADUS"].quantile(t / 100.0) for t in THRESHOLDS}
     for t in THRESHOLDS:
-        moving[f"class_{t}"] = np.where(moving["ADUS"] >= cutoffs[t], "F", "S")
+        moving[f"class_{t}"] = np.where((moving["ADUS"] >= cutoffs[t]) & ~moving["stale"], "F", "S")
+    demoted = moving[(moving["ADUS"] >= cutoffs[PRIMARY_THRESHOLD]) & moving["stale"]]
 
     df["fsn_class"] = "N"
     df.loc[moving.index, "fsn_class"] = moving[f"class_{PRIMARY_THRESHOLD}"]
@@ -133,6 +157,17 @@ def main():
         sens_rows.append({"threshold": f"{t}th pct", "F": f_count, "S": s_count, "N": len(non_moving)})
     sens_df = pd.DataFrame(sens_rows)
     print(sens_df.to_string(index=False))
+
+    print(f"\n=== Recency: {len(demoted)} items above the Fast cutoff but with no sale in the "
+          f"{STALE_DAYS} days to {last_any_sale.date()} -> classed Slow ===")
+    if len(demoted):
+        print(
+            demoted.assign(ADUS=lambda d: d["ADUS"].round(3),
+                           last_sale=lambda d: d["product_id"].map(last_sale).dt.date)
+            [["item_name", "ADUS", "last_sale"]]
+            .sort_values("last_sale")
+            .to_string(index=False)
+        )
 
     hvl = moving[moving["HVL"]].sort_values("ADUS", ascending=False)
     print(f"\n=== HVL (High-Velocity Limited) items: {len(hvl)} ===")

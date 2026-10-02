@@ -4,6 +4,11 @@ export const peso = n => '₱' + Math.round(n).toLocaleString();
 export const pesoK = n => n >= 1e6 ? '₱' + (n / 1e6).toFixed(2) + 'M' : '₱' + (n / 1e3).toFixed(0) + 'K';
 export const num = n => Math.round(n).toLocaleString();
 
+/** 'staff' -> 'Staff'. A username as shown on screen; the stored and
+ *  submitted username is left as it is. */
+export const displayUser = u =>
+  String(u ?? '').replace(/(^|[\s._-])(\p{L})/gu, (_, sep, c) => sep + c.toUpperCase());
+
 export const DONUT_COLORS = ['var(--gold)', '#16140F', '#2C5E8A', '#2E7D55', '#C1452F', '#B5791A'];
 
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
