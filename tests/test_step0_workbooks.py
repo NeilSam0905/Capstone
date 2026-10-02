@@ -8,11 +8,14 @@ of four), so next academic year's workbook needs no code change. Checked:
     not read (the archives are already in Fact_Sales);
   - no workbook at all raises FileNotFoundError - the pipeline then skips
     step0 and keeps its CSV - instead of writing an empty one;
-  - a month in two workbooks is read once, from the newer workbook.
+  - a month in two workbooks is read once, from the newer workbook;
+  - the ITEM PRICE column is captured during conversion, so step1 opens no
+    workbook, and an unchanged set of workbooks is not converted again.
 ------------------------------------------------------------------
 """
 import datetime
 import os
+import sys
 
 import openpyxl
 import pytest
@@ -69,6 +72,47 @@ def test_a_new_workbook_is_read_without_a_code_change(tmp_path):
     plan, notes = step0.plan_sheets(step0.find_workbooks(str(tmp_path)))
     assert plan == [(old, ["JULY 2026 - TBS"]), (new, ["AUGUST 2026 - TBS"])]
     assert notes == []
+
+
+def priced_workbook(path, units, price):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "AUGUST 2026 - TBS"
+    ws.append(["ITEMS", datetime.datetime(2026, 8, 3), "ITEM PRICE", "TOTAL QUANTITY"])
+    ws.append(["TEST SUPPLIER"])
+    ws.append(["Test Tote", units, price, units])
+    ws.append(["TOTAL", units, None, units])
+    wb.save(path)
+
+
+def test_conversion_also_captures_the_price_column_for_step1(tmp_path):
+    priced_workbook(tmp_path / "TBS.xlsx", 2, 150)
+    plan, _ = step0.plan_sheets(step0.find_workbooks(str(tmp_path)))
+    prices = {}
+    step0.convert(plan, str(tmp_path / "sales.csv"), prices)
+    assert prices["tbs"] == [("Test Tote", "2026-08", 150.0)]
+
+
+def test_an_unchanged_run_is_skipped_and_a_changed_one_is_not(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "rawdata").mkdir()
+    (tmp_path / "data").mkdir()
+    monkeypatch.setattr(sys, "argv", ["step0"])
+    priced_workbook(tmp_path / "rawdata" / "TBS.xlsx", 2, 150)
+
+    step0.main()
+    assert "Wrote" in capsys.readouterr().out
+    step0.main()
+    assert "have not changed" in capsys.readouterr().out
+
+    priced_workbook(tmp_path / "rawdata" / "TBS.xlsx", 9, 150)        # the store updated the sheet
+    step0.main()
+    assert "Wrote" in capsys.readouterr().out
+    assert "2026-08-03,Test Tote,9" in (tmp_path / step0.OUT_PATH).read_text()
+
+    monkeypatch.setattr(sys, "argv", ["step0", "--force"])
+    step0.main()
+    assert "Wrote" in capsys.readouterr().out
 
 
 def test_a_month_in_two_workbooks_is_read_once_from_the_newer(tmp_path):

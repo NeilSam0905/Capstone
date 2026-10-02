@@ -45,6 +45,13 @@ same month is in more than one workbook - an updated copy of a workbook
 saved under a new name - only the most recently modified workbook's sheet
 for that month is read, and the run says which copy it skipped.
 
+Also writes the two price columns step1 needs (TBS_PRICES_CSV,
+MAY_2024_DSR_PRICES_CSV) while the workbooks are open, so step1 opens none.
+And it only converts when something it reads changed: the workbooks' names
+and contents and this script are fingerprinted (STATE_PATH); if they match
+the last conversion and the outputs are there, the run keeps them (~35 s
+saved on a routine run). `--force` converts regardless.
+
 Date is written as ISO 8601 (YYYY-MM-DD). The source workbooks use a
 mix of DD/MM/YYYY, MM/DD/YYYY and real Excel date cells in their column
 headers; parse_date_header() below resolves those, and everything this
@@ -54,9 +61,12 @@ Excel - it will silently rewrite the column back to a locale format.
 import calendar
 import csv
 import datetime
+import hashlib
+import json
 import math
 import os
 import statistics
+import sys
 from collections import defaultdict
 
 import openpyxl
@@ -65,10 +75,19 @@ SRC_DIR = "rawdata"
 # May 2024 is the one workbook whose tally sheet is not named "<MONTH> - TBS":
 # it is a plain "TBS" sheet beside 23 daily sales-report sheets.
 MAY_2024_WORKBOOK = "2024 5 MAY DSR & TBS.xlsx"
+MAY_2024_NON_DSR_SHEETS = {"TS", "TBS", "INVENTORY"}
 # Tally Interface archives of an uploaded Date/Item/Quantity table (see
 # backend/app.py _archive_upload). Already loaded into Fact_Sales directly.
 APP_IMPORT_PREFIX = "import_"
 OUT_PATH = "data/USTore_sales_long_with_zeros.csv"
+# The price columns step1 prices items from, written while the workbooks are
+# open (see convert). With these, step1 reads no workbook at all.
+TBS_PRICES_CSV = "data/tbs_item_prices.csv"
+MAY_2024_DSR_PRICES_CSV = "data/may2024_dsr_prices.csv"
+# What the last conversion on this machine read (see unchanged_since_last_run).
+# Gitignored and not vaulted, like .vault_state.json: it describes this
+# machine's rawdata/, which no other machine has.
+STATE_PATH = ".step0_state.json"
 DENSE_THRESHOLD = 0.7
 
 MONTHS = {
@@ -170,6 +189,39 @@ def sheet_density(date_cols):
     year, month = real_dates[0].year, real_dates[0].month
     span_days = calendar.monthrange(year, month)[1]
     return (len(real_dates) / span_days if span_days else 0.0), span_days
+
+
+class _Cell:
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        self.value = value
+
+
+class SheetGrid:
+    """A worksheet read once, in openpyxl's read-only mode, into a list of rows,
+    answering the same ws.cell(r, c).value / ws.max_row / ws.max_column calls
+    the converters below make. Read-only mode parses a workbook in about half
+    the time but has no random cell access - this gives it back.
+
+    A cell outside what the sheet stores reads as None, exactly as an empty
+    cell does in a normally loaded sheet."""
+
+    def __init__(self, ws):
+        self.title = ws.title
+        self.rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
+        self.max_row = len(self.rows)
+        self.max_column = max((len(r) for r in self.rows), default=0)
+
+    def cell(self, row, column):
+        if row <= self.max_row:
+            values = self.rows[row - 1]
+            if column <= len(values):
+                return _Cell(values[column - 1])
+        return _Cell(None)
+
+    def iter_rows(self, min_row=1, max_row=None, values_only=True):
+        return iter(self.rows[min_row - 1:max_row])
 
 
 def tbs_sheet_names(wb, path):
@@ -323,8 +375,76 @@ def convert_sheet(ws, sheet_label, warnings, density_log):
             yield (0, obs.toordinal()), obs.strftime("%Y-%m-%d"), label, qty, supplier
 
 
-def convert(plan, out_path):
-    """`plan` is plan_sheets()'s [(workbook path, [sheet names])]."""
+def sheet_item_prices(ws):
+    """[(row label, price)] from a tally sheet's ITEM PRICE column, in row
+    order: every labelled row but TOTAL with a number in that column."""
+    price_col = None
+    for c in range(2, ws.max_column + 1):
+        header = ws.cell(1, c).value
+        if isinstance(header, str) and header.strip().upper() == "ITEM PRICE":
+            price_col = c
+            break
+    if price_col is None:
+        return []
+    out = []
+    for r in range(2, ws.max_row + 1):
+        label = ws.cell(r, 1).value
+        if label is None:
+            continue
+        label = str(label).strip()
+        if not label or label.upper() == "TOTAL":
+            continue
+        price = ws.cell(r, price_col).value
+        if isinstance(price, (int, float)):
+            out.append((label, float(price)))
+    return out
+
+
+def may2024_dsr_prices(wb):
+    """[(item name, retail price)] from the May 2024 workbook's 23 daily sales
+    report sheets ("May 2", "May 3", ...), in sheet and row order.
+
+    Each daily sheet repeats a header row (ITEMS | RETAIL PRICE | PCS SOLD |
+    SALES | DISCOUNTED PRICE | ...) before every supplier's block - the very
+    first one has the supplier name on its own row above; every later one has
+    the supplier name fused into the header row's first cell instead. A TOTAL
+    row (blank item cell, "TOTAL" elsewhere) closes each block. Detecting a
+    block boundary by column 2 == "RETAIL PRICE" (rather than by column 1)
+    handles both forms without caring which one it is."""
+    out = []
+    for sheet_name in [s for s in wb.sheetnames if s not in MAY_2024_NON_DSR_SHEETS]:
+        ws = SheetGrid(wb[sheet_name])
+        in_block = False
+        for r in range(1, ws.max_row + 1):
+            c1, c2 = ws.cell(r, 1).value, ws.cell(r, 2).value
+            if isinstance(c2, str) and c2.strip().upper() == "RETAIL PRICE":
+                in_block = True
+                continue
+            if not in_block:
+                continue
+            label = str(c1).strip() if c1 is not None else ""
+            if not label:
+                continue  # TOTAL row, or a stray blank
+            if isinstance(c2, (int, float)):
+                out.append((label, float(c2)))
+    return out
+
+
+def write_rows(path, header, rows):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(rows)
+
+
+def convert(plan, out_path, prices=None):
+    """`plan` is plan_sheets()'s [(workbook path, [sheet names])].
+
+    If `prices` is a dict it also receives the price columns step1 prices
+    items from, read here because the workbooks are open anyway (step1 used to
+    open every workbook a second time for them, ~40 s of every run):
+      "tbs"          [(row label, 'YYYY-MM' or None, price)], plan order
+      "may2024_dsr"  [(item name, retail price)]"""
     agg = defaultdict(float)
     meta = {}
     warnings = []
@@ -332,18 +452,27 @@ def convert(plan, out_path):
     per_sheet = []
 
     for fn, sheet_names in plan:
-        wb = openpyxl.load_workbook(fn, data_only=True)
+        wb = openpyxl.load_workbook(fn, read_only=True, data_only=True)
         short = os.path.basename(fn)
+        try:
+            if prices is not None and short == MAY_2024_WORKBOOK:
+                prices.setdefault("may2024_dsr", []).extend(may2024_dsr_prices(wb))
 
-        for sn in sheet_names:
-            label = f"{short} :: {sn}"
-            count = 0
-            for sort_key, date_str, item, qty, supplier in convert_sheet(wb[sn], label, warnings, density_log):
-                key = (date_str, item, supplier)
-                agg[key] += qty
-                meta[key] = sort_key
-                count += 1
-            per_sheet.append((short, sn, count))
+            for sn in sheet_names:
+                ws = SheetGrid(wb[sn])
+                label = f"{short} :: {sn}"
+                count = 0
+                for sort_key, date_str, item, qty, supplier in convert_sheet(ws, label, warnings, density_log):
+                    key = (date_str, item, supplier)
+                    agg[key] += qty
+                    meta[key] = sort_key
+                    count += 1
+                per_sheet.append((short, sn, count))
+                if prices is not None:
+                    prices.setdefault("tbs", []).extend(
+                        (item, sheet_month(ws), price) for item, price in sheet_item_prices(ws))
+        finally:
+            wb.close()
 
     rows = sorted(
         ((meta[k], k) for k in agg),
@@ -359,15 +488,53 @@ def convert(plan, out_path):
     return per_sheet, warnings, density_log, len(agg)
 
 
+def input_fingerprint(files):
+    """One hash over everything the outputs depend on: each workbook's name and
+    contents, and this script itself (a code change must reconvert too)."""
+    h = hashlib.sha256()
+    with open(__file__, "rb") as f:
+        h.update(f.read())
+    for path in sorted(files):
+        h.update(os.path.basename(path).encode() + b"\0")
+        with open(path, "rb") as f:
+            h.update(hashlib.sha256(f.read()).digest())
+    return h.hexdigest()
+
+
+def unchanged_since_last_run(fingerprint):
+    """True when the last conversion on this machine read exactly these inputs
+    and its outputs are still there. Converting all the workbooks is ~35 s of a
+    pipeline run that, on most days, only has new Tally Interface entries -
+    which live in the database, not in any workbook."""
+    if not all(os.path.exists(p) for p in (OUT_PATH, TBS_PRICES_CSV, MAY_2024_DSR_PRICES_CSV)):
+        return False
+    try:
+        with open(STATE_PATH, encoding="utf-8") as f:
+            return json.load(f).get("fingerprint") == fingerprint
+    except (OSError, ValueError):
+        return False
+
+
 def main():
-    plan, notes = plan_sheets(find_workbooks())
+    files = find_workbooks()
+    fingerprint = input_fingerprint(files)
+    if "--force" not in sys.argv and unchanged_since_last_run(fingerprint):
+        print(f"The tally workbooks in {SRC_DIR}/ have not changed since the last conversion - "
+              f"kept {OUT_PATH} and the price files. (--force converts them again.)")
+        return
+
+    plan, notes = plan_sheets(files)
     print(f"=== Tally workbooks in {SRC_DIR}/ ===")
     for fn, sheets in plan:
         print(f"  {os.path.basename(fn):45} {len(sheets):3} tally sheet(s)")
     for note in notes:
         print("  NOTE:", note)
 
-    per_sheet, warnings, density_log, n = convert(plan, OUT_PATH)
+    prices = {}
+    per_sheet, warnings, density_log, n = convert(plan, OUT_PATH, prices)
+    write_rows(TBS_PRICES_CSV, ["Item", "Month", "Price"],
+               [(item, month or "", price) for item, month, price in prices.get("tbs", [])])
+    write_rows(MAY_2024_DSR_PRICES_CSV, ["Item", "Retail Price"], prices.get("may2024_dsr", []))
 
     print("\n=== Per-sheet density (real tally dates / calendar-day span) ===")
     for label, n_real, span, density, is_dense in density_log:
@@ -384,6 +551,12 @@ def main():
             print("  -", wmsg)
 
     print(f"\nWrote {n} rows -> {OUT_PATH}")
+    print(f"Wrote {len(prices.get('tbs', []))} sheet prices -> {TBS_PRICES_CSV}, "
+          f"{len(prices.get('may2024_dsr', []))} May 2024 retail prices -> {MAY_2024_DSR_PRICES_CSV}")
+    with open(STATE_PATH, "w", encoding="utf-8") as f:
+        json.dump({"fingerprint": fingerprint, "converted_at":
+                   datetime.datetime.now().isoformat(timespec="seconds"),
+                   "workbooks": [os.path.basename(p) for p in files]}, f, indent=1)
 
 
 if __name__ == "__main__":

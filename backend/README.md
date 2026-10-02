@@ -59,6 +59,7 @@ See `UST Prototype Design/BACKEND_TODO.md` for the full contract this implements
 | Writes | `POST /api/tally`, `PUT /api/calendar/:date/closure`, `POST /api/events` |
 | Auth (`auth.py`, open) | `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/session` |
 | Names and workbooks (`names.py`) | `GET /api/names/review`, `POST /api/names/review`, `POST /api/products/:id/rename`, `POST /api/tally/workbook` |
+| Orders and restocks | `GET/POST /api/orders/upcoming`, `DELETE /api/orders/upcoming/:id`, `GET/POST /api/restocks`, `PUT/DELETE /api/restocks/:id` |
 
 **Names and workbooks** keep the system running through sheet changes without a developer.
 `GET /api/names/review` lists item names the vocabulary does not know yet: from the tally sheets
@@ -71,6 +72,16 @@ by appending one row to `data/vocab_mapping_FINAL_v5.csv` and applying any held 
 keeps its history and the name it is shown under. `POST /api/tally/workbook` saves the store's tally
 workbook into `rawdata/` for step0 (a same-named one is moved to `rawdata/replaced/`, never overwritten).
 Settled names show in `/api/pipeline/staleness` as `pending.name_decisions` until the next run.
+
+**Orders and restocks.** A sale carries `order_type` (`walk_in`, `bulk`, `pre_order`;
+`POST /api/tally` field and an import's optional "Order Type" column); the forecasts train on
+walk-in sales only (`scripts/order_types.py`). `/api/orders/upcoming` holds bulk orders and
+pre-orders the store knows are coming, which steps 4 and 4c add on their expected date.
+`/api/restocks` records when each restock was ordered and delivered; from 3 deliveries a supplier's
+median replaces its estimated lead time (`step5a_set_lead_times.py`).
+
+**Daily use:** `python serve.py` serves this API and the built dashboard together with waitress and
+backs up `ustore.db` daily (`backup.py`); see the root README, "Daily use at the store".
 
 `/api/reorder` now returns real (provisional) ROP / Safety Stock / EOQ from `Result_Prescriptive`,
 grouped per SKU with both ordering-cost scenarios (`low_admin_cost`, `high_goods_value`) nested —

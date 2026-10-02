@@ -107,8 +107,8 @@ DEFAULT_TIMEOUT_S = 15 * 60
 STEPS = [
     ("create_schema", "scripts/create_schema.py", "Build database schema", False, 120, "seconds"),
     ("populate_dim_date", "scripts/populate_dim_date.py", "Populate calendar dimension", False, 300, "seconds"),
-    ("step0", "scripts/step0_convert_sales_with_zeros.py", "Convert raw tally sheets", True, DEFAULT_TIMEOUT_S, "~1 min"),
-    ("step1", "scripts/step1_apply_mapping.py", "Apply vocabulary + supplier mapping", False, DEFAULT_TIMEOUT_S, "~10 s"),
+    ("step0", "scripts/step0_convert_sales_with_zeros.py", "Convert raw tally sheets", True, DEFAULT_TIMEOUT_S, "~30 s, or seconds if no workbook changed"),
+    ("step1", "scripts/step1_apply_mapping.py", "Apply vocabulary + supplier mapping", False, DEFAULT_TIMEOUT_S, "~5 s"),
     ("allocation", "scripts/proportional_allocation.py", "Allocate price-grouped rows to SKUs", False, DEFAULT_TIMEOUT_S, "~10 s"),
     ("step2", "scripts/step2_load_fact_sales.py", "Load Fact_Sales", False, DEFAULT_TIMEOUT_S, "~30 s"),
     ("step3", "scripts/step3_fsn_classification.py", "Classify Fast / Slow / Non-moving", False, DEFAULT_TIMEOUT_S, "~1 min"),

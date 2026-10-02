@@ -254,6 +254,7 @@ from forecasting.calendar_adjust import calendar_capped_fit_predict, load_day_ty
 from forecasting.shape import day_shape, load_calendar as load_shape_calendar
 from forecasting.topdown import topdown_tsb_fit_predict
 from forecasting import synthetic_history as sh
+from order_types import add_known_orders, known_orders, walk_in_only  # noqa: E402
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ustore.db")
 
@@ -439,11 +440,14 @@ def load_common(con):
     products = pd.read_sql(
         f"SELECT product_id, item_name, fsn_class, is_hvl, {cat_col} FROM Dim_Product", con
     )
-    # sales only: damaged / promo / transfer removals are not demand
+    # sales only: damaged / promo / transfer removals are not demand. Walk-in
+    # sales only: a recorded bulk or pre-order is not everyday demand
+    # (scripts/order_types.py).
     fact = pd.read_sql(
-        """SELECT f.product_id, d.calendar_date, f.quantity_sold
+        f"""SELECT f.product_id, d.calendar_date, f.quantity_sold
            FROM Fact_Sales f JOIN Dim_Date d ON f.date_id = d.date_id
-           WHERE LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'""",
+           WHERE LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'
+             AND {walk_in_only(con)}""",
         con,
     )
     fact["calendar_date"] = pd.to_datetime(fact["calendar_date"])
@@ -764,6 +768,13 @@ def main():
     drift = max(abs(written[pid] - t) for pid, t in model_totals.items())
     assert drift < 1e-3, f"the day-by-day shape changed an item's 30-day total (max drift {drift:.6f})"
     assert (forecast_df["yhat"] >= 0).all(), "negative forecast written"
+
+    # Orders the store already knows are coming (Upcoming_Order) go on top of
+    # the everyday forecast on their date - after the check above, which is
+    # about the model's own total (scripts/order_types.py).
+    forecast_df, known_units = add_known_orders(forecast_df, known_orders(con), "product_id")
+    if known_units:
+        print(f"Known upcoming orders added to the item forecasts: {known_units:.0f} units")
 
     # Clear + refill in one transaction: on failure SQLite rolls back to the
     # previous run's forecasts rather than to nothing.

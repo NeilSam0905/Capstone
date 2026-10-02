@@ -72,11 +72,14 @@ assumptions, documented here rather than silently picked):
     unrecorded restock, so that row and the rest of that month become
     NULL rather than being forced to fit.
 """
+import os
 import sqlite3
 import sys
 from collections import defaultdict
 
 import pandas as pd
+
+import order_types
 
 SALES_CSV = "data/USTore_sales_long_allocated.csv"
 INVENTORY_CSV = "data/USTore_inventory_excel_long_mapped.csv"
@@ -133,6 +136,36 @@ def fill_missing_suppliers(con, df):
             (sup.mode().iloc[0], status.mode().iloc[0] if not status.empty else None, item))
         filled += 1
     return filled
+
+
+BULK_CANDIDATES_CSV = "data/bulk_day_candidates.csv"
+
+
+def load_confirmed_orders(product_id_by_name, path=BULK_CANDIDATES_CSV):
+    """{(product_id, 'YYYY-MM-DD'): 'bulk' | 'pre_order'} for the past item-days
+    the store marked in bulk_day_candidates.csv (column bulk_order_confirmed),
+    so the forecasts can leave those orders out of everyday demand
+    (scripts/order_types.py). A blank or "no" answer leaves the day a walk-in
+    sale. Answers that cannot be read are returned for the report, not guessed.
+
+    Returns (confirmed, unreadable)."""
+    if not os.path.exists(path):
+        return {}, []
+    df = pd.read_csv(path, dtype=str, keep_default_na=False)
+    if "bulk_order_confirmed" not in df.columns:
+        return {}, []
+    confirmed, unreadable = {}, []
+    for row in df.itertuples(index=False):
+        answer = row.bulk_order_confirmed.strip()
+        order_type = order_types.normalize(answer, default=None)
+        if order_type is None:
+            if answer:
+                unreadable.append((row.calendar_date, row.item_name, answer))
+            continue
+        product_id = product_id_by_name.get(row.item_name.strip())
+        if order_type != "walk_in" and product_id is not None:
+            confirmed[(product_id, row.calendar_date.strip())] = order_type
+    return confirmed, unreadable
 
 
 def create_exception_table(con):
@@ -223,6 +256,7 @@ def main():
     con = sqlite3.connect(DB_PATH)
     con.execute("PRAGMA foreign_keys = ON;")
     create_exception_table(con)
+    order_types.ensure_column(con)
 
     clear_historical_fact_sales(con)
     con.execute("DELETE FROM Exception_Log")
@@ -233,6 +267,7 @@ def main():
     date_id_by_iso = dict(
         con.execute("SELECT calendar_date, date_id FROM Dim_Date").fetchall()
     )
+    confirmed_orders, unreadable_orders = load_confirmed_orders(product_id_by_name)
 
     # Only treat frequently-recurring Supplier values as "known suppliers".
     # A real supplier appears on hundreds/thousands of rows; a one-off data
@@ -378,6 +413,7 @@ def main():
             r["imputation_flag"],
             1,  # tally_date_flag: these are historical tally observations
             "sale",
+            confirmed_orders.get((r["product_id"], r["iso_date"])),   # NULL = walk-in
         )
         for rows in by_product.values()
         for r in rows
@@ -387,8 +423,8 @@ def main():
         """INSERT INTO Fact_Sales
            (product_id, date_id, quantity_sold, cumulative_monthly_units,
             daily_depletion_rate, days_of_supply, is_censored,
-            imputation_flag, tally_date_flag, transaction_type)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            imputation_flag, tally_date_flag, transaction_type, order_type)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         fact_rows,
     )
     con.executemany(
@@ -422,6 +458,11 @@ def main():
     pct = 100 * flagged_or_isolated / total_input if total_input else 0
     print(f"Flagged or isolated: {flagged_or_isolated} / {total_input} = {pct:.2f}%")
     print(f"Dim_Product supplier filled from price-group rows : {n_supplier_filled} products")
+    n_marked = sum(1 for row in fact_rows if row[-1])
+    print(f"Item-days the store marked as bulk / pre-orders ({BULK_CANDIDATES_CSV}): "
+          f"{len(confirmed_orders)} -> {n_marked} Fact_Sales rows (left out of the forecasts' training)")
+    for d, item, answer in unreadable_orders[:20]:
+        print(f"  could not read the answer {answer!r} for {item} on {d} - left as a walk-in sale")
 
     # row-level counts, so these are comparable with the load summary above;
     # `stats` counts product-days, which is the natural unit for the rules

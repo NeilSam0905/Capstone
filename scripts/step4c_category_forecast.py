@@ -181,6 +181,7 @@ from forecasting.evaluate import make_folds, walk_forward_evaluate
 from forecasting.calendar_adjust import calendar_capped_fit_predict, load_day_types
 from forecasting.shape import day_shape, load_calendar
 from forecasting import synthetic_history as sh
+from order_types import add_known_orders, known_orders, walk_in_only  # noqa: E402
 
 DB_PATH = os.path.join(ROOT, "ustore.db")
 
@@ -260,12 +261,15 @@ def load_category_series(con):
         raise SystemExit("Dim_Product.forecast_category is missing - run "
                          "scripts/step1b_categorize_products.py first")
 
-    fact = pd.read_sql_query("""
+    # Walk-in sales only: a recorded bulk or pre-order is not everyday demand
+    # (scripts/order_types.py).
+    fact = pd.read_sql_query(f"""
         SELECT d.calendar_date, f.quantity_sold, p.forecast_category
         FROM Fact_Sales f
         JOIN Dim_Date d    ON d.date_id = f.date_id
         JOIN Dim_Product p ON p.product_id = f.product_id
         WHERE LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'
+          AND {walk_in_only(con)}
     """, con, parse_dates=["calendar_date"])
     if fact.empty:
         raise SystemExit("Fact_Sales has no sales - run step2 first")
@@ -444,6 +448,12 @@ def main():
     written = forecast_df.groupby("forecast_category")["yhat"].sum()
     drift = (written - rep.set_index("category")["total_30d"]).abs().max()
     assert drift < 1e-3, f"the day-by-day shape changed a category's 30-day total (max drift {drift:.6f})"
+
+    # Known upcoming orders on top of everyday demand, on their date (see
+    # scripts/order_types.py); after the check above, which is about the model.
+    forecast_df, known_units = add_known_orders(forecast_df, known_orders(con), "forecast_category")
+    if known_units:
+        print(f"Known upcoming orders added to the category forecasts: {known_units:.0f} units")
 
     if not args.no_db_write:
         create_result_tables(con)

@@ -43,15 +43,26 @@ non-apparel, mugs/bags/stationery, and genuinely uncategorized items -
 gets the same 18-day default per USTore's own framing ("non-apparel
 and anything uncategorized").
 
+Measured lead times replace these, supplier by supplier, as they become
+known. Staff record each restock in the Tally Interface (Restock_Log: the
+date it was ordered and the date it arrived). Once a supplier has
+MIN_DELIVERIES delivered restocks, every one of its items takes the median
+of them instead of the garment estimate, labelled "measured (n deliveries)".
+Until then - and today, with nothing recorded - nothing changes.
+
 Safe to re-run: recomputes and overwrites lead_time_days for every
 product each time.
 """
 import re
 import sqlite3
+import statistics
 
 import pandas as pd
 
 DB_PATH = "ustore.db"
+
+# A median of fewer deliveries than this is one unlucky week, not a lead time.
+MIN_DELIVERIES = 3
 
 LT_SIMPLE_SHIRT = 14
 LT_EMBROIDERED = 18
@@ -83,14 +94,51 @@ def classify(item_name, category):
     return LT_DEFAULT, "default (uncategorized)"
 
 
+def delivery_days(con):
+    """{supplier: [days from order to delivery]} for every delivered restock."""
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='Restock_Log'").fetchone():
+        return {}
+    out = {}
+    for supplier, days in con.execute("""
+            SELECT supplier_name, CAST(ROUND(julianday(delivered_on) - julianday(ordered_on)) AS INTEGER)
+              FROM Restock_Log
+             WHERE delivered_on IS NOT NULL AND delivered_on >= ordered_on"""):
+        out.setdefault(supplier, []).append(days)
+    return out
+
+
+def measured_lead_times(con):
+    """{supplier: (median days, deliveries)} for suppliers with enough of them."""
+    return {s: (int(round(statistics.median(d))), len(d))
+            for s, d in delivery_days(con).items() if len(d) >= MIN_DELIVERIES}
+
+
+def lead_time(item_name, category, supplier_name, measured):
+    """(days, label): the supplier's measured lead time when there is one,
+    else the garment estimate (classify)."""
+    if supplier_name in measured:
+        days, n = measured[supplier_name]
+        return days, f"measured ({n} deliveries)"
+    return classify(item_name, category)
+
+
 def main():
     con = sqlite3.connect(DB_PATH)
-    df = pd.read_sql("SELECT product_id, item_name, category FROM Dim_Product", con)
+    df = pd.read_sql("SELECT product_id, item_name, category, supplier_name FROM Dim_Product", con)
+    measured = measured_lead_times(con)
 
     results = df.apply(
-        lambda r: classify(r["item_name"], r["category"]), axis=1, result_type="expand"
+        lambda r: lead_time(r["item_name"], r["category"], r["supplier_name"], measured),
+        axis=1, result_type="expand"
     )
     df["lead_time_days"], df["lead_time_tier"] = results[0], results[1]
+    if measured:
+        print("=== Measured lead times in use (Restock_Log, median of delivered restocks) ===")
+        for supplier, (days, n) in sorted(measured.items()):
+            print(f"  {supplier}: {days} days ({n} deliveries)")
+    else:
+        print(f"No supplier has {MIN_DELIVERIES}+ delivered restocks recorded yet - "
+              f"all lead times are the garment estimates.")
 
     con.executemany(
         "UPDATE Dim_Product SET lead_time_days = ? WHERE product_id = ?",

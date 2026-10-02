@@ -117,6 +117,9 @@ CREATE TABLE IF NOT EXISTS Fact_Sales (
     transaction_type         TEXT    DEFAULT 'sale',
     entered_by               TEXT,             -- signed-in user who entered a live row;
                                                -- NULL for pipeline-loaded rows
+    -- 'walk_in' | 'bulk' | 'pre_order'; NULL = walk-in. The forecasts train
+    -- on walk-in sales only (scripts/order_types.py).
+    order_type               TEXT,
     FOREIGN KEY (product_id) REFERENCES Dim_Product (product_id),
     FOREIGN KEY (date_id)    REFERENCES Dim_Date (date_id)
 );
@@ -293,7 +296,8 @@ CREATE TABLE IF NOT EXISTS Pending_Import_Row (
     note              TEXT,               -- inventory rows
     source_file       TEXT,
     held_at           TEXT,
-    entered_by        TEXT                -- who imported it; carried into Fact_Sales
+    entered_by        TEXT,               -- who imported it; carried into Fact_Sales
+    order_type        TEXT                -- tally rows: walk_in / bulk / pre_order
 );
 """)
 
@@ -351,6 +355,53 @@ CREATE TABLE IF NOT EXISTS Pipeline_Run (
     max_closure_id    INTEGER
 );
 """)
+
+# ----- OPERATIONAL TABLE: Restock_Log ------------------------------
+# Each restock order and the day it arrived, recorded in the Tally
+# Interface. step5a_set_lead_times.py replaces a supplier's verbal lead-time
+# estimate with the median of its deliveries once it has enough of them.
+# Operational: no pipeline step clears it. backend/db.py creates the same
+# table for a database built before it.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Restock_Log (
+    restock_id    INTEGER PRIMARY KEY,
+    supplier_name TEXT    NOT NULL,   -- normalised, as on Dim_Product
+    ordered_on    TEXT    NOT NULL,   -- 'YYYY-MM-DD'
+    delivered_on  TEXT,               -- NULL until it arrives
+    note          TEXT,
+    entered_by    TEXT,
+    date_logged   TEXT
+);
+""")
+
+# ----- OPERATIONAL TABLE: Upcoming_Order ---------------------------
+# Bulk / organisation orders and pre-orders the store knows are coming,
+# recorded in the Tally Interface. step4 / step4c add each on its expected
+# date on top of everyday demand (scripts/order_types.py). Operational.
+# backend/db.py creates the same table for a database built before it.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Upcoming_Order (
+    order_id      INTEGER PRIMARY KEY,
+    product_id    INTEGER NOT NULL,
+    expected_date TEXT    NOT NULL,   -- 'YYYY-MM-DD'
+    quantity      INTEGER NOT NULL,
+    order_type    TEXT    NOT NULL,   -- 'bulk' | 'pre_order'
+    note          TEXT,
+    entered_by    TEXT,
+    date_logged   TEXT
+);
+""")
+
+# ----- Columns added after databases already existed ---------------
+# CREATE TABLE IF NOT EXISTS leaves an existing table as it is, so a column
+# added to one of the definitions above is added here when it is missing.
+# Fact_Sales.order_type has to exist before step2 loads history and the
+# forecast steps read it. (backend/db.py adds the same for the API.)
+for table, column, decl in (("Fact_Sales", "order_type", "TEXT"),
+                            ("Pending_Import_Row", "order_type", "TEXT")):
+    existing = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 # Save all changes to the file
 connection.commit()

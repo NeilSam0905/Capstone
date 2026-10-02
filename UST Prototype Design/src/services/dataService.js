@@ -378,6 +378,9 @@ export async function addEntry(entry) {
     quantity_sold: Number(entry.quantity_sold),
     calendar_date: entry.calendar_date,
     transaction_type: entry.transaction_type,
+    // walk_in (default) / bulk / pre_order, for a SALE. Bulk and pre-orders
+    // are kept out of the forecasts' training (scripts/order_types.py).
+    order_type: entry.order_type,
   });
 }
 
@@ -428,6 +431,34 @@ export const saveInventoryCount = ({ product_id, count_month, quantity, note }) 
 
 /** Remove a count recorded by mistake. */
 export const deleteInventoryCount = countId => del(`/inventory/${countId}`);
+
+// ---------------------------------------------------------- upcoming orders
+
+/** Bulk / organisation orders and pre-orders the store knows are coming. The
+ *  forecasts add each on its expected date, on top of everyday demand. */
+export const getUpcomingOrders = () => get('/orders/upcoming');
+
+export const addUpcomingOrder = ({ product_id, expected_date, quantity, order_type, note }) =>
+  post('/orders/upcoming', { product_id: Number(product_id), expected_date, quantity, order_type, note });
+
+export const deleteUpcomingOrder = orderId => del(`/orders/upcoming/${orderId}`);
+
+// ---------------------------------------------------------------- restocks
+
+/** Restock orders and when they arrived, so lead times are measured per
+ *  supplier instead of the verbal 14/18/28-day estimates. -> { restocks:[...],
+ *  suppliers:[{ supplier_name, deliveries, open, median_days, in_use,
+ *  lead_time_now }], min_deliveries }. A supplier's median is used from the
+ *  next pipeline run once it has `min_deliveries` deliveries. */
+export const getRestocks = () => get('/restocks');
+
+export const addRestock = ({ supplier_name, ordered_on, delivered_on, note }) =>
+  post('/restocks', { supplier_name, ordered_on, delivered_on: delivered_on || null, note });
+
+export const markRestockDelivered = (restockId, deliveredOn) =>
+  put(`/restocks/${restockId}`, { delivered_on: deliveredOn });
+
+export const deleteRestock = restockId => del(`/restocks/${restockId}`);
 
 // ------------------------------------------------------- import / export
 

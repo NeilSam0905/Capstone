@@ -1,12 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   addEntry, addEvent, setStoreClosed, getSellableProducts, getRecentEntries,
-  getEntriesByDate, getEventLog, getClosedDates, getMeta, TRANSACTION_TYPES,
+  getEntriesByDate, getEventLog, getClosedDates, getMeta,
   runPipeline, stopPipeline, getPipelineStatus, getPipelineStaleness,
   getInventoryCounts, saveInventoryCount, deleteInventoryCount,
   getStockPosition, ALL_CATEGORIES, ALL_SUPPLIERS, UNATTRIBUTED, addProduct,
   importInventoryCounts, importTallyEntries, addTallyWorkbook,
   getNamesToReview, settleName, renameProduct,
+  getRestocks, addRestock, markRestockDelivered, deleteRestock,
+  getUpcomingOrders, addUpcomingOrder, deleteUpcomingOrder,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
@@ -21,12 +23,23 @@ import brandMark from '../assets/ustore-mark.png';
 
 const TYPE_TONE = { SALE: 'ok', DAMAGED: 'crit', PROMO: 'info', TRANSFER: 'hvl' };
 
-const TYPE_HINT = {
-  SALE:     'Units sold to a customer.',
-  DAMAGED:  'Units removed as damaged or unsellable.',
-  PROMO:    'Units released for a promotion or giveaway.',
-  TRANSFER: 'Units moved to another storage location.',
-};
+/** The Transaction Type choices. A sale also says what KIND of sale it was:
+ *  bulk / organisation orders and pre-orders are kept out of the forecasts,
+ *  which predict everyday walk-in sales (scripts/order_types.py). Folded into
+ *  this one list, as "TYPE:order", so the form keeps its layout. */
+const ENTRY_KINDS = [
+  { value: 'SALE',           label: 'SALE — walk-in',
+    hint: 'Units sold to a customer at the counter.' },
+  { value: 'SALE:bulk',      label: 'SALE — bulk or organisation order',
+    hint: 'One large order (an organisation, an office). Kept out of the forecasts, which predict everyday sales.' },
+  { value: 'SALE:pre_order', label: 'SALE — pre-order',
+    hint: 'Collected against an order placed earlier. Kept out of the forecasts, which predict everyday sales.' },
+  { value: 'DAMAGED',  label: 'DAMAGED',  hint: 'Units removed as damaged or unsellable.' },
+  { value: 'PROMO',    label: 'PROMO',    hint: 'Units released for a promotion or giveaway.' },
+  { value: 'TRANSFER', label: 'TRANSFER', hint: 'Units moved to another storage location.' },
+];
+const KIND_HINT = Object.fromEntries(ENTRY_KINDS.map(k => [k.value, k.hint]));
+const ORDER_LABEL = { bulk: 'BULK', pre_order: 'PRE-ORDER' };
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -171,7 +184,7 @@ export default function TallyInterface({ setView, user, signOut }) {
   // Only the error is read now — the connected/disconnected status bar this
   // also fed was removed. The call stays because it is what detects a
   // backend that is not running.
-  const { error: connectionError } = useData(getMeta, []);
+  const { data: meta, error: connectionError } = useData(getMeta, []);
   // Re-read on every `bump()`: saving an entry, an event or a closure is
   // exactly what makes the analytics stale, and a finished pipeline run is
   // what clears it. Both already call bump().
@@ -198,11 +211,14 @@ export default function TallyInterface({ setView, user, signOut }) {
 
       <div className="tally-body">
         {connectionError && <ErrorBanner error={connectionError} />}
+        <CalendarEndBanner meta={meta} />
         <StalenessBanner staleness={staleness} />
         <NamesToReview products={products} reloadKey={reloadKey} onChanged={bump} />
         <SalesInventoryTally products={products} onSaved={bump}
                              recent={recent} recentLoading={recentLoading} />
+        <UpcomingOrders products={products} reloadKey={reloadKey} />
         <MonthlyInventoryCount products={products} onSaved={bump} />
+        <RestockDeliveries products={products} reloadKey={reloadKey} />
         <ClosureAndEventCards onSaved={bump} reloadKey={reloadKey} />
         <EntriesByDate reloadKey={reloadKey} />
         <FullPipelineRun onChanged={bump} />
@@ -488,8 +504,14 @@ function SalesInventoryTally({ products, onSaved, recent, recentLoading }) {
   }
 
   async function submit() {
-    const result = await addEntry(form);
-    if (!result.ok) { setErrors(result.errors); setSaved(null); return; }
+    const [transaction_type, order_type] = form.transaction_type.split(':');
+    const result = await addEntry({ ...form, transaction_type, order_type });
+    if (!result.ok) {
+      const { order_type: orderErr, ...rest } = result.errors || {};
+      setErrors(orderErr ? { ...rest, transaction_type: orderErr } : rest);
+      setSaved(null);
+      return;
+    }
     setErrors({});
     setSaved(result.entry);
     setForm(f => ({ ...f, product_id: '', quantity_sold: '' }));
@@ -501,7 +523,7 @@ function SalesInventoryTally({ products, onSaved, recent, recentLoading }) {
       <div className="card-h">
         <span className="section-h">Sales Inventory Tally</span>
         <ImportButton onImport={importTallyEntries} onDone={onSaved}
-                      hint="Date · Item · Total Quantity" />
+                      hint="Date · Item · Total Quantity · Order Type (optional)" />
       </div>
 
       <div className="form-grid">
@@ -511,11 +533,11 @@ function SalesInventoryTally({ products, onSaved, recent, recentLoading }) {
                  onChange={e => set('calendar_date', e.target.value)} />
         </Field>
 
-        <Field label="Transaction Type" error={errors.transaction_type} hint={TYPE_HINT[form.transaction_type]}>
+        <Field label="Transaction Type" error={errors.transaction_type} hint={KIND_HINT[form.transaction_type]}>
           <select value={form.transaction_type}
                   className={errors.transaction_type ? 'is-err' : ''}
                   onChange={e => set('transaction_type', e.target.value)}>
-            {TRANSACTION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            {ENTRY_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
           </select>
         </Field>
 
@@ -546,7 +568,8 @@ function SalesInventoryTally({ products, onSaved, recent, recentLoading }) {
         {saved ? (
           <span className="ok-text" style={{ fontSize: 12.5 }}>
             <Icon name="check" size={14} />
-            Recorded {saved.quantity_sold} × {saved.item_name} ({saved.transaction_type})
+            Recorded {saved.quantity_sold} × {saved.item_name} ({saved.transaction_type}
+            {ORDER_LABEL[saved.order_type] ? ` · ${ORDER_LABEL[saved.order_type]}` : ''})
           </span>
         ) : (
           <span className="hint"></span>
@@ -577,6 +600,114 @@ function SalesInventoryTally({ products, onSaved, recent, recentLoading }) {
         </div>
       </details>
     </div>
+  );
+}
+
+/* -------------------------------------------------------- Upcoming Orders */
+
+/** Bulk / organisation orders and pre-orders the store already knows about.
+ *
+ *  The forecasts predict everyday (walk-in) sales; an order like this is added
+ *  on top, on the day it is expected, at the next pipeline run. When it is
+ *  collected, tally it as "SALE — bulk" or "SALE — pre-order" so it is not
+ *  read as everyday demand. Collapsed by default: most days there is none. */
+function UpcomingOrders({ products, reloadKey }) {
+  const [own, setOwn] = useState(0);
+  const { data: orders } = useData(getUpcomingOrders, [reloadKey, own], []);
+  const [form, setForm] = useState({ product_id: '', expected_date: '', quantity: '', order_type: 'bulk', note: '' });
+  const [errors, setErrors] = useState({});
+  const [saved, setSaved] = useState(null);
+  const todayIso = today();
+  const upcoming = orders.filter(o => o.expected_date >= todayIso);
+
+  const set = (key, value) => {
+    setForm(f => ({ ...f, [key]: value }));
+    setErrors(e => ({ ...e, [key]: undefined }));
+    setSaved(null);
+  };
+
+  async function save() {
+    const r = await addUpcomingOrder(form);
+    if (!r.ok) { setErrors(r.errors || {}); return; }
+    const item = products.find(p => p.product_id === Number(form.product_id));
+    setSaved(`${form.quantity} × ${item?.item_name ?? 'item'} expected ${usDate(form.expected_date)}.`);
+    setForm({ product_id: '', expected_date: '', quantity: '', order_type: form.order_type, note: '' });
+    setErrors({});
+    setOwn(k => k + 1);
+  }
+
+  async function remove(id) {
+    await deleteUpcomingOrder(id);
+    setOwn(k => k + 1);
+  }
+
+  return (
+    <details className="card card__pad card--upcoming collapse">
+      <summary>
+        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <Icon name="calPlus" size={14} /> Upcoming Bulk Orders
+        </span>
+        <span className="hint">
+          {upcoming.length === 0 ? 'none recorded'
+            : `${num(upcoming.length)} coming · ${num(upcoming.reduce((s, o) => s + o.quantity, 0))} units`}
+        </span>
+      </summary>
+
+      <div className="hint" style={{ margin: '10px 0 12px' }}>
+        An organisation order or pre-order you already know about. The forecasts add it on its date, on top of
+        everyday sales. When it is collected, tally it as <b>SALE — bulk</b> or <b>SALE — pre-order</b>.
+      </div>
+
+      <div className="form-grid">
+        <div className="col-2">
+          <Field label="Item" error={errors.product_id}>
+            <ItemPicker items={products} value={form.product_id} invalid={!!errors.product_id}
+                        onChange={v => set('product_id', v)} />
+          </Field>
+        </div>
+        <Field label="Expected on" error={errors.expected_date}>
+          <input type="date" value={form.expected_date} min={todayIso}
+                 className={errors.expected_date ? 'is-err' : ''}
+                 onChange={e => set('expected_date', e.target.value)} />
+        </Field>
+        <Field label="Quantity" error={errors.quantity}>
+          <input type="number" min="1" step="1" value={form.quantity} placeholder="Units"
+                 className={errors.quantity ? 'is-err' : ''}
+                 onChange={e => set('quantity', e.target.value)} />
+        </Field>
+        <Field label="Kind" error={errors.order_type}>
+          <select value={form.order_type} onChange={e => set('order_type', e.target.value)}>
+            <option value="bulk">Bulk / organisation order</option>
+            <option value="pre_order">Pre-order</option>
+          </select>
+        </Field>
+        <Field label="Note (optional)">
+          <input type="text" value={form.note} placeholder="e.g. Student council"
+                 onChange={e => set('note', e.target.value)} />
+        </Field>
+      </div>
+
+      <div className="btn-row" style={{ marginTop: 14 }}>
+        <button className="btn btn--ink" onClick={save}>Add Order</button>
+        {saved && <span className="ok-text" style={{ fontSize: 12.5 }}><Icon name="check" size={14} />{saved}</span>}
+      </div>
+
+      {orders.length > 0 && (
+        <ul className="date-list" style={{ marginTop: 14, maxHeight: 220 }}>
+          {orders.map(o => (
+            <li key={o.order_id} className="restock-open">
+              <span>
+                <b>{usDate(o.expected_date)}</b> · {num(o.quantity)} × {o.item_name}
+                {' '}<span className="tag tag--gold">{ORDER_LABEL[o.order_type]}</span>
+                {o.note ? <span className="muted"> · {o.note}</span> : null}
+                {o.expected_date < todayIso && <span className="muted"> · past</span>}
+              </span>
+              <button className="btn btn--ghost btn--sm" onClick={() => remove(o.order_id)}>Remove</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </details>
   );
 }
 
@@ -1181,6 +1312,159 @@ function CurrentStockModal({ open, onClose, onChanged }) {
   );
 }
 
+/* ------------------------------------------------------ Restock Deliveries */
+
+/** When a restock was ordered and when it arrived.
+ *
+ *  The reorder points use lead times the store gave verbally (14 days for
+ *  shirts, 18 for embroidered, 28 for jackets). Recording real restocks
+ *  measures them: once a supplier has enough deliveries, the next pipeline
+ *  run uses the median of its real delivery times for that supplier's items
+ *  (step5a_set_lead_times.py). An order can be recorded when it is placed and
+ *  marked delivered when it arrives, or both at once afterwards. */
+function RestockDeliveries({ products, reloadKey }) {
+  const [own, setOwn] = useState(0);
+  const { data } = useData(getRestocks, [reloadKey, own], null);
+  const [form, setForm] = useState({ supplier_name: '', ordered_on: '', delivered_on: '', note: '' });
+  const [errors, setErrors] = useState({});
+  const [message, setMessage] = useState(null);
+  const [arrival, setArrival] = useState({});          // restock_id -> date being entered
+  const reload = () => setOwn(k => k + 1);
+
+  const suppliers = [...new Set(products.map(p => p.supplier_name).filter(s => s && s !== UNATTRIBUTED))].sort();
+  const restocks = data?.restocks ?? [];
+  const summary = data?.suppliers ?? [];
+  const minDeliveries = data?.min_deliveries ?? 3;
+  const open = restocks.filter(r => !r.delivered_on);
+
+  const set = (key, value) => {
+    setForm(f => ({ ...f, [key]: value }));
+    setErrors(e => ({ ...e, [key]: undefined }));
+    setMessage(null);
+  };
+
+  async function save() {
+    const r = await addRestock(form);
+    if (!r.ok) { setErrors(r.errors || {}); return; }
+    setErrors({});
+    setMessage(`Recorded a restock from ${form.supplier_name}${form.delivered_on ? '' : ' — mark it delivered when it arrives'}.`);
+    setForm({ supplier_name: form.supplier_name, ordered_on: '', delivered_on: '', note: '' });
+    reload();
+  }
+
+  async function arrived(r) {
+    const res = await markRestockDelivered(r.restock_id, arrival[r.restock_id] || today());
+    if (!res.ok) { setMessage(Object.values(res.errors || {})[0] || res.error); return; }
+    setMessage(`${r.supplier_name}: delivery recorded.`);
+    reload();
+  }
+
+  async function remove(id) {
+    await deleteRestock(id);
+    reload();
+  }
+
+  return (
+    <div className="card card__pad card--restocks">
+      <div className="card-h">
+        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <Icon name="box" size={14} /> Restock Deliveries
+        </span>
+      </div>
+      <div className="hint" style={{ marginTop: -4, marginBottom: 12 }}>
+        Record when each restock was ordered and when it arrived. After {minDeliveries} deliveries from a
+        supplier, its real delivery time replaces the estimated lead time in the reorder points.
+      </div>
+
+      <div className="form-grid">
+        <Field label="Supplier" error={errors.supplier_name}>
+          <ComboBox value={form.supplier_name} onChange={v => set('supplier_name', v)}
+                    options={suppliers} placeholder="Choose a supplier" newLabel="new supplier" />
+        </Field>
+        <Field label="Ordered on" error={errors.ordered_on}>
+          <input type="date" value={form.ordered_on} max={today()}
+                 className={errors.ordered_on ? 'is-err' : ''}
+                 onChange={e => set('ordered_on', e.target.value)} />
+        </Field>
+        <Field label="Delivered on" error={errors.delivered_on} hint="Leave empty if it has not arrived yet">
+          <input type="date" value={form.delivered_on} max={today()}
+                 className={errors.delivered_on ? 'is-err' : ''}
+                 onChange={e => set('delivered_on', e.target.value)} />
+        </Field>
+        <div className="col-2">
+          <Field label="Note (optional)">
+            <input type="text" value={form.note} placeholder="e.g. Jackets and polo shirts"
+                   onChange={e => set('note', e.target.value)} />
+          </Field>
+        </div>
+      </div>
+
+      <div className="btn-row" style={{ marginTop: 14 }}>
+        <button className="btn btn--ink" onClick={save}>Record Restock</button>
+        {message && <span className="ok-text" style={{ fontSize: 12.5 }}><Icon name="check" size={14} />{message}</span>}
+      </div>
+
+      {open.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div className="section-h" style={{ marginBottom: 6 }}>On the way ({num(open.length)})</div>
+          <ul className="date-list" style={{ maxHeight: 220 }}>
+            {open.map(r => (
+              <li key={r.restock_id} className="restock-open">
+                <span><b>{r.supplier_name}</b> · ordered {usDate(r.ordered_on)}{r.note ? ` · ${r.note}` : ''}</span>
+                <span className="restock-open__act">
+                  <input type="date" value={arrival[r.restock_id] || today()} min={r.ordered_on} max={today()}
+                         onChange={e => setArrival(a => ({ ...a, [r.restock_id]: e.target.value }))} />
+                  <button className="btn btn--ghost btn--sm" onClick={() => arrived(r)}>Arrived</button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {summary.length > 0 && (
+        <details className="collapse" style={{ marginTop: 16 }}>
+          <summary>
+            <span className="section-h">Lead times by supplier</span>
+            <span className="hint">{num(summary.filter(s => s.in_use).length)} measured · {num(restocks.length)} restocks recorded</span>
+          </summary>
+          <div style={{ marginTop: 12 }}>
+            <DataTable
+              columns={[
+                { key: 'supplier_name', label: 'Supplier', strong: true, truncate: true, width: '34%' },
+                { key: 'deliveries', label: 'Deliveries', num: true, width: '13%' },
+                { key: 'median_days', label: 'Median days', num: true, width: '15%',
+                  render: (v, s) => v == null ? <span className="muted">—</span>
+                    : <>{v}<span className="muted"> ({s.min_days}–{s.max_days})</span></> },
+                { key: 'lead_time_now', label: 'Used now', num: true, width: '13%',
+                  render: v => v == null ? <span className="muted">—</span> : `${v} d` },
+                { key: 'in_use', label: '', width: '25%',
+                  render: (v, s) => v
+                    ? <span className="tag tag--ok">measured</span>
+                    : <span className="hint">{minDeliveries - s.deliveries} more deliver{minDeliveries - s.deliveries === 1 ? 'y' : 'ies'} needed</span> },
+              ]}
+              data={summary.map(s => ({ ...s, rowKey: `ls${s.supplier_name}` }))}
+              pageSize={10} minWidth={620}
+            />
+            <ul className="date-list" style={{ marginTop: 12 }}>
+              {restocks.filter(r => r.delivered_on).slice(0, 30).map(r => (
+                <li key={r.restock_id} className="restock-open">
+                  <span>
+                    <b>{r.supplier_name}</b> · {usDate(r.ordered_on)} → {usDate(r.delivered_on)}
+                    <span className="muted"> ({r.days} days)</span>
+                  </span>
+                  <button className="btn btn--ghost btn--sm" onClick={() => remove(r.restock_id)}
+                          title="Remove a restock recorded by mistake">Remove</button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 /* -------------------------- Store Closure / Suspension · Flag an Event */
 
 function ClosureAndEventCards({ onSaved, reloadKey }) {
@@ -1332,7 +1616,12 @@ function entryKey(e) {
   return e.local_id ? `l${e.local_id}` : `s${e.sale_id}`;
 }
 
-const TYPE_CELL = v => <span className={`tag tag--${TYPE_TONE[v] || 'info'}`}>{v}</span>;
+const TYPE_CELL = (v, row) => (
+  <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+    <span className={`tag tag--${TYPE_TONE[v] || 'info'}`}>{v}</span>
+    {ORDER_LABEL[row?.order_type] && <span className="tag tag--gold">{ORDER_LABEL[row.order_type]}</span>}
+  </span>
+);
 
 /** Shared by the Recent Entries block inside Sales Inventory Tally. Lifted to
  *  module scope when that block moved into the form card, so the table shape
@@ -1400,6 +1689,35 @@ function EntriesByDate({ reloadKey }) {
  *  Deliberately only shown when there is something concrete to point at
  *  (`stale` is false when the pending counts are all zero), so it does not
  *  become a permanent decoration people learn to ignore. */
+/** The calendar (Dim_Date, from calendar_ranges.csv) has a last day, and no
+ *  tally entry can be dated after it. Extending it is the group's decision
+ *  (docs/SYSTEM_GAPS_AND_IMPROVEMENTS.md 2.1), so all this can do is make
+ *  sure the deadline is seen in time: from CALENDAR_WARN_DAYS before it. */
+const CALENDAR_WARN_DAYS = 120;
+
+function CalendarEndBanner({ meta }) {
+  const end = meta?.calendar_span?.[1];
+  if (!end) return null;
+  const daysLeft = Math.round((new Date(`${end}T00:00:00`) - new Date(`${today()}T00:00:00`)) / 86400000);
+  if (daysLeft > CALENDAR_WARN_DAYS) return null;
+  return (
+    <div className="notice notice--warn" style={{ display: 'flex', gap: 10 }}>
+      <Icon name="cal" size={16} />
+      <div>
+        <b>
+          {daysLeft >= 0
+            ? `The calendar ends on ${usDate(end)} — ${daysLeft} day${daysLeft === 1 ? '' : 's'} from now.`
+            : `The calendar ended on ${usDate(end)}.`}
+        </b>
+        <div style={{ marginTop: 4 }}>
+          Tallies dated after that day cannot be saved until it is extended with the next term&apos;s dates
+          (<span className="mono">data/calendar_ranges.csv</span>). Ask whoever maintains the system.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StalenessBanner({ staleness }) {
   if (!staleness || !staleness.stale) return null;
 

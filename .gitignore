@@ -35,3 +35,8 @@ docs/*.csv
 /*.xlsx
 .vault_state.json
 *.vaulttmp
+# what step0 last converted on this machine (its rawdata/), so an unchanged run is skipped
+.step0_state.json
+
+# daily ustore.db copies (backend/backup.py) - plain store data, machine-local like ustore.db
+backups/
