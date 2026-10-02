@@ -201,7 +201,7 @@ def category_daily_series(con, products, fsn=None):
         FROM Fact_Sales f
         JOIN Dim_Date d    ON d.date_id = f.date_id
         JOIN Dim_Product p ON p.product_id = f.product_id
-        WHERE f.transaction_type = 'sale'
+        WHERE LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'
     """, con, parse_dates=["calendar_date"])
 
     fact = fact.merge(products[["product_id", "forecast_category"]],

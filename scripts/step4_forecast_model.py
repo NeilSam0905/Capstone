@@ -424,9 +424,11 @@ def load_common(con):
     products = pd.read_sql(
         f"SELECT product_id, item_name, fsn_class, is_hvl, {cat_col} FROM Dim_Product", con
     )
+    # sales only: damaged / promo / transfer removals are not demand
     fact = pd.read_sql(
         """SELECT f.product_id, d.calendar_date, f.quantity_sold
-           FROM Fact_Sales f JOIN Dim_Date d ON f.date_id = d.date_id""",
+           FROM Fact_Sales f JOIN Dim_Date d ON f.date_id = d.date_id
+           WHERE LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'""",
         con,
     )
     fact["calendar_date"] = pd.to_datetime(fact["calendar_date"])

@@ -35,6 +35,7 @@ import catalog
 import db as dbmod
 import pipeline
 import validation
+import names                  # after pipeline: it needs scripts/ on sys.path
 
 app = Flask(__name__)
 CORS(app)
@@ -167,10 +168,13 @@ def _as_iso_date(value):
 
 
 def _product_index(c):
-    """Lowercased item_name -> product_id, for matching a spreadsheet's item
-    column against the controlled vocabulary."""
-    return {r["item_name"].strip().lower(): r["product_id"]
-            for r in dbmod.rows(c, "SELECT product_id, item_name FROM Dim_Product")}
+    """name_key -> product_id, for matching a spreadsheet's item column: each
+    item's own name and every sheet name the vocabulary maps onto it."""
+    return names.name_index(c, VOCAB_CSV)
+
+
+def _lookup(index, item):
+    return index.get(names.name_matcher.name_key(item))
 
 
 def _accepted_upload(storage):
@@ -232,12 +236,13 @@ def get_meta():
     products = dbmod.rows(c, "SELECT product_id, unit_price_php FROM Dim_Product")
     stats, _ = catalog.compute_stats(c)
     dim_date_span = dbmod.one(c, "SELECT MIN(calendar_date) a, MAX(calendar_date) b FROM Dim_Date")
-    sales_span = dbmod.one(c, """
+    sales_span = dbmod.one(c, f"""
         SELECT MIN(d.calendar_date) a, MAX(d.calendar_date) b
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        WHERE {dbmod.SALE_ONLY}
     """)
     fact_sales_rows = c.execute("SELECT COUNT(*) FROM Fact_Sales").fetchone()[0]
-    total_units = c.execute("SELECT SUM(quantity_sold) FROM Fact_Sales").fetchone()[0]
+    total_units = c.execute(f"SELECT SUM(f.quantity_sold) FROM Fact_Sales f WHERE {dbmod.SALE_ONLY}").fetchone()[0]
     n_params = c.execute("SELECT COUNT(*) FROM Dim_Parameters").fetchone()[0]
     n_reorder = c.execute("SELECT COUNT(*) FROM Result_Prescriptive").fetchone()[0]
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -352,60 +357,6 @@ VOCAB_CSV = DATA_DIR / "vocab_mapping_FINAL_v5.csv"
 INVENTORY_SOURCE_CSV = DATA_DIR / "USTore_inventory_excel_long.csv"
 
 
-def _append_csv_row(path, row):
-    """Append one dict to an existing CSV, in that file's own column order.
-
-    Reads the header first and writes strictly against it, so a column added
-    to the file later cannot silently shift values into the wrong field.
-    Returns True on success; a failure here is reported, never swallowed - a
-    half-registered item is worse than a rejected one.
-    """
-    with open(path, newline="", encoding="utf-8") as f:
-        header = next(csv.reader(f))
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        csv.DictWriter(f, fieldnames=header).writerow(
-            {k: row.get(k, "") for k in header})
-    return header
-
-
-def _register_in_source_csvs(name, category, price):
-    """Make a new item survive `step1_apply_mapping.py`, which rebuilds
-    Dim_Product from scratch on every pipeline run.
-
-    TWO files are needed, and the second is the one that is easy to miss:
-
-      1. `vocab_mapping_FINAL_v5.csv` - the controlled vocabulary. Maps a raw
-         name to its canonical form; a new item maps to itself.
-      2. `USTore_inventory_excel_long.csv` - the inventory source. This is
-         what actually decides the roster: step1 builds `all_items` from the
-         canonical names present in the SALES and INVENTORY csvs, NOT from
-         the vocabulary. A vocabulary entry alone would leave the item out of
-         Dim_Product entirely at the next rebuild.
-
-    Quantity is left blank rather than zeroed: the store has not counted this
-    item yet, and writing 0 would assert a stock figure nobody measured. It
-    reads as 0 until the first real count is recorded, which then supersedes
-    it (catalog.load_counted_stock takes precedence over the workbook).
-    """
-    today_iso = date.today().isoformat()
-    _append_csv_row(VOCAB_CSV, {
-        "raw_name": name,
-        "canonical_item_name": name,
-        "merged": "no",
-        "row_count": 0,
-        "source": "tally_interface",
-        "revisit_with_store": "",
-    })
-    _append_csv_row(INVENTORY_SOURCE_CSV, {
-        "Category": category,
-        "Date": today_iso,
-        "Item": name,
-        "Price": price if price is not None else "",
-        "Quantity": "",
-        "Notes": f"Added via the tally interface {today_iso}; not yet counted",
-    })
-
-
 @app.post("/api/products")
 def add_product():
     """Create one new item, permanently.
@@ -445,7 +396,8 @@ def add_product():
     # CSVs first: see the docstring. If these fail the item is never created,
     # rather than created in a form that the next pipeline run would erase.
     try:
-        _register_in_source_csvs(name, category, payload.get("unit_price_php"))
+        names.register_new_item(VOCAB_CSV, INVENTORY_SOURCE_CSV, name, category,
+                                payload.get("unit_price_php"))
     except (OSError, StopIteration, csv.Error) as exc:
         app.logger.exception("could not register %r in the source CSVs", name)
         return jsonify({"ok": False, "errors": {
@@ -467,6 +419,55 @@ def add_product():
         "category": category,
         "supplier_name": supplier or catalog.UNATTRIBUTED,
     }})
+
+
+@app.post("/api/products/<int:product_id>/rename")
+def rename_product(product_id):
+    """The tally sheet now calls this item something else ({"new_name"}).
+
+    Adds the new name to the vocabulary as another name for the item, so the
+    next pipeline run reads rows under it as this item: history kept, name on
+    the dashboard unchanged (see names.rename)."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = names.rename(con(), VOCAB_CSV, product_id, payload.get("new_name"))
+    except names.ReviewError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), exc.status
+    except (OSError, StopIteration, csv.Error) as exc:
+        app.logger.exception("could not write the vocabulary for a rename")
+        return jsonify({"ok": False, "error": f"Could not write to the vocabulary ({exc})."}), 500
+    return jsonify({"ok": True, **result})
+
+
+@app.get("/api/names/review")
+def get_name_review():
+    """Item names the vocabulary does not know yet, from the tally sheets
+    (provisional items, step1) and from imported files (held rows), with a
+    suggestion where name_matcher has one. See backend/names.py."""
+    try:
+        return jsonify(names.review_list(con(), VOCAB_CSV))
+    except OSError as exc:
+        return jsonify({"ok": False, "error": f"Could not read the vocabulary ({exc})."}), 500
+
+
+@app.post("/api/names/review")
+def settle_name():
+    """Settle one name: {"raw_name", "action": "same" | "new" | "discard",
+    "product_id" (same), "category"/"supplier_name" (new, import-only)}.
+    Appends one row to the vocabulary; see names.settle."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = names.settle(con(), VOCAB_CSV, INVENTORY_SOURCE_CSV,
+                              payload.get("raw_name"), payload.get("action"),
+                              product_id=payload.get("product_id"),
+                              category=payload.get("category"),
+                              supplier_name=payload.get("supplier_name"))
+    except names.ReviewError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), exc.status
+    except (OSError, StopIteration, csv.Error) as exc:
+        app.logger.exception("could not write the vocabulary for a name review")
+        return jsonify({"ok": False, "error": f"Could not write to the data files ({exc})."}), 500
+    return jsonify({"ok": True, **result})
 
 
 @app.put("/api/products/<int:product_id>/status")
@@ -498,11 +499,11 @@ def set_product_status(product_id):
 @app.get("/api/products/<int:product_id>/history")
 def get_product_history(product_id):
     c = con()
-    rows = dbmod.rows(c, """
+    rows = dbmod.rows(c, f"""
         SELECT substr(d.calendar_date, 1, 7) AS month,
                SUM(f.quantity_sold) AS units, COUNT(DISTINCT f.date_id) AS tally_days
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
-        WHERE f.product_id = ?
+        WHERE f.product_id = ? AND {dbmod.SALE_ONLY}
         GROUP BY 1 ORDER BY 1
     """, (product_id,))
     return jsonify(rows)
@@ -522,9 +523,10 @@ def get_monthly_units():
     price_by_id = {p["product_id"]: p["unit_price_php"] for p in cat}
     months = catalog.months_seen(c)
 
-    monthly = dbmod.rows(c, """
+    monthly = dbmod.rows(c, f"""
         SELECT f.product_id, substr(d.calendar_date, 1, 7) AS month, SUM(f.quantity_sold) AS units
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        WHERE {dbmod.SALE_ONLY}
         GROUP BY 1, 2
     """)
     by_month = {}
@@ -553,10 +555,10 @@ def build_batch_report(c, month, only_supplier=None):
     cat = catalog.compute_catalog(c)
     product_by_id = {p["product_id"]: p for p in cat}
 
-    monthly = dbmod.rows(c, """
+    monthly = dbmod.rows(c, f"""
         SELECT f.product_id, substr(d.calendar_date, 1, 7) AS month, SUM(f.quantity_sold) AS units
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
-        WHERE substr(d.calendar_date, 1, 7) = ?
+        WHERE substr(d.calendar_date, 1, 7) = ? AND {dbmod.SALE_ONLY}
         GROUP BY 1, 2
     """, (month,))
 
@@ -624,10 +626,10 @@ def build_batch_daily(c, month):
         ORDER BY calendar_date
     """, (month,))
 
-    qty_rows = dbmod.rows(c, """
+    qty_rows = dbmod.rows(c, f"""
         SELECT f.product_id, d.calendar_date AS day, SUM(f.quantity_sold) AS units
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
-        WHERE substr(d.calendar_date, 1, 7) = ?
+        WHERE substr(d.calendar_date, 1, 7) = ? AND {dbmod.SALE_ONLY}
         GROUP BY 1, 2
         HAVING SUM(f.quantity_sold) > 0
     """, (month,))
@@ -946,6 +948,11 @@ def import_inventory_counts():
     Rows that cannot be used are REPORTED, never silently dropped - the same
     rule step2 follows with Exception_Log. Valid rows are still applied, so a
     500-row workbook is not rejected wholesale over two bad lines.
+
+    Item may be an item's name or any tally-sheet name the vocabulary maps
+    onto it. A valid row whose name is neither is HELD (Pending_Import_Row)
+    and counted under "Names to review"; it is applied once the name is
+    settled there.
     """
     storage = request.files.get("file")
     if storage is None or not storage.filename:
@@ -970,6 +977,7 @@ def import_inventory_counts():
     today_month = date.today().strftime("%Y-%m")
     imported = updated = 0
     rejected = []
+    held = {}                                      # name -> rows held for review
     now = datetime.now().isoformat(timespec="seconds")
 
     for i, row in enumerate(rows, start=2):        # start=2: row 1 is the header
@@ -980,19 +988,22 @@ def import_inventory_counts():
 
         if not item:
             rejected.append({"row": i, "item": "", "reason": "No item name."}); continue
-        pid = products.get(str(item).strip().lower())
-        if pid is None:
-            rejected.append({"row": i, "item": str(item),
-                             "reason": "Not in the controlled vocabulary."}); continue
+        item = str(item).strip()
         if qty is None or qty < 0:
-            rejected.append({"row": i, "item": str(item),
+            rejected.append({"row": i, "item": item,
                              "reason": "Units on hand must be a whole number >= 0."}); continue
         if not validation.ISO_MONTH_RE.match(month):
-            rejected.append({"row": i, "item": str(item),
+            rejected.append({"row": i, "item": item,
                              "reason": "No usable month (YYYY-MM)."}); continue
         if month > today_month:
-            rejected.append({"row": i, "item": str(item),
+            rejected.append({"row": i, "item": item,
                              "reason": "Month is in the future."}); continue
+        pid = _lookup(products, item)
+        if pid is None:
+            names.hold_row(c, "inventory", item, qty, storage.filename, count_month=month,
+                           note=(str(note).strip() if note else None))
+            held[item] = held.get(item, 0) + 1
+            continue
 
         existed = dbmod.one(c, "SELECT 1 FROM Inventory_Count WHERE product_id = ? AND count_month = ?",
                             (pid, month))
@@ -1011,8 +1022,14 @@ def import_inventory_counts():
     return jsonify({
         "ok": True, "imported": imported, "updated": updated,
         "rejected": rejected[:50], "rejected_total": len(rejected),
+        **_held_summary(held),
         "rows_read": len(rows), "saved_to": saved,
     })
+
+
+def _held_summary(held):
+    return {"held": sum(held.values()),
+            "held_names": [{"name": n, "rows": k} for n, k in sorted(held.items())][:50]}
 
 
 @app.post("/api/inventory")
@@ -1244,11 +1261,12 @@ def add_entry():
     transaction_type = str(payload["transaction_type"]).upper()
 
     date_row = dbmod.one(c, "SELECT date_id FROM Dim_Date WHERE calendar_date = ?", (calendar_date,))
+    # Stored in lower case like every historical row ('sale'); shown in upper case.
     cur = c.execute("""
         INSERT INTO Fact_Sales
             (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag, transaction_type)
         VALUES (?, ?, ?, 0, 0, ?)
-    """, (product_id, date_row["date_id"], quantity_sold, transaction_type))
+    """, (product_id, date_row["date_id"], quantity_sold, transaction_type.lower()))
     c.commit()
 
     product = dbmod.one(c, "SELECT item_name, supplier_name FROM Dim_Product WHERE product_id = ?", (product_id,))
@@ -1282,6 +1300,12 @@ def import_tally():
 
     Appends, it does not upsert: two tallies of the same item on the same day
     are two real movements. Rows that cannot be used are reported, not dropped.
+
+    Item may be an item's name or any tally-sheet name the vocabulary maps
+    onto it. A valid row whose name is neither is HELD (Pending_Import_Row),
+    not rejected: because this appends, re-importing the file once the name
+    was known would load every other row twice. It is applied when the name
+    is settled under "Names to review".
     """
     storage = request.files.get("file")
     if storage is None or not storage.filename:
@@ -1304,6 +1328,7 @@ def import_tally():
     today_iso = date.today().isoformat()
     imported = 0
     rejected = []
+    held = {}
 
     for i, row in enumerate(rows, start=2):
         item = _pick(row, "Item", "Item Name", "Product", "Canonical Item Name")
@@ -1313,36 +1338,40 @@ def import_tally():
 
         if not item:
             rejected.append({"row": i, "item": "", "reason": "No item name."}); continue
-        pid = products.get(str(item).strip().lower())
-        if pid is None:
-            rejected.append({"row": i, "item": str(item),
-                             "reason": "Not in the controlled vocabulary."}); continue
+        item = str(item).strip()
         if iso is None:
-            rejected.append({"row": i, "item": str(item),
+            rejected.append({"row": i, "item": item,
                              "reason": "Date missing or not ISO YYYY-MM-DD."}); continue
         if iso > today_iso:
-            rejected.append({"row": i, "item": str(item), "reason": "Date is in the future."}); continue
+            rejected.append({"row": i, "item": item, "reason": "Date is in the future."}); continue
         if iso not in dates:
-            rejected.append({"row": i, "item": str(item),
+            rejected.append({"row": i, "item": item,
                              "reason": "Date not in the calendar."}); continue
         if qty is None or qty <= 0:
-            rejected.append({"row": i, "item": str(item),
+            rejected.append({"row": i, "item": item,
                              "reason": "Quantity must be a whole number > 0."}); continue
         if ttype not in validation.TRANSACTION_TYPES:
-            rejected.append({"row": i, "item": str(item),
+            rejected.append({"row": i, "item": item,
                              "reason": f"Unknown transaction type '{ttype}'."}); continue
+        pid = _lookup(products, item)
+        if pid is None:
+            names.hold_row(c, "tally", item, qty, storage.filename, calendar_date=iso,
+                           transaction_type=ttype.lower())
+            held[item] = held.get(item, 0) + 1
+            continue
 
         c.execute("""
             INSERT INTO Fact_Sales
                 (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag, transaction_type)
             VALUES (?, ?, ?, 0, 0, ?)
-        """, (pid, dates[iso], qty, ttype))
+        """, (pid, dates[iso], qty, ttype.lower()))
         imported += 1
 
     c.commit()
     return jsonify({
         "ok": True, "imported": imported, "updated": 0,
         "rejected": rejected[:50], "rejected_total": len(rejected),
+        **_held_summary(held),
         "rows_read": len(rows), "saved_to": saved,
     })
 
@@ -1433,11 +1462,12 @@ def _monthly_history(c, product_ids, until=None):
         WITH tally AS (
             SELECT DISTINCT d.calendar_date AS date, d.date_id
             FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+            WHERE {dbmod.SALE_ONLY}
         ),
         mine AS (
-            SELECT date_id, SUM(quantity_sold) AS units
-            FROM Fact_Sales WHERE product_id IN ({marks})
-            GROUP BY date_id
+            SELECT f.date_id, SUM(f.quantity_sold) AS units
+            FROM Fact_Sales f WHERE f.product_id IN ({marks}) AND {dbmod.SALE_ONLY}
+            GROUP BY f.date_id
         ),
         first_sale AS (
             SELECT MIN(t.date) AS date
@@ -1475,10 +1505,10 @@ DISCONTINUED_DAYS = 365
 def _last_sale_date(c, product_id):
     """The most recent date this product recorded a real (>0) sale, or None
     if it never has."""
-    row = dbmod.one(c, """
+    row = dbmod.one(c, f"""
         SELECT MAX(d.calendar_date) AS d
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
-        WHERE f.product_id = ? AND f.quantity_sold > 0
+        WHERE f.product_id = ? AND f.quantity_sold > 0 AND {dbmod.SALE_ONLY}
     """, (product_id,))
     return row["d"] if row else None
 
@@ -1611,7 +1641,8 @@ def _category_contributors(c, category):
                SUM(f.yhat) AS yhat_30d,
                (SELECT MAX(d.calendar_date) FROM Fact_Sales f2
                 JOIN Dim_Date d ON d.date_id = f2.date_id
-                WHERE f2.product_id = p.product_id AND f2.quantity_sold > 0) AS last_sale_date
+                WHERE f2.product_id = p.product_id AND f2.quantity_sold > 0
+                  AND LOWER(COALESCE(f2.transaction_type, 'sale')) = 'sale') AS last_sale_date
         FROM Result_Forecast f
         JOIN Dim_Product p ON p.product_id = f.product_id
         WHERE p.category = ?
@@ -1993,6 +2024,82 @@ def get_advisories():
     })
 
 
+# ------------------------------------------------------ tally workbooks
+
+@app.post("/api/tally/workbook")
+def add_tally_workbook():
+    """Add the store's own tally workbook (the monthly "<MONTH> - TBS" sheets)
+    to rawdata/, where the next pipeline run's step0 reads it - so a new
+    academic year's workbook needs no developer and no file copying.
+
+    Checked before it is kept: it must have at least one tally sheet. A
+    workbook of the same name already in rawdata/ is moved to
+    rawdata/replaced/ first, never overwritten in place. The response says
+    which months it covers and which of them another workbook also has -
+    step0 reads those months from this one, the most recently added."""
+    import openpyxl
+    from step0_convert_sales_with_zeros import (
+        APP_IMPORT_PREFIX, find_workbooks, sheet_month, tbs_sheet_names)
+
+    storage = request.files.get("file")
+    if storage is None or not storage.filename:
+        return jsonify({"ok": False, "error": "Choose the tally workbook (.xlsx) to add."}), 400
+    if not storage.filename.lower().endswith(".xlsx"):
+        return jsonify({"ok": False, "error": "A tally workbook is an .xlsx file."}), 400
+    payload = storage.read()
+    # The store's own file name, kept as it is (spaces and all) so a newer copy
+    # of the same workbook replaces the old one instead of sitting beside it.
+    # Only a directory part and characters Windows forbids are removed.
+    filename = re.sub(r'[<>:"|?*\x00-\x1f]', "_", re.split(r"[\\/]", storage.filename)[-1]).strip()
+    if filename.startswith(APP_IMPORT_PREFIX):     # step0 skips import_* (app import archives)
+        filename = "tally_" + filename
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(payload), read_only=True, data_only=True)
+    except Exception as exc:                       # openpyxl raises a zoo
+        return jsonify({"ok": False, "error": f"Could not read that workbook ({exc})."}), 400
+    try:
+        months = sorted({m for m in (sheet_month(wb[sn]) for sn in tbs_sheet_names(wb, filename)) if m})
+    finally:
+        wb.close()
+    if not months:
+        return jsonify({"ok": False, "error": "No tally sheets found. The pipeline reads sheets named like "
+                                              "'AUGUST 2026 - TBS' with the dates across the first row."}), 400
+
+    try:
+        others = [p for p in find_workbooks(str(RAWDATA_DIR)) if Path(p).name != filename]
+    except FileNotFoundError:
+        others = []
+    overlap = {}                                   # month -> other workbooks that have it
+    for path in others:
+        wbo = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        try:
+            for sn in tbs_sheet_names(wbo, path):
+                m = sheet_month(wbo[sn])
+                if m in months:
+                    overlap.setdefault(m, []).append(Path(path).name)
+        finally:
+            wbo.close()
+
+    target = RAWDATA_DIR / filename
+    replaced = None
+    try:
+        RAWDATA_DIR.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            old = RAWDATA_DIR / "replaced" / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}_{filename}"
+            old.parent.mkdir(exist_ok=True)
+            target.replace(old)
+            replaced = str(old.relative_to(RAWDATA_DIR.parent))
+        target.write_bytes(payload)
+    except OSError as exc:
+        return jsonify({"ok": False, "error": f"Could not save the workbook to rawdata/ ({exc})."}), 500
+
+    return jsonify({
+        "ok": True, "saved_as": filename, "months": months,
+        "replaced_file": replaced,
+        "takes_over": [{"month": m, "from": sorted(set(f))} for m, f in sorted(overlap.items())],
+    })
+
+
 # --------------------------------------------------------------- pipeline
 
 @app.post("/api/pipeline/run")
@@ -2037,7 +2144,15 @@ def pipeline_staleness():
     only recomputed when the pipeline runs - so a screen can be showing
     reorder points that predate a week of tally entries with nothing
     indicating it. See pipeline.get_staleness()."""
-    return jsonify(pipeline.get_staleness(con()))
+    state = pipeline.get_staleness(con())
+    # Names settled under "Names to review" since the last run: the vocabulary
+    # has them, but Dim_Product and everything after it does not yet.
+    if state.get("supported"):
+        n = names.awaiting_run_count(con(), VOCAB_CSV)
+        state["pending"]["name_decisions"] = n
+        state["total_pending"] += n
+        state["stale"] = state["stale"] or n > 0
+    return jsonify(state)
 
 
 if __name__ == "__main__":

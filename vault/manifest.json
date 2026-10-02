@@ -1,5 +1,6 @@
 {
  "FOR CICS STUDENTS.xlsx": "b68907e2f9a7c4480e7360d235e8e62c9247c2e94e635a5572b0304143041d05",
+ "Group 8 ERRATA SHEET.xlsx": "204827436c887bb068d6f2812d8ae7f19bbfaa7bec59a3aa6f5c1dd156230fc6",
  "Model_Comparison.xlsx": "bdd4aaccab8f156f98b139c39f84ec7870e35a24a87c153d5a973fab854452ee",
  "data/USTore_Current_Model_Results.xlsx": "93f69609f2844b00de13519384a5c1f0b4e3b7096631e657aa0eb9b3e87ad431",
  "data/USTore_Data_Gaps.xlsx": "ba951d965878fdc881226dd04452f86915b8943c3ab5114bc60e4e50dd6f0c77",
@@ -8,7 +9,7 @@
  "data/USTore_inventory_excel_long.csv": "37d21801cf97684588adfa81206ef98c45ed15c2d4d969fdb667e737e25296ad",
  "data/USTore_inventory_excel_long_mapped.csv": "cecb04ecb08106e909e43d3ed640eb4bd025456c991cc52d26cfc8201168c7d1",
  "data/USTore_sales_long_May_Aug2024-May2026.csv": "4aaaf62ce1d2ec0cd9082faf8afe9565e76abf33eba6489c36be7172b1756504",
- "data/USTore_sales_long_allocated.csv": "817965c597a9cebf9db657099e516473497190b72c10b2cc48beabb614a7dee0",
+ "data/USTore_sales_long_allocated.csv": "7c0f0d9a82dbaa81c99c90196b3c93f4a109c00d0917334d70777de524d19de9",
  "data/USTore_sales_long_with_zeros.csv": "7a8945821948a65145d5703e3362a3e078c8299c8fc028afc8785a8a2f91f064",
  "data/USTore_sales_long_with_zeros_mapped.csv": "902183b4312c93d268f38c6e95d32632d8461d3d608848dfebbd978d02625a85",
  "data/USTore_with_Synthetic_Current_Model_Results.xlsx": "c703f47c3093e9bd8b17ac3d812d4e431cadb5e2f5369824e773735dfdb3bcfc",
@@ -17,6 +18,7 @@
  "data/allocation_groups.csv": "1a601489b5562c6b0bd0aec9a30d731aef2e1d926f387bd8040223a0bf648b3e",
  "data/baseline_rolling_mean_30_forecast.csv": "f1d97cafcba9821e5769b56ef4fcd3ce642466df5c52758d62f6cf99969e0c8f",
  "data/baseline_rolling_mean_30_metrics.csv": "34d79107852054a52f16f5f469b35ea6767c44ee6a86f57a8388294ec3f6d802",
+ "data/bulk_day_candidates.csv": "1a9140791cc00169bf602aa4066770c9913adab6055e59479ee5d122e3082c1e",
  "data/calendar_adjustment_by_window.csv": "5e24c767c88eee12f5c23f8a3e16955ef364d5b9c19603560fd84689f5b703d8",
  "data/calendar_adjustment_test.csv": "5e343c0d7d004f681deb91f54ebbc5cfb98132ec01262292ff7c83d93a1b09c6",
  "data/calendar_hurdle_results.csv": "4d303366c39c54821c4a90193cb2593b9b6213889be5e850a8428c339ce197b7",
@@ -123,7 +125,7 @@
  "data/pareto_curve.csv": "8c7d01e6e18274fd5fa61821a564d031b5e9d3cd16c5b50131f3d58a78159206",
  "data/per_group_champion_category_speed.csv": "0e04fd975b9de4a004e447f982a754f7b4b6afedae4aeae2387ddbc9c624440f",
  "data/per_group_champion_cluster4.csv": "c59b9e93906b3c1394282e68774e804c941096794b01328434056634e389856f",
- "data/rebuild_batch_sales_2023.csv": "48a6643a6ecf55ce8317ca7d3df5a3e83a979455809d37a7796d0a317d1bf68c",
+ "data/rebuild_batch_sales_2023.csv": "ba2dd5725e9a2b24ddf4fc810fcd74f3a7b9c84d5f8030d0ba59c5d5a3d58c7d",
  "data/rebuild_day_status.csv": "b59d60b1cd1df2d79ae5af9c5fe457761609923e3d4f8fc5f0af075b2394af72",
  "data/rebuild_extract_report.csv": "3be1a535b55e8b1dae22dee15e9bc1f1080c76866fb0eb87d8dbee3a3ad96218",
  "data/rebuild_sales_long.csv": "198a65478572e7e84ac4070e160fda989ef275c7a0e297e849971380daf5a866",
@@ -147,6 +149,7 @@
  "data/vocab_mapping_FINAL_v5.csv": "1d56acdb64294f7b04451db81867f2097605ce6977d60cb35fa91a6683d3535f",
  "data/vocab_mapping_draft_new_names_2026-08.csv": "a87687cc575606bd8f41735b38e36f0e7c987d401c5b133023787a320eec08d1",
  "data/vocab_mapping_draft_new_names_2026-09.csv": "4b23b7110c7209789146d04a7e28a1fae5c216e9dc9a555667e423f021a16a50",
+ "data/vocab_merge_candidates_2026-10.csv": "5af2d6f3cf99139a58cae1c0c70c6301f43aa71f1c90736850e763bb5146c646",
  "data/what_if_series.csv": "a181ba51f0590fb240fd11e768fabbd8c191a4196bd371627dfc09251f1611c7",
  "data/what_if_test.csv": "97f40feee7f2d8b3e57efdd2717a0a16720da846dc9b9bad4302b2b8af589b12",
  "docs/demand_basis_by_anchor.csv": "c750f01e9eaab24c955753ec7d0ed898451ca90c75a75b00193d46cb9fbfebcc",
@@ -156,5 +159,5 @@
  "docs/products_without_forecast.csv": "32a58460ab4ec260718a8dcf74de2b0d7e853fcbda9a089e82477e1532519c63",
  "docs/unpriced_products.csv": "dcfa730bf272c4763f325a1cf1a78bcd894fe25efb5c0607804146f54fb08554",
  "prediction_targets_results.xlsx": "4dd103bad1bb9a44c6cee84d0df20b67ef320521c483311d073090f27337158c",
- "ustore.db": "d19e0a5dde4b951b757982d96ec8f92246cf35c4fcf887ceca5887257eeb3643"
+ "ustore.db": "24182262a22289944b42f24748061ebddef6f101991c65ac711ea5f21cb4c736"
 }

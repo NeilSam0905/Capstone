@@ -2,16 +2,38 @@
 Step 1 of ETL: apply the canonical-name mapping to the sales and inventory
 CSVs, report any unmapped item names, and populate Dim_Product.
 
-Does NOT do proportional allocation and does NOT touch Fact_Sales.
+Does NOT do proportional allocation and does NOT touch Fact_Sales' sales
+history (step2 reloads that); it only re-points rows typed into the Tally
+Interface when the item they belong to was merged (see
+carry_over_operational_rows).
+
+A name the vocabulary does not know no longer stops the run. The store
+renames rows on its sheets (about 50 on the July 2026 sheet), and waiting
+for a developer to extend the vocabulary each time is what made the system
+unusable without one. Each unknown name is loaded as a provisional item -
+its own product, named as the sheet names it - and written to Name_Review
+with name_matcher's suggestion of which existing item it probably is. Staff
+settle it in the Tally Interface's "Names to review" list; that confirmation
+appends to the vocabulary, and the next run reads the name accordingly.
+Nothing here writes the vocabulary.
+
+product_id is kept per item name across runs. Dim_Product is rebuilt from
+scratch every run, and it used to be renumbered 1..N in name order, so one
+new name shifted the id of every item after it - while Tally Interface
+entries and stock counts (Fact_Sales rows with tally_date_flag = 0,
+Inventory_Count) keep the id they were saved with. They would have moved
+silently onto other products.
 """
 import re
 import sqlite3
 import sys
+from datetime import datetime
 
 import openpyxl
 import pandas as pd
 
-from step0_convert_sales_with_zeros import FILES as TBS_FILES, is_tbs_month_sheet
+import name_matcher
+from step0_convert_sales_with_zeros import find_workbooks, plan_sheets, sheet_month
 
 # Remediation S12. Distinct from tools/audit_price_suffix_skus.py's
 # PRICE_SUFFIX_RE (r"\s*@.*$"), which strips the suffix to recover the
@@ -101,18 +123,23 @@ def load_tbs_item_prices(mapping):
     kept - the same aggregation rule build_dim_product() already uses for
     inv_price. Used only for canonical items inventory, the name-suffix and
     may2024_dsr_price all missed.
+
+    Reads the same sheets step0 converts (plan_sheets), so a month that is in
+    two workbooks is not counted twice here either. Also returns the raw
+    prices per (sheet name, 'YYYY-MM'): name_matcher compares a new name's
+    price with an old name's price in its LATEST month, from this same column
+    - not with unit_price_php, which mostly comes from the inventory workbook
+    and is a different figure for the same item.
     """
     raw_prices = {}
-    for fn in TBS_FILES:
+    by_month = {}
+    plan, _notes = plan_sheets(find_workbooks())
+    for fn, sheet_names in plan:
         wb = openpyxl.load_workbook(fn, data_only=True)
-        short = fn.split("/")[-1]
-        if short == "2024 5 MAY DSR & TBS.xlsx":
-            sheet_names = ["TBS"]
-        else:
-            sheet_names = [sn for sn in wb.sheetnames if is_tbs_month_sheet(sn)]
 
         for sn in sheet_names:
             ws = wb[sn]
+            month = sheet_month(ws)
             price_col = None
             for c in range(2, ws.max_column + 1):
                 header = ws.cell(1, c).value
@@ -131,6 +158,7 @@ def load_tbs_item_prices(mapping):
                 price = ws.cell(r, price_col).value
                 if isinstance(price, (int, float)):
                     raw_prices.setdefault(label, []).append(float(price))
+                    by_month.setdefault((label, month), []).append(float(price))
 
     unmapped = set()
     canonical_prices = {}
@@ -153,7 +181,7 @@ def load_tbs_item_prices(mapping):
     print(f"[tbs_item_price] {len(result)} canonical item(s) priced from this source; "
           f"{n_conflict} had more than one distinct price across the months it "
           f"appeared in (modal value kept - most are real price drift, not noise)")
-    return result
+    return result, by_month
 
 
 MAPPING_CSV = "data/vocab_mapping_FINAL_v5.csv"
@@ -211,6 +239,14 @@ def apply_supplier_mapping(sales, name_map, status_map):
 def apply_mapping(df, mapping, label):
     stripped_items = df["Item"].astype(str).str.strip()
     canonical = stripped_items.map(mapping)
+    # A name typed with different capitals or spacing from its vocabulary row
+    # (most likely one added from the Tally Interface's Rename) is still that
+    # name - see name_matcher.name_key for why this can never pick a
+    # different item. Exact matches are untouched.
+    if canonical.isna().any():
+        folded = {name_matcher.name_key(raw): canon for raw, canon in mapping.items()}
+        missing = canonical.isna()
+        canonical[missing] = stripped_items[missing].map(lambda s: folded.get(name_matcher.name_key(s)))
     unmatched_mask = canonical.isna()
     unmatched_names = sorted(stripped_items[unmatched_mask].unique().tolist())
     df = df.copy()
@@ -222,6 +258,164 @@ def apply_mapping(df, mapping, label):
         for name in unmatched_names:
             print(f"   - {name!r}")
     return df, unmatched_names
+
+
+def load_as_provisional(df):
+    """Rows whose name the vocabulary does not know keep that name as their
+    item: a provisional product, until someone confirms in the Tally
+    Interface which item it is."""
+    df = df.copy()
+    df["canonical_item_name"] = df["canonical_item_name"].fillna(df["Item"].astype(str).str.strip())
+    return df
+
+
+# Rebuilt every run, like Dim_Product: the names THIS run did not find in the
+# vocabulary. The Tally Interface lists the ones still not in the vocabulary
+# for review; a name confirmed since the run stays here until the next run
+# picks the confirmation up.
+NAME_REVIEW_DDL = """CREATE TABLE Name_Review (
+    raw_name        TEXT PRIMARY KEY,
+    seen_in         TEXT,      -- 'sales', 'inventory' or 'sales+inventory'
+    first_date      TEXT,
+    last_date       TEXT,
+    sheet_rows      INTEGER,   -- rows (item-days) under this name
+    units           REAL,      -- units sold under this name
+    supplier_name   TEXT,      -- normalised, from supplier_mapping.csv
+    sheet_price     REAL,      -- the sheets' ITEM PRICE in its latest month
+    suggested_item  TEXT,      -- name_matcher's suggestion, or NULL
+    match_strength  TEXT,      -- 'strong' | 'weak' | NULL
+    match_score     REAL,
+    match_reason    TEXT,
+    found_at        TEXT
+)"""
+
+_YM = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _latest_sheet_price(labels, months, prices_by_month):
+    """Modal ITEM PRICE over `labels` in the latest month that has one."""
+    for ym in sorted(months, reverse=True):
+        vals = [p for lab in labels for p in prices_by_month.get((lab, ym), [])]
+        if vals:
+            return max(set(vals), key=vals.count)
+    return None
+
+
+def build_name_review(provisional, sales_mapped, inventory_mapped, prices_by_month):
+    """One row per provisional name, with name_matcher's suggestion."""
+    if not provisional:
+        return pd.DataFrame()
+    sales = sales_mapped.assign(
+        raw=sales_mapped["Item"].astype(str).str.strip(),
+        ym=sales_mapped["Date"].astype(str).str[:7],
+        qty=pd.to_numeric(sales_mapped["Total Quantity"], errors="coerce").fillna(0.0))
+    sales = sales[sales["ym"].str.match(_YM)]
+    inv_names = set(inventory_mapped["Item"].astype(str).str.strip())
+
+    def describe(name, rows, labels):
+        sup = rows["supplier_name"].dropna()
+        months = set(rows["ym"])
+        return {"name": name, "supplier": sup.mode().iloc[0] if len(sup) else None,
+                "price": _latest_sheet_price(labels, months, prices_by_month), "months": months}
+
+    existing = [describe(c, g, set(g["raw"]))
+                for c, g in sales[~sales["raw"].isin(provisional)].groupby("canonical_item_name")]
+    new = {n: describe(n, g, {n}) for n, g in sales[sales["raw"].isin(provisional)].groupby("raw")}
+    for n in provisional:          # an inventory-only name has no sales rows
+        new.setdefault(n, {"name": n, "supplier": None, "price": None, "months": set()})
+    suggestions = name_matcher.suggest(list(new.values()), existing)
+
+    found_at = datetime.now().isoformat(timespec="seconds")
+    rows = []
+    for n in sorted(provisional):
+        g = sales[sales["raw"] == n]
+        in_sales, in_inv = len(g) > 0, n in inv_names
+        s = suggestions[n]
+        rows.append({
+            "raw_name": n,
+            "seen_in": "sales+inventory" if in_sales and in_inv else "sales" if in_sales else "inventory",
+            "first_date": g["Date"].min() if in_sales else None,
+            "last_date": g["Date"].max() if in_sales else None,
+            "sheet_rows": len(g),
+            "units": float(g["qty"].sum()) if in_sales else None,
+            "supplier_name": new[n]["supplier"],
+            "sheet_price": new[n]["price"],
+            "suggested_item": s["item"],
+            "match_strength": s["strength"],
+            "match_score": s["score"],
+            "match_reason": s["why"],
+            "found_at": found_at,
+        })
+    return pd.DataFrame(rows)
+
+
+def assign_product_ids(dim_product, old_ids):
+    """Give every item the product_id it had last run; a new item gets the
+    next unused id. On an empty Dim_Product this is 1..N in name order, the
+    numbering the table has always had."""
+    next_id = max(old_ids.values(), default=0) + 1
+    ids = []
+    for name in dim_product["item_name"]:
+        if name in old_ids:
+            ids.append(old_ids[name])
+        else:
+            ids.append(next_id)
+            next_id += 1
+    out = dim_product.copy()
+    out.insert(0, "product_id", ids)
+    return out
+
+
+def carry_over_operational_rows(con, old_ids, new_ids, mapping):
+    """Move Tally Interface rows off items that no longer exist under that
+    name because the vocabulary now maps the name onto another item - a
+    provisional name confirmed as an existing item, or two items merged.
+
+    Only rows the interface wrote are moved: Fact_Sales with tally_date_flag
+    = 0 (step2 reloads the historical rows anyway) and Inventory_Count. Two
+    counts for the same month end up on one item; the later-logged one is
+    kept, since a count is a statement of what was on the shelf, and the
+    same shelf cannot be counted twice into a total.
+
+    Returns (moved, orphans): {(old name, new name): (sales rows, counts)}
+    and {old name: rows} for app rows left pointing at an id that is gone."""
+    has_counts = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Inventory_Count'").fetchone()
+    folded = {name_matcher.name_key(raw): canon for raw, canon in mapping.items()}
+    moved, orphans = {}, {}
+    for name, old_id in old_ids.items():
+        if name in new_ids:
+            continue
+        target = mapping.get(name) or folded.get(name_matcher.name_key(name))
+        if target is None or target not in new_ids:
+            n = con.execute("SELECT COUNT(*) FROM Fact_Sales WHERE product_id = ? AND tally_date_flag = 0",
+                            (old_id,)).fetchone()[0]
+            if has_counts:
+                n += con.execute("SELECT COUNT(*) FROM Inventory_Count WHERE product_id = ?",
+                                 (old_id,)).fetchone()[0]
+            if n:
+                orphans[name] = n
+            continue
+        new_id = new_ids[target]
+        n_sales = con.execute("UPDATE Fact_Sales SET product_id = ? WHERE product_id = ? AND tally_date_flag = 0",
+                              (new_id, old_id)).rowcount
+        n_counts = 0
+        if has_counts:
+            for count_id, month, logged in con.execute(
+                    "SELECT count_id, count_month, date_logged FROM Inventory_Count WHERE product_id = ?",
+                    (old_id,)).fetchall():
+                clash = con.execute("SELECT count_id, date_logged FROM Inventory_Count "
+                                    "WHERE product_id = ? AND count_month = ?", (new_id, month)).fetchone()
+                if clash is not None:
+                    if (logged or "") <= (clash[1] or ""):
+                        con.execute("DELETE FROM Inventory_Count WHERE count_id = ?", (count_id,))
+                        continue
+                    con.execute("DELETE FROM Inventory_Count WHERE count_id = ?", (clash[0],))
+                con.execute("UPDATE Inventory_Count SET product_id = ? WHERE count_id = ?", (new_id, count_id))
+                n_counts += 1
+        if n_sales or n_counts:
+            moved[(name, target)] = (n_sales, n_counts)
+    return moved, orphans
 
 
 def build_dim_product(sales_mapped, inventory_mapped, may2024_dsr_price, tbs_item_price):
@@ -333,8 +527,6 @@ def build_dim_product(sales_mapped, inventory_mapped, may2024_dsr_price, tbs_ite
 
 def main():
     mapping = load_mapping()
-    may2024_dsr_price = load_may2024_dsr_prices(mapping)
-    tbs_item_price = load_tbs_item_prices(mapping)
 
     sales = pd.read_csv(SALES_CSV)
     inventory = pd.read_csv(INVENTORY_CSV)
@@ -342,32 +534,63 @@ def main():
     sales_mapped, sales_unmatched = apply_mapping(sales, mapping, "sales")
     inventory_mapped, inventory_unmatched = apply_mapping(inventory, mapping, "inventory")
 
+    provisional = sorted(set(sales_unmatched) | set(inventory_unmatched))
+    if provisional:
+        print(f"\n{len(provisional)} name(s) not in the vocabulary: loaded as provisional items and "
+              f"listed under 'Names to review' in the Tally Interface. The run continues.")
+        sales_mapped = load_as_provisional(sales_mapped)
+        inventory_mapped = load_as_provisional(inventory_mapped)
+    # A provisional item is priced from its own name and sheet rows like any other.
+    priced_as = {**mapping, **{n: n for n in provisional}}
+    may2024_dsr_price = load_may2024_dsr_prices(priced_as)
+    tbs_item_price, prices_by_month = load_tbs_item_prices(priced_as)
+
     name_map, status_map = load_supplier_mapping()
     sales_mapped = apply_supplier_mapping(sales_mapped, name_map, status_map)
 
     sales_mapped.to_csv(SALES_MAPPED_CSV, index=False)
     inventory_mapped.to_csv(INVENTORY_MAPPED_CSV, index=False)
 
-    total_unmatched = len(set(sales_unmatched) | set(inventory_unmatched))
-    if total_unmatched:
-        print(f"\nABORTING Dim_Product load: {total_unmatched} unmatched name(s) found. Fix the mapping file first.")
-        sys.exit(1)
-
     dim_product = build_dim_product(sales_mapped, inventory_mapped, may2024_dsr_price, tbs_item_price)
+    review = build_name_review(provisional, sales_mapped, inventory_mapped, prices_by_month)
 
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
+    old_ids = dict(cur.execute("SELECT item_name, product_id FROM Dim_Product").fetchall())
+    dim_product = assign_product_ids(dim_product, old_ids)
+    new_ids = dict(zip(dim_product["item_name"], dim_product["product_id"]))
+    moved, orphans = carry_over_operational_rows(con, old_ids, new_ids, mapping)
     cur.execute("DELETE FROM Dim_Product")
     dim_product.to_sql("Dim_Product", con, if_exists="append", index=False)
+    # Dropped, not emptied: it holds nothing but this run's findings.
+    cur.execute("DROP TABLE IF EXISTS Name_Review")
+    cur.execute(NAME_REVIEW_DDL)
+    if len(review):
+        review.to_sql("Name_Review", con, if_exists="append", index=False)
     con.commit()
     row_count = cur.execute("SELECT COUNT(*) FROM Dim_Product").fetchone()[0]
     con.close()
 
+    n_kept = sum(1 for n in new_ids if n in old_ids)
     print("\n=== SUMMARY ===")
     print(f"sales rows processed: {len(sales_mapped)}")
     print(f"inventory rows processed: {len(inventory_mapped)}")
-    print(f"unmatched names: {total_unmatched}")
-    print(f"Dim_Product rows: {row_count}")
+    print(f"provisional items (names not in the vocabulary yet): {len(provisional)}")
+    if len(review):
+        strength = review["match_strength"].fillna("none").value_counts()
+        print(f"  suggestions: {strength.get('strong', 0)} strong, {strength.get('weak', 0)} weak, "
+              f"{strength.get('none', 0)} none")
+    print(f"Dim_Product rows: {row_count} ({n_kept} kept their product_id, {row_count - n_kept} new)")
+    if len(review):
+        print("\nNames to review:")
+        for r in review.itertuples():
+            hint = f"-> '{r.suggested_item}' ({r.match_strength})" if r.suggested_item else "-> no suggestion"
+            print(f"  - {r.raw_name!r} {hint}")
+    for (old, new), (n_sales, n_counts) in sorted(moved.items()):
+        print(f"  moved to '{new}' from '{old}': {n_sales} tally entr(ies), {n_counts} stock count(s)")
+    for old, n in sorted(orphans.items()):
+        print(f"  WARNING: {n} Tally Interface row(s) still point at '{old}', which is no longer an item "
+              f"and is not mapped to one")
     print(f"\nMapped files written: {SALES_MAPPED_CSV}, {INVENTORY_MAPPED_CSV}")
 
 

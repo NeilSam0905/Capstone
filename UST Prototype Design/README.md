@@ -177,7 +177,7 @@ src/
 
 | Screen | State |
 |---|---|
-| Tally Interface | Fully working: entry with validation, closure toggle, event flagging, recent-entries and by-date views — every write is a real `Fact_Sales` / `Event_Log` / `Closure_Log` row |
+| Tally Interface | Fully working: entry with validation, closure toggle, event flagging, recent-entries and by-date views — every write is a real `Fact_Sales` / `Event_Log` / `Closure_Log` row. Also where the store keeps the system running without a developer: **Names to review** (new or renamed sheet names), **Rename Item**, and **Add tally workbook** in the pipeline card |
 | Dashboard Overview | Real — units, categories, top products, FSN split, reorder-now count |
 | FSN Classification | Real — ADUS, HVL, the 75/80/85 sensitivity table |
 | Batch Sales Report | Real — per-supplier quantities and remittance line totals |

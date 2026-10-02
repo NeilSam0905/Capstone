@@ -219,6 +219,9 @@ def parse_batch_2023(path, vocab):
     """
     TOTALS = re.compile(r"^\s*(TOTAL|UST\s+SALES|GRAND\s+TOTAL|SUB\s*-?\s*TOTAL)\b",
                         re.I)
+    # A payment correction, not an item: May's "ADDITIONAL 50 NOT REMITTED
+    # MARCH APRIL" (37 x PHP 50) settles earlier batches' remittance.
+    REMITTANCE = re.compile(r"\bNOT\s+REMITTED\b", re.I)
     rows = []
     wb = openpyxl.load_workbook(path, data_only=True)
     for sn in wb.sheetnames:
@@ -270,8 +273,8 @@ def parse_batch_2023(path, vocab):
             if not isinstance(item, str) or not item.strip():
                 continue
             text = item.strip()
-            if TOTALS.match(text):
-                continue                      # a summary line, not an item
+            if TOTALS.match(text) or REMITTANCE.search(text):
+                continue                      # a summary or payment line, not an item
             if isinstance(qty, bool) or not isinstance(qty, (int, float)):
                 # text in the item column with no quantity = a supplier band
                 if not any(isinstance(ws.cell(r, c).value, (int, float))

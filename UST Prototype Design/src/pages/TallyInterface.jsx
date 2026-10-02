@@ -5,7 +5,8 @@ import {
   runPipeline, stopPipeline, getPipelineStatus, getPipelineStaleness,
   getInventoryCounts, saveInventoryCount, deleteInventoryCount,
   getStockPosition, ALL_CATEGORIES, ALL_SUPPLIERS, UNATTRIBUTED, addProduct,
-  importInventoryCounts, importTallyEntries,
+  importInventoryCounts, importTallyEntries, addTallyWorkbook,
+  getNamesToReview, settleName, renameProduct,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
@@ -117,16 +118,28 @@ function ImportResult({ result }) {
       </div>
     );
   }
-  const { imported = 0, updated = 0, rejected = [], rejected_total = 0, rows_read = 0 } = result;
+  const { imported = 0, updated = 0, rejected = [], rejected_total = 0, rows_read = 0,
+          held = 0, held_names: heldNames = [] } = result;
   const clean = rejected_total === 0;
   return (
     <div className={`notice notice--${clean ? 'ok' : 'warn'}`} style={{ marginTop: 12 }}>
       <b>{clean ? 'Imported' : 'Imported with problems'}:</b>{' '}
       {num(rows_read)} row{rows_read === 1 ? '' : 's'} read · {num(imported)} added
       {updated > 0 && <> · {num(updated)} updated</>}
+      {held > 0 && <> · <b>{num(held)} waiting</b></>}
       {rejected_total > 0 && <> · <b>{num(rejected_total)} rejected</b></>}
       {result.saved_to && (
         <div className="hint" style={{ marginTop: 4 }}>File archived to rawdata/</div>
+      )}
+      {/* Unknown item names are held, not rejected: re-importing the file
+          after fixing them would add every other row a second time. */}
+      {held > 0 && (
+        <div style={{ marginTop: 6 }}>
+          {heldNames.length === 1
+            ? <><b>{heldNames[0].name}</b> is</>
+            : <>{num(heldNames.length)} item names are</>} not in the item list yet. Those rows are kept and
+          are added once the name is settled under <b>Names to review</b> at the top of this page.
+        </div>
       )}
       {rejected.length > 0 && (
         <details style={{ marginTop: 8 }}>
@@ -182,6 +195,7 @@ export default function TallyInterface({ setView }) {
       <div className="tally-body">
         {connectionError && <ErrorBanner error={connectionError} />}
         <StalenessBanner staleness={staleness} />
+        <NamesToReview products={products} reloadKey={reloadKey} onChanged={bump} />
         <SalesInventoryTally products={products} onSaved={bump}
                              recent={recent} recentLoading={recentLoading} />
         <MonthlyInventoryCount products={products} onSaved={bump} />
@@ -191,6 +205,253 @@ export default function TallyInterface({ setView }) {
       </div>
     </div>
   );
+}
+
+/* ------------------------------------------------------- Names to review */
+
+const SOURCE_LABEL = { sheet: 'tally sheet', import: 'imported file', 'sheet+import': 'sheet + import' };
+
+/** "1 Jul – 31 Jul 2026 · MADEBYRUZ · 40 units" — what is known about a name. */
+function evidence(n) {
+  const parts = [];
+  if (n.first_date) parts.push(`on the sheets ${usDate(n.first_date)} – ${usDate(n.last_date)}`);
+  if (n.supplier_name) parts.push(n.supplier_name);
+  if (n.units != null) parts.push(`${num(n.units)} units sold`);
+  if (n.sheet_price != null) parts.push(`sheet price ${num(n.sheet_price)}`);
+  if (n.held_rows > 0) parts.push(`${num(n.held_rows)} imported row${n.held_rows === 1 ? '' : 's'} waiting`);
+  return parts.join(' · ');
+}
+
+/** Item names the system does not know yet, and the one decision each needs:
+ *  which item is it?
+ *
+ *  They come from the tally sheets — the store renames rows (about 50 on the
+ *  July 2026 sheet) — and from imported files. A sheet name no longer stops
+ *  the pipeline: the run loads it as a provisional item and lists it here,
+ *  with a suggestion when the matcher finds one (same supplier, similar
+ *  words and price, the old name stopping where the new one starts).
+ *
+ *  Each answer adds one line to the controlled vocabulary — nothing is
+ *  written without someone choosing it, including "strong" suggestions.
+ *  A sheet name takes effect at the next pipeline run; held import rows are
+ *  added at once. The card is hidden when there is nothing to settle. */
+function NamesToReview({ products, reloadKey, onChanged }) {
+  const { data } = useData(getNamesToReview, [reloadKey], null);
+  const [busy, setBusy] = useState(null);            // raw_name being saved, or '*' for the batch
+  const [choosing, setChoosing] = useState(null);    // { raw_name, product_id } while picking an item
+  const [creating, setCreating] = useState(null);    // { raw_name, category, supplier_name } for an import-only name
+  const [message, setMessage] = useState(null);      // { ok, text }
+  const [confirmAll, setConfirmAll] = useState(false);
+
+  const names = data?.names ?? [];
+  const awaiting = data?.awaiting_run ?? [];
+  if (names.length === 0 && awaiting.length === 0) return null;
+
+  // An answer can only point at a settled item: another provisional name is
+  // a guess, and pointing one guess at another chains them.
+  const provisional = new Set(names.map(n => n.provisional_product_id).filter(Boolean));
+  const settledItems = products.filter(p => !provisional.has(p.product_id));
+  const strong = names.filter(n => n.suggestion?.strength === 'strong');
+
+  async function settle(n, action, extra = {}) {
+    setBusy(n.raw_name);
+    setMessage(null);
+    try {
+      const r = await settleName({ raw_name: n.raw_name, action, ...extra });
+      if (!r.ok) { setMessage({ ok: false, text: r.error }); return; }
+      setChoosing(null);
+      setCreating(null);
+      setMessage({ ok: true, text: outcome(r) });
+      onChanged?.();
+    } catch (err) {
+      setMessage({ ok: false, text: err.message });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function acceptStrong() {
+    setBusy('*');
+    setMessage(null);
+    let done = 0;
+    const failed = [];
+    for (const n of strong) {
+      try {
+        const r = await settleName({ raw_name: n.raw_name, action: 'same', product_id: n.suggestion.product_id });
+        if (r.ok) done += 1; else failed.push(`${n.raw_name}: ${r.error}`);
+      } catch (err) {
+        failed.push(`${n.raw_name}: ${err.message}`);
+      }
+    }
+    setBusy(null);
+    setConfirmAll(false);
+    setMessage({
+      ok: failed.length === 0,
+      text: `${num(done)} name${done === 1 ? '' : 's'} settled as the suggested item.`
+        + (failed.length ? ` Not saved: ${failed.join('; ')}` : ' Run the pipeline to apply them.'),
+    });
+    onChanged?.();
+  }
+
+  return (
+    <div className="card card__pad card--names-review">
+      <div className="card-h">
+        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <Icon name="tag" size={14} /> Names to review
+          {names.length > 0 && <span className="tag tag--warn">{num(names.length)}</span>}
+        </span>
+        {strong.length > 1 && (
+          <button className="btn btn--ghost btn--sm" disabled={busy != null} onClick={() => setConfirmAll(true)}>
+            <Icon name="check" size={13} /> Review {num(strong.length)} strong suggestions
+          </button>
+        )}
+      </div>
+      {names.length > 0 && (
+        <div className="hint" style={{ marginTop: -4, marginBottom: 12 }}>
+          These item names are not in the item list yet. Say which item each one is, or that it is a new
+          item; the answer is remembered, so a name is only ever asked about once.
+        </div>
+      )}
+
+      {message && (
+        <div className={`notice notice--${message.ok ? 'ok' : 'warn'}`} style={{ marginBottom: 10 }}>
+          {message.text}
+        </div>
+      )}
+
+      {names.length > 0 && (
+        <ul className="review-list">
+          {names.map(n => {
+            const s = n.suggestion;
+            const isBusy = busy === n.raw_name || busy === '*';
+            const importOnly = n.source === 'import';
+            return (
+              <li key={n.raw_name} className="review-row">
+                <div className="review-row__head">
+                  <b className="review-row__name">{n.raw_name}</b>
+                  <span className="tag">{SOURCE_LABEL[n.source] ?? n.source}</span>
+                </div>
+                <div className="hint">{evidence(n)}</div>
+                <div className="review-row__suggest">
+                  {s ? (
+                    <>
+                      Probably <b>{s.item_name}</b>{' '}
+                      <span className={`tag ${s.strength === 'strong' ? 'tag--ok' : 'tag--warn'}`}>
+                        {s.strength === 'strong' ? 'strong match' : 'possible match'}
+                      </span>
+                      {s.reason && <span className="hint"> — {s.reason}</span>}
+                    </>
+                  ) : <span className="muted">No similar item found.</span>}
+                </div>
+
+                {choosing?.raw_name === n.raw_name ? (
+                  <div className="review-row__pick">
+                    <ItemPicker items={settledItems} value={choosing.product_id}
+                                onChange={v => setChoosing(c => ({ ...c, product_id: v }))} />
+                    <button className="btn btn--ink btn--sm" disabled={!choosing.product_id || isBusy}
+                            onClick={() => settle(n, 'same', { product_id: Number(choosing.product_id) })}>
+                      {isBusy ? 'Saving…' : 'Same item'}
+                    </button>
+                    <button className="btn btn--ghost btn--sm" onClick={() => setChoosing(null)}>Cancel</button>
+                  </div>
+                ) : creating?.raw_name === n.raw_name ? (
+                  <div className="review-row__pick">
+                    <ComboBox value={creating.category} options={categoriesOf(products)}
+                              onChange={v => setCreating(c => ({ ...c, category: v }))}
+                              placeholder="Category" newLabel="new category" />
+                    <ComboBox value={creating.supplier_name}
+                              options={[...new Set(products.map(p => p.supplier_name).filter(Boolean))].sort()}
+                              onChange={v => setCreating(c => ({ ...c, supplier_name: v }))}
+                              placeholder="Supplier (optional)" newLabel="new supplier" />
+                    <button className="btn btn--ink btn--sm" disabled={isBusy}
+                            onClick={() => settle(n, 'new', { category: creating.category,
+                                                              supplier_name: creating.supplier_name })}>
+                      {isBusy ? 'Saving…' : 'Add as new item'}
+                    </button>
+                    <button className="btn btn--ghost btn--sm" onClick={() => setCreating(null)}>Cancel</button>
+                  </div>
+                ) : (
+                  <div className="btn-row">
+                    {/* Only a strong match gets the primary button: a possible
+                        match is a lead to check, not an answer to accept. */}
+                    {s && (
+                      <button className={`btn btn--sm ${s.strength === 'strong' ? 'btn--ink' : 'btn--ghost'}`}
+                              disabled={isBusy}
+                              onClick={() => settle(n, 'same', { product_id: s.product_id })}>
+                        {isBusy ? 'Saving…' : 'Yes, same item'}
+                      </button>
+                    )}
+                    <button className="btn btn--ghost btn--sm" disabled={isBusy}
+                            onClick={() => { setCreating(null); setChoosing({ raw_name: n.raw_name, product_id: '' }); }}>
+                      {s ? 'A different item…' : 'Choose the item…'}
+                    </button>
+                    <button className="btn btn--ghost btn--sm" disabled={isBusy}
+                            onClick={() => (importOnly
+                              ? (setChoosing(null), setCreating({ raw_name: n.raw_name, category: '', supplier_name: '' }))
+                              : settle(n, 'new'))}>
+                      It is a new item
+                    </button>
+                    {importOnly && (
+                      <button className="btn btn--ghost btn--sm" disabled={isBusy}
+                              title="Drop the imported rows that use this name"
+                              onClick={() => settle(n, 'discard')}>
+                        Discard rows
+                      </button>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {awaiting.length > 0 && (
+        <details className="collapse" style={{ marginTop: names.length ? 16 : 0 }}>
+          <summary>
+            <span className="section-h">Settled, waiting for the next pipeline run</span>
+            <span className="hint">{num(awaiting.length)} name{awaiting.length === 1 ? '' : 's'}</span>
+          </summary>
+          <ul className="date-list" style={{ marginTop: 10 }}>
+            {awaiting.map(a => (
+              <li key={a.raw_name}>
+                <b>{a.raw_name}</b>{a.item_name !== a.raw_name ? <> → {a.item_name}</> : ' (new item)'}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      <Modal
+        open={confirmAll}
+        onClose={() => setConfirmAll(false)}
+        title={`Accept ${num(strong.length)} strong suggestions`}
+        subtitle="Each name below will be saved as the item shown. To answer any of them differently, close this and use that name's own buttons first."
+        width={760}
+      >
+        <ul className="date-list review-confirm">
+          {strong.map(n => (
+            <li key={n.raw_name}><b>{n.raw_name}</b> → {n.suggestion.item_name}</li>
+          ))}
+        </ul>
+        <div className="btn-row" style={{ marginTop: 14 }}>
+          <button className="btn btn--ink btn--sm" disabled={busy != null} onClick={acceptStrong}>
+            {busy === '*' ? 'Saving…' : `Save all ${num(strong.length)}`}
+          </button>
+          <button className="btn btn--ghost btn--sm" onClick={() => setConfirmAll(false)}>Cancel</button>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function outcome(r) {
+  if (r.action === 'discard') return `Dropped ${num(r.discarded)} imported row${r.discarded === 1 ? '' : 's'} for “${r.raw_name}”.`;
+  const what = r.action === 'new' ? `“${r.raw_name}” added as a new item.` : `“${r.raw_name}” saved as ${r.item_name}.`;
+  const added = (r.applied?.tally ?? 0) + (r.applied?.inventory ?? 0);
+  return what
+    + (added ? ` ${num(added)} waiting imported row${added === 1 ? '' : 's'} added.` : '')
+    + (r.next_run ? ' The next pipeline run applies it to the sales history.' : '');
 }
 
 /* ------------------------------------------------- Sales Inventory Tally */
@@ -344,6 +605,7 @@ function MonthlyInventoryCount({ products, onSaved }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [stockOpen, setStockOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
 
   const { data, loading } = useData(() => getInventoryCounts(month), [month, reloadKey], null);
   const counts = data?.counts ?? [];
@@ -414,6 +676,9 @@ function MonthlyInventoryCount({ products, onSaved }) {
           <button className="btn btn--ghost btn--sm" onClick={() => setAddOpen(v => !v)}>
             <Icon name="calPlus" size={13} /> Add New Item
           </button>
+          <button className="btn btn--ghost btn--sm" onClick={() => setRenameOpen(true)}>
+            <Icon name="tag" size={13} /> Rename Item
+          </button>
           <ImportButton
             onImport={file => importInventoryCounts(file, month)}
             onDone={() => { setReloadKey(k => k + 1); onSaved?.(); }}
@@ -437,6 +702,11 @@ function MonthlyInventoryCount({ products, onSaved }) {
           onSaved?.();            // refreshes the item list this card was given
         }}
       />
+
+      {renameOpen && (
+        <RenameItemModal products={products}
+                         onClose={() => setRenameOpen(false)} onRenamed={() => onSaved?.()} />
+      )}
 
       <div className="form-grid">
         <Field label="Count Month" error={errors.count_month}>
@@ -614,6 +884,84 @@ function AddItemModal({ open, products, onClose, onAdded }) {
           {busy ? 'Adding…' : 'Add Item'}
         </button>
         <button className="btn btn--ghost btn--sm" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
+/** The tally sheet now calls an item something else.
+ *
+ *  Saying so here, before the next pipeline run, means the new name never
+ *  shows up as unknown. The new name becomes another name for the item in
+ *  the controlled vocabulary: the item keeps its sales history and the name
+ *  it has on this screen and the dashboard (the convention the July 2026
+ *  renames followed). If the run got there first, the new name is already
+ *  under Names to review and this settles it the same way. */
+function RenameItemModal({ products, onClose, onRenamed }) {
+  // Mounted only while open, so every opening starts from an empty form.
+  const [productId, setProductId] = useState('');
+  const [newName, setNewName] = useState('');
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const item = products.find(p => p.product_id === Number(productId));
+
+  async function submit() {
+    if (!productId) { setError('Choose the item that was renamed.'); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await renameProduct(Number(productId), newName);
+      if (!r.ok) { setError(r.error); return; }
+      setDone(r);
+      setNewName('');
+      onRenamed?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Rename Item" width={620} overflowVisible
+           subtitle="For when the tally sheet starts calling an item by a new name.">
+      <div className="form-grid">
+        <div className="col-2">
+          <Field label="Item">
+            <ItemPicker items={products} value={productId}
+                        onChange={v => { setProductId(v); setError(null); setDone(null); }} />
+          </Field>
+        </div>
+        <div className="col-2">
+          <Field label="Name on the tally sheet now"
+                 hint="Type it as the sheet has it. Capitals and extra spaces do not matter.">
+            <input type="text" value={newName} placeholder="e.g. UST TIGER HEADBAND (2 DESIGNS)"
+                   onChange={e => { setNewName(e.target.value); setError(null); setDone(null); }}
+                   onKeyDown={e => { if (e.key === 'Enter') submit(); }} />
+          </Field>
+        </div>
+      </div>
+
+      <div className="notice" style={{ marginTop: 12 }}>
+        {item ? <b>{item.item_name}</b> : 'The item'} keeps its sales history and the name shown here.
+        From the next pipeline run, rows under the new name on the tally sheet count as this item.
+      </div>
+
+      {error && <div className="notice notice--warn" style={{ marginTop: 10 }}>{error}</div>}
+      {done && (
+        <div className="notice notice--ok" style={{ marginTop: 10 }}>
+          Saved: “{done.new_name}” is now another name for <b>{done.item_name}</b>.
+          {(done.applied?.tally || done.applied?.inventory) ? ' Waiting imported rows under that name were added.' : ''}
+        </div>
+      )}
+
+      <div className="btn-row" style={{ marginTop: 16 }}>
+        <button className="btn btn--ink btn--sm" onClick={submit} disabled={busy || !newName.trim()}>
+          {busy ? 'Saving…' : 'Save new name'}
+        </button>
+        <button className="btn btn--ghost btn--sm" onClick={onClose}>{done ? 'Close' : 'Cancel'}</button>
       </div>
     </Modal>
   );
@@ -1056,6 +1404,7 @@ function StalenessBanner({ staleness }) {
     [pending.tally_entries, 'tally entry', 'tally entries'],
     [pending.events, 'flagged event', 'flagged events'],
     [pending.closures, 'closure change', 'closure changes'],
+    [pending.name_decisions, 'settled item name', 'settled item names'],
   ]
     .filter(([n]) => n > 0)
     .map(([n, one, many]) => `${num(n)} ${n === 1 ? one : many}`);
@@ -1186,7 +1535,64 @@ function StepProblem({ step }) {
   );
 }
 
+/** Add the store's own tally workbook to rawdata/, where the next pipeline
+ *  run reads it. This is how next academic year's workbook gets in without a
+ *  developer: step0 reads every workbook in that folder, so there is no list
+ *  to edit. A workbook of the same name is moved to rawdata/replaced/, never
+ *  overwritten, and a month already in another workbook is read from this
+ *  one from now on (the response says which). */
+function AddWorkbookButton({ onResult }) {
+  const input = useRef(null);
+  const [busy, setBusy] = useState(false);
+
+  async function pick(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    onResult(null);
+    try {
+      onResult(await addTallyWorkbook(file));
+    } catch (err) {
+      onResult({ ok: false, error: err.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <input ref={input} type="file" accept=".xlsx" onChange={pick} style={{ display: 'none' }} />
+      <button className="btn btn--ghost btn--sm" disabled={busy} onClick={() => input.current?.click()}
+              title="The store's tally workbook, with its monthly '<MONTH> - TBS' sheets">
+        <Icon name="download" size={13} /> {busy ? 'Checking…' : 'Add Tally Workbook'}
+      </button>
+    </>
+  );
+}
+
+function WorkbookResult({ result }) {
+  if (!result) return null;
+  if (!result.ok) {
+    return <div className="notice notice--warn" style={{ marginBottom: 12 }}><b>Not added:</b> {result.error}</div>;
+  }
+  const over = result.takes_over ?? [];
+  return (
+    <div className="notice notice--ok" style={{ marginBottom: 12 }}>
+      <b>Saved {result.saved_as}</b> — tally sheets for {result.months.map(longMonth).join(', ')}.
+      {result.replaced_file && <> The previous copy was moved to <span className="mono">{result.replaced_file}</span>.</>}
+      {over.length > 0 && (
+        <> {over.map(t => longMonth(t.month)).join(', ')} {over.length === 1 ? 'is' : 'are'} also
+        in {[...new Set(over.flatMap(t => t.from))].join(', ')}; from now
+        on {over.length === 1 ? 'it is' : 'they are'} read from this workbook instead.</>
+      )}
+      {' '}Run the pipeline to load it.
+    </div>
+  );
+}
+
 function FullPipelineRun({ onChanged }) {
+  const [workbookResult, setWorkbookResult] = useState(null);
   const [pipelineStatus, setPipelineStatus] = useState(null);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -1269,13 +1675,16 @@ function FullPipelineRun({ onChanged }) {
         <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
           <Icon name="zap" size={14} /> Full Pipeline Run
         </span>
+        <AddWorkbookButton onResult={setWorkbookResult} />
       </div>
 
       <div className="hint" style={{ marginBottom: 12 }}>
-        Rebuilds <span className="mono">ustore.db</span> from the CSVs in <span className="mono">data/</span> and
-        recomputes FSN classes, lead times and reorder points. Tally entries, events and closures recorded on
-        this screen are preserved and folded back in.
+        Reads every tally workbook in <span className="mono">rawdata/</span>, rebuilds{' '}
+        <span className="mono">ustore.db</span> and recomputes FSN classes, lead times and reorder points.
+        Tally entries, events and closures recorded on this screen are preserved and folded back in. Item
+        names the run does not know are kept and listed under Names to review.
       </div>
+      <WorkbookResult result={workbookResult} />
 
       <div className="btn-row">
         <button className="btn btn--ink" onClick={() => start(false)} disabled={running || starting}>

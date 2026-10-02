@@ -275,8 +275,8 @@ not. That turns an inconsistency into a quantified data-quality claim.
 **Claude can draft** · **Status** #1
 
 §1.4.1 / §3.1.1 / Table 2 say 2023–2026. Sales run **2024-05-02 → 2026-07-31**; inventory
-2024-11-01 → 2026-04-01; 2023 is 6 undated batch aggregates with 1 of 34 labels matching a current
-SKU. State the analysable window exactly and present the exclusion as a documented decision with its
+2024-11-01 → 2026-04-01; 2023 is 6 undated batch aggregates with ~~1 of 34 labels matching a current
+SKU~~ 15 of 34 labels matching a current product name ignoring capitals (corrected 2026-10-02). State the analysable window exactly and present the exclusion as a documented decision with its
 evidence. An unexplained scope gap reads as carelessness; a measured one reads as rigour.
 
 ### S7 — put inventory coverage on the dashboard, not behind it

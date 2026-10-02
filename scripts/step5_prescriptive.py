@@ -200,9 +200,11 @@ def reorder_point(add, lead_time, ss):
 
 
 def load_series(con):
+    # sales only: damaged / promo / transfer removals are not demand
     fact = pd.read_sql_query("""
         SELECT f.product_id, d.calendar_date, f.quantity_sold
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        WHERE LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'
     """, con, parse_dates=["calendar_date"])
 
     products = pd.read_sql_query(
