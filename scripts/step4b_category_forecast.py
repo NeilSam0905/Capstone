@@ -47,6 +47,7 @@ sys.path.insert(0, ROOT)
 
 from forecasting.baselines import ewma_fit_predict, rolling_mean_fit_predict
 from forecasting.intermittent import tsb_fit_predict
+from order_types import walk_in_only  # noqa: E402
 
 DB_PATH = os.path.join(ROOT, "ustore.db")
 SERIES_CSV = "data/category_daily_series.csv"
@@ -127,13 +128,14 @@ def sku_shares(con, index, cut):
     `cut` is the positional origin: only data STRICTLY BEFORE it is used,
     so the weights cannot see the period being forecast.
     """
-    fact = pd.read_sql_query("""
+    fact = pd.read_sql_query(f"""
         SELECT f.product_id, d.calendar_date, f.quantity_sold,
                p.forecast_category, p.fsn_class
         FROM Fact_Sales f
         JOIN Dim_Date d    ON d.date_id = f.date_id
         JOIN Dim_Product p ON p.product_id = f.product_id
         WHERE LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'
+          AND {walk_in_only(con)}
     """, con, parse_dates=["calendar_date"])
 
     lo = index[max(cut - SHARE_WINDOW, 0)]

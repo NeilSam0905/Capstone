@@ -29,11 +29,13 @@ import sqlite3
 import sys
 from datetime import datetime
 
-import openpyxl
+import csv
+import os
+
 import pandas as pd
 
 import name_matcher
-from step0_convert_sales_with_zeros import find_workbooks, plan_sheets, sheet_month
+from step0_convert_sales_with_zeros import MAY_2024_DSR_PRICES_CSV, TBS_PRICES_CSV
 
 # Remediation S12. Distinct from tools/audit_price_suffix_skus.py's
 # PRICE_SUFFIX_RE (r"\s*@.*$"), which strips the suffix to recover the
@@ -47,47 +49,37 @@ def price_from_suffix(item_name):
     return float(m.group(1)) if m else None
 
 
+def _read_price_rows(path):
+    """Rows of a price CSV step0 wrote, in file order. Plain csv rather than
+    pandas: an item name such as "NA" must stay a name, not become NaN.
+
+    These files replace reading the workbooks here, which took ~40 s of every
+    run; step0 writes them from the same workbooks while it converts them."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"{path} is missing - run scripts/step0_convert_sales_with_zeros.py once with the tally "
+            f"workbooks in rawdata/ (it writes this file), or restore it from the vault")
+    with open(path, newline="", encoding="utf-8") as f:
+        rows = csv.reader(f)
+        next(rows)
+        return list(rows)
+
+
 # May 2024's workbook has a "TBS" summary sheet (what step0 reads for
-# quantities) AND 23 daily "DAILY SALES REPORT" sheets ("May 2", "May 3", ...)
-# that no script has ever touched. Those carry a RETAIL PRICE column - a third
-# price fallback, used only for canonical items inventory and the name-suffix
-# both missed.
-MAY_2024_DSR_WORKBOOK = "rawdata/2024 5 MAY DSR & TBS.xlsx"
-MAY_2024_NON_DSR_SHEETS = {"TS", "TBS", "INVENTORY"}
+# quantities) AND 23 daily "DAILY SALES REPORT" sheets ("May 2", "May 3", ...).
+# Those carry a RETAIL PRICE column - a third price fallback, used only for
+# canonical items inventory and the name-suffix both missed. step0 reads them
+# (may2024_dsr_prices) into MAY_2024_DSR_PRICES_CSV.
 
 
 def load_may2024_dsr_prices(mapping):
-    """Each daily sheet repeats a header row (ITEMS | RETAIL PRICE | PCS SOLD |
-    SALES | DISCOUNTED PRICE | ...) before every supplier's block - the very
-    first one has the supplier name on its own row above; every later one has
-    the supplier name fused into the header row's first cell instead. A TOTAL
-    row (blank item cell, "TOTAL" elsewhere) closes each block. Detecting a
-    block boundary by column 2 == "RETAIL PRICE" (rather than by column 1)
-    handles both forms without caring which one it is.
-
-    Read-only against data/vocab_mapping_FINAL_v5.csv: a raw name here that
+    """Read-only against data/vocab_mapping_FINAL_v5.csv: a raw name here that
     isn't already in the approved mapping is skipped and counted, never
     guessed at - this is a supplementary price source, not a mapping change.
     """
-    wb = openpyxl.load_workbook(MAY_2024_DSR_WORKBOOK, data_only=True)
-    sheets = [s for s in wb.sheetnames if s not in MAY_2024_NON_DSR_SHEETS]
-
     raw_prices = {}  # raw item name -> [retail prices seen across the month]
-    for sheet_name in sheets:
-        ws = wb[sheet_name]
-        in_block = False
-        for r in range(1, ws.max_row + 1):
-            c1, c2 = ws.cell(r, 1).value, ws.cell(r, 2).value
-            if isinstance(c2, str) and c2.strip().upper() == "RETAIL PRICE":
-                in_block = True
-                continue
-            if not in_block:
-                continue
-            label = str(c1).strip() if c1 is not None else ""
-            if not label:
-                continue  # TOTAL row, or a stray blank
-            if isinstance(c2, (int, float)):
-                raw_prices.setdefault(label, []).append(float(c2))
+    for label, price in _read_price_rows(MAY_2024_DSR_PRICES_CSV):
+        raw_prices.setdefault(label, []).append(float(price))
 
     unmapped = set()
     canonical_prices = {}  # canonical_item_name -> [retail prices seen]
@@ -104,8 +96,8 @@ def load_may2024_dsr_prices(mapping):
     result = {canonical: mode(prices) for canonical, prices in canonical_prices.items()}
     n_conflict = sum(1 for prices in canonical_prices.values() if len(set(prices)) > 1)
 
-    print(f"[may2024_dsr] {len(sheets)} daily sheets read, "
-          f"{len(raw_prices)} raw item name(s) with a retail price found")
+    print(f"[may2024_dsr] {len(raw_prices)} raw item name(s) with a retail price found "
+          f"in the May 2024 daily sheets")
     print(f"[may2024_dsr] {len(unmapped)} raw name(s) not in the vocab mapping - skipped, "
           f"not aborting (supplementary source, not the core mapping)")
     print(f"[may2024_dsr] {len(result)} canonical item(s) priced from this source; "
@@ -124,41 +116,18 @@ def load_tbs_item_prices(mapping):
     inv_price. Used only for canonical items inventory, the name-suffix and
     may2024_dsr_price all missed.
 
-    Reads the same sheets step0 converts (plan_sheets), so a month that is in
-    two workbooks is not counted twice here either. Also returns the raw
-    prices per (sheet name, 'YYYY-MM'): name_matcher compares a new name's
-    price with an old name's price in its LATEST month, from this same column
-    - not with unit_price_php, which mostly comes from the inventory workbook
-    and is a different figure for the same item.
+    step0 reads this column from the same sheets it converts (sheet_item_prices,
+    in TBS_PRICES_CSV), so a month that is in two workbooks is not counted twice
+    here either. Also returns the raw prices per (sheet name, 'YYYY-MM'):
+    name_matcher compares a new name's price with an old name's price in its
+    LATEST month, from this same column - not with unit_price_php, which mostly
+    comes from the inventory workbook and is a different figure for the same item.
     """
     raw_prices = {}
     by_month = {}
-    plan, _notes = plan_sheets(find_workbooks())
-    for fn, sheet_names in plan:
-        wb = openpyxl.load_workbook(fn, data_only=True)
-
-        for sn in sheet_names:
-            ws = wb[sn]
-            month = sheet_month(ws)
-            price_col = None
-            for c in range(2, ws.max_column + 1):
-                header = ws.cell(1, c).value
-                if isinstance(header, str) and header.strip().upper() == "ITEM PRICE":
-                    price_col = c
-                    break
-            if price_col is None:
-                continue
-            for r in range(2, ws.max_row + 1):
-                label = ws.cell(r, 1).value
-                if label is None:
-                    continue
-                label = str(label).strip()
-                if not label or label.upper() == "TOTAL":
-                    continue
-                price = ws.cell(r, price_col).value
-                if isinstance(price, (int, float)):
-                    raw_prices.setdefault(label, []).append(float(price))
-                    by_month.setdefault((label, month), []).append(float(price))
+    for label, month, price in _read_price_rows(TBS_PRICES_CSV):
+        raw_prices.setdefault(label, []).append(float(price))
+        by_month.setdefault((label, month or None), []).append(float(price))
 
     unmapped = set()
     canonical_prices = {}

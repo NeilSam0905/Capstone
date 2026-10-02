@@ -1367,3 +1367,7 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .fguide__action-h { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; font-weight: 800; margin-bottom: 4px; }
 .fguide__tbl { background: var(--card); border-radius: var(--r-xs); font-size: 12.5px; }
 .fguide__coverage { display: block; margin-top: 8px; }
+/* ------------------------------------------------------ restock deliveries */
+.restock-open { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.restock-open__act { display: inline-flex; align-items: center; gap: 6px; }
+.restock-open__act input[type="date"] { padding: 3px 6px; font-size: 12px; }

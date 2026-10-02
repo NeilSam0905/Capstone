@@ -13,6 +13,18 @@ ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ISO_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
+def calendar_gap_message(con, iso_date):
+    """Why a date is not in Dim_Date. Past the calendar's last day it is not a
+    typo: the calendar has to be extended (calendar_ranges.csv and
+    populate_dim_date.py, a group decision - docs/SYSTEM_GAPS_AND_IMPROVEMENTS.md
+    2.1), and saying so is the only way whoever is tallying finds out why."""
+    last = con.execute("SELECT MAX(calendar_date) FROM Dim_Date").fetchone()[0]
+    if last and iso_date > last:
+        return (f"The calendar ends on {last}, so later dates cannot be entered yet. "
+                f"It has to be extended (calendar_ranges.csv) - tell whoever maintains the system.")
+    return "Date not found in the calendar."
+
+
 def validate_entry(con, payload):
     errors = {}
 
@@ -54,7 +66,7 @@ def validate_entry(con, payload):
     elif not con.execute(
         "SELECT 1 FROM Dim_Date WHERE calendar_date = ?", (calendar_date,)
     ).fetchone():
-        errors["calendar_date"] = "Date not found in the calendar."
+        errors["calendar_date"] = calendar_gap_message(con, calendar_date)
 
     transaction_type = payload.get("transaction_type")
     if not transaction_type:

@@ -57,6 +57,8 @@ import sqlite3
 import numpy as np
 import pandas as pd
 
+from order_types import walk_in_only
+
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        "ustore.db")
 OUT_SERIES = "data/category_daily_series.csv"
@@ -196,12 +198,13 @@ def category_daily_series(con, products, fsn=None):
     one being derived from the other, because a category's Fast subtotal
     is not recoverable from its all-SKU total.
     """
-    fact = pd.read_sql_query("""
+    fact = pd.read_sql_query(f"""
         SELECT f.product_id, d.calendar_date, f.quantity_sold, p.fsn_class
         FROM Fact_Sales f
         JOIN Dim_Date d    ON d.date_id = f.date_id
         JOIN Dim_Product p ON p.product_id = f.product_id
         WHERE LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'
+          AND {walk_in_only(con)}
     """, con, parse_dates=["calendar_date"])
 
     fact = fact.merge(products[["product_id", "forecast_category"]],

@@ -27,6 +27,7 @@ import csv
 import io
 import math
 import re
+import statistics
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -41,6 +42,7 @@ import db as dbmod
 import pipeline
 import validation
 import names                  # after pipeline: it needs scripts/ on sys.path
+import order_types            # scripts/order_types.py
 
 app = Flask(__name__)
 auth.configure(app)
@@ -1162,6 +1164,119 @@ def delete_inventory_count(count_id):
     return jsonify({"ok": True})
 
 
+# ------------------------------------------------------------- restocks
+
+def _restock_dates(payload, require_ordered=True):
+    """(ordered_on, delivered_on, errors) from a restock form. Delivered may be
+    blank (still on its way), never before the order, and neither in the future."""
+    today_iso = date.today().isoformat()
+    errors = {}
+    ordered = str(payload.get("ordered_on") or "").strip()
+    delivered = str(payload.get("delivered_on") or "").strip() or None
+    if require_ordered:
+        if not validation.ISO_DATE_RE.match(ordered):
+            errors["ordered_on"] = "Pick the date it was ordered."
+        elif ordered > today_iso:
+            errors["ordered_on"] = "The order date cannot be in the future."
+    if delivered is not None:
+        if not validation.ISO_DATE_RE.match(delivered):
+            errors["delivered_on"] = "Delivered date must be YYYY-MM-DD."
+        elif delivered > today_iso:
+            errors["delivered_on"] = "The delivery date cannot be in the future."
+        elif ordered and validation.ISO_DATE_RE.match(ordered) and delivered < ordered:
+            errors["delivered_on"] = "It cannot arrive before it was ordered."
+    return ordered, delivered, errors
+
+
+@app.get("/api/restocks")
+def get_restocks():
+    """Recorded restocks, newest first, and per supplier what they add up to:
+    deliveries so far, the median days from order to delivery, and whether
+    that median is used yet (step5a: from MIN_DELIVERIES deliveries on, at the
+    next pipeline run). `lead_time_now` is the lead time the reorder points
+    currently use for that supplier's items (the most common one)."""
+    import step5a_set_lead_times as step5a
+    c = con()
+    if "Restock_Log" not in _table_names(c):
+        return jsonify({"restocks": [], "suppliers": [], "min_deliveries": step5a.MIN_DELIVERIES})
+    restocks = dbmod.rows(c, """
+        SELECT restock_id, supplier_name, ordered_on, delivered_on, note, entered_by,
+               CASE WHEN delivered_on IS NOT NULL
+                    THEN CAST(ROUND(julianday(delivered_on) - julianday(ordered_on)) AS INTEGER) END AS days
+          FROM Restock_Log ORDER BY ordered_on DESC, restock_id DESC LIMIT 200
+    """)
+    now = {r["supplier_name"]: r["lead_time_days"] for r in dbmod.rows(c, """
+        SELECT supplier_name, lead_time_days FROM (
+            SELECT supplier_name, lead_time_days, COUNT(*) n,
+                   ROW_NUMBER() OVER (PARTITION BY supplier_name ORDER BY COUNT(*) DESC) rk
+              FROM Dim_Product WHERE supplier_name IS NOT NULL GROUP BY 1, 2)
+         WHERE rk = 1""")}
+    days = step5a.delivery_days(c)
+    open_orders = {r["supplier_name"]: r["n"] for r in dbmod.rows(c, """
+        SELECT supplier_name, COUNT(*) n FROM Restock_Log WHERE delivered_on IS NULL GROUP BY 1""")}
+    suppliers = []
+    for s in sorted(set(days) | set(open_orders)):
+        d = days.get(s, [])
+        suppliers.append({
+            "supplier_name": s, "deliveries": len(d), "open": open_orders.get(s, 0),
+            "median_days": round(statistics.median(d), 1) if d else None,
+            "min_days": min(d) if d else None, "max_days": max(d) if d else None,
+            "in_use": len(d) >= step5a.MIN_DELIVERIES, "lead_time_now": now.get(s),
+        })
+    return jsonify({"restocks": restocks, "suppliers": suppliers, "min_deliveries": step5a.MIN_DELIVERIES})
+
+
+@app.post("/api/restocks")
+def add_restock():
+    """Record a restock order: {supplier_name, ordered_on, delivered_on?, note?}."""
+    payload = request.get_json(silent=True) or {}
+    supplier = str(payload.get("supplier_name") or "").strip()
+    ordered, delivered, errors = _restock_dates(payload)
+    if not supplier:
+        errors["supplier_name"] = "Choose the supplier."
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+    c = con()
+    c.execute(dbmod.RESTOCK_LOG_DDL)               # in case startup could not create it
+    cur = c.execute("""
+        INSERT INTO Restock_Log (supplier_name, ordered_on, delivered_on, note, entered_by, date_logged)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (supplier, ordered, delivered, (str(payload.get("note") or "").strip() or None),
+          auth.current_user(), datetime.now().isoformat(timespec="seconds")))
+    c.commit()
+    return jsonify({"ok": True, "restock_id": cur.lastrowid})
+
+
+@app.put("/api/restocks/<int:restock_id>")
+def mark_restock_delivered(restock_id):
+    """Set (or correct) the day a restock arrived: {delivered_on}."""
+    payload = request.get_json(silent=True) or {}
+    c = con()
+    row = dbmod.one(c, "SELECT ordered_on FROM Restock_Log WHERE restock_id = ?", (restock_id,)) \
+        if "Restock_Log" in _table_names(c) else None
+    if row is None:
+        return jsonify({"ok": False, "error": "No such restock."}), 404
+    _o, delivered, errors = _restock_dates({**payload, "ordered_on": row["ordered_on"]})
+    if delivered is None:
+        errors["delivered_on"] = "Pick the date it arrived."
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+    c.execute("UPDATE Restock_Log SET delivered_on = ? WHERE restock_id = ?", (delivered, restock_id))
+    c.commit()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/restocks/<int:restock_id>")
+def delete_restock(restock_id):
+    c = con()
+    if "Restock_Log" not in _table_names(c) or not dbmod.one(
+            c, "SELECT 1 FROM Restock_Log WHERE restock_id = ?", (restock_id,)):
+        return jsonify({"ok": False, "error": "No such restock."}), 404
+    c.execute("DELETE FROM Restock_Log WHERE restock_id = ?", (restock_id,))
+    c.commit()
+    return jsonify({"ok": True})
+
+
 # -------------------------------------------------------------- calendar
 
 @app.get("/api/calendar")
@@ -1281,13 +1396,86 @@ def set_closure(iso_date):
 
 # ----------------------------------------------------------------- tally
 
+def _order_type(transaction_type, raw):
+    """Fact_Sales.order_type for a new row: walk_in / bulk / pre_order for a
+    sale (walk-in when not given), None for a damaged / promo / transfer
+    removal, which is not a sale of any kind, and False when `raw` is not an
+    order type at all. The forecasts train on walk-in sales only
+    (scripts/order_types.py)."""
+    if str(transaction_type).upper() != "SALE":
+        return None
+    order_type = order_types.normalize(raw)
+    return False if order_type is None else order_type
+
+
+@app.get("/api/orders/upcoming")
+def get_upcoming_orders():
+    """Known bulk / organisation orders and pre-orders still to come (and any
+    from the last 14 days, so a just-collected one can still be seen). The
+    forecasts add each on its expected date (scripts/order_types.py)."""
+    c = con()
+    if "Upcoming_Order" not in _table_names(c):
+        return jsonify([])
+    since = (date.today() - timedelta(days=14)).isoformat()
+    return jsonify(dbmod.rows(c, """
+        SELECT o.order_id, o.product_id, p.item_name, o.expected_date, o.quantity,
+               o.order_type, o.note, o.entered_by
+          FROM Upcoming_Order o JOIN Dim_Product p ON p.product_id = o.product_id
+         WHERE o.expected_date >= ?
+         ORDER BY o.expected_date, o.order_id
+    """, (since,)))
+
+
+@app.post("/api/orders/upcoming")
+def add_upcoming_order():
+    """{product_id, expected_date, quantity, order_type: bulk | pre_order, note?}"""
+    payload = request.get_json(silent=True) or {}
+    c = con()
+    errors = {}
+    pid = _as_int(payload.get("product_id"))
+    if pid is None or not dbmod.one(c, "SELECT 1 FROM Dim_Product WHERE product_id = ?", (pid,)):
+        errors["product_id"] = "Select an item."
+    expected = str(payload.get("expected_date") or "").strip()
+    if not validation.ISO_DATE_RE.match(expected):
+        errors["expected_date"] = "Pick the date it will be collected."
+    elif expected < date.today().isoformat():
+        errors["expected_date"] = "That date has passed - tally the sale instead."
+    qty = _as_int(payload.get("quantity"))
+    if qty is None or qty <= 0:
+        errors["quantity"] = "Quantity must be a whole number > 0."
+    order_type = order_types.normalize(payload.get("order_type"), default=None)
+    if order_type not in ("bulk", "pre_order"):
+        errors["order_type"] = "Choose bulk or pre-order."
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+    c.execute(dbmod.UPCOMING_ORDER_DDL)            # in case startup could not create it
+    cur = c.execute("""
+        INSERT INTO Upcoming_Order (product_id, expected_date, quantity, order_type, note, entered_by, date_logged)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (pid, expected, qty, order_type, (str(payload.get("note") or "").strip() or None),
+          auth.current_user(), datetime.now().isoformat(timespec="seconds")))
+    c.commit()
+    return jsonify({"ok": True, "order_id": cur.lastrowid})
+
+
+@app.delete("/api/orders/upcoming/<int:order_id>")
+def delete_upcoming_order(order_id):
+    c = con()
+    if "Upcoming_Order" not in _table_names(c) or not dbmod.one(
+            c, "SELECT 1 FROM Upcoming_Order WHERE order_id = ?", (order_id,)):
+        return jsonify({"ok": False, "error": "No such order."}), 404
+    c.execute("DELETE FROM Upcoming_Order WHERE order_id = ?", (order_id,))
+    c.commit()
+    return jsonify({"ok": True})
+
+
 @app.get("/api/tally/recent")
 def get_recent_entries():
     limit = request.args.get("limit", default=50, type=int)
     rows = dbmod.rows(con(), """
         SELECT f.sale_id, f.product_id, d.calendar_date, f.quantity_sold,
                UPPER(f.transaction_type) AS transaction_type, f.imputation_flag, f.is_censored, f.entered_by,
-               p.item_name, COALESCE(p.supplier_name, ?) AS supplier_name
+               f.order_type, p.item_name, COALESCE(p.supplier_name, ?) AS supplier_name
         FROM Fact_Sales f
         JOIN Dim_Date d ON d.date_id = f.date_id
         JOIN Dim_Product p ON p.product_id = f.product_id
@@ -1308,7 +1496,7 @@ def get_entries_by_date():
     rows = dbmod.rows(con(), """
         SELECT f.sale_id, f.product_id, d.calendar_date, f.quantity_sold,
                UPPER(f.transaction_type) AS transaction_type, f.imputation_flag, f.is_censored, f.entered_by,
-               p.item_name, COALESCE(p.supplier_name, ?) AS supplier_name
+               f.order_type, p.item_name, COALESCE(p.supplier_name, ?) AS supplier_name
         FROM Fact_Sales f
         JOIN Dim_Date d ON d.date_id = f.date_id
         JOIN Dim_Product p ON p.product_id = f.product_id
@@ -1325,23 +1513,26 @@ def add_entry():
     payload = request.get_json(silent=True) or {}
     c = con()
     errors = validation.validate_entry(c, payload)
+    transaction_type = str(payload.get("transaction_type") or "").upper()
+    order_type = _order_type(transaction_type, payload.get("order_type"))
+    if order_type is False:
+        errors["order_type"] = "Choose walk-in, bulk or pre-order."
     if errors:
         return jsonify({"ok": False, "errors": errors}), 400
 
     product_id = int(payload["product_id"])
     quantity_sold = int(float(payload["quantity_sold"]))
     calendar_date = payload["calendar_date"]
-    transaction_type = str(payload["transaction_type"]).upper()
 
     date_row = dbmod.one(c, "SELECT date_id FROM Dim_Date WHERE calendar_date = ?", (calendar_date,))
     # Stored in lower case like every historical row ('sale'); shown in upper case.
     cur = c.execute("""
         INSERT INTO Fact_Sales
             (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag,
-             transaction_type, entered_by)
-        VALUES (?, ?, ?, 0, 0, ?, ?)
+             transaction_type, entered_by, order_type)
+        VALUES (?, ?, ?, 0, 0, ?, ?, ?)
     """, (product_id, date_row["date_id"], quantity_sold, transaction_type.lower(),
-          auth.current_user()))
+          auth.current_user(), order_type))
     c.commit()
 
     product = dbmod.one(c, "SELECT item_name, supplier_name FROM Dim_Product WHERE product_id = ?", (product_id,))
@@ -1353,6 +1544,7 @@ def add_entry():
         "quantity_sold": quantity_sold,
         "calendar_date": calendar_date,
         "transaction_type": transaction_type,
+        "order_type": order_type,
         "entered_by": auth.current_user(),
         "is_local": False,
     }
@@ -1368,6 +1560,7 @@ def import_tally():
         Item              required, must match a Dim_Product item_name
         Total Quantity    required, whole number > 0  (aliases: Quantity, Qty)
         Transaction Type  optional, defaults to SALE
+        Order Type        optional, for sales: walk-in (default), bulk, pre-order
 
     Dates must be ISO. DD/MM and MM/DD are refused rather than guessed - with
     both accepted, 05/11/2025 is valid under either reading and lands six
@@ -1412,6 +1605,7 @@ def import_tally():
         qty = _as_int(_pick(row, "Total Quantity", "Quantity", "Qty", "Units", "Quantity Sold"))
         iso = _as_iso_date(_pick(row, "Date", "Calendar Date", "Sale Date"))
         ttype = str(_pick(row, "Transaction Type", "Type") or "SALE").strip().upper()
+        raw_order = _pick(row, "Order Type", "Order", "Sale Type")
 
         if not item:
             rejected.append({"row": i, "item": "", "reason": "No item name."}); continue
@@ -1423,26 +1617,30 @@ def import_tally():
             rejected.append({"row": i, "item": item, "reason": "Date is in the future."}); continue
         if iso not in dates:
             rejected.append({"row": i, "item": item,
-                             "reason": "Date not in the calendar."}); continue
+                             "reason": validation.calendar_gap_message(c, iso)}); continue
         if qty is None or qty <= 0:
             rejected.append({"row": i, "item": item,
                              "reason": "Quantity must be a whole number > 0."}); continue
         if ttype not in validation.TRANSACTION_TYPES:
             rejected.append({"row": i, "item": item,
                              "reason": f"Unknown transaction type '{ttype}'."}); continue
+        order_type = _order_type(ttype, raw_order)
+        if order_type is False:
+            rejected.append({"row": i, "item": item,
+                             "reason": f"Unknown order type '{raw_order}' (walk-in, bulk or pre-order)."}); continue
         pid = _lookup(products, item)
         if pid is None:
             names.hold_row(c, "tally", item, qty, storage.filename, calendar_date=iso,
-                           transaction_type=ttype.lower(), entered_by=user)
+                           transaction_type=ttype.lower(), entered_by=user, order_type=order_type)
             held[item] = held.get(item, 0) + 1
             continue
 
         c.execute("""
             INSERT INTO Fact_Sales
                 (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag,
-                 transaction_type, entered_by)
-            VALUES (?, ?, ?, 0, 0, ?, ?)
-        """, (pid, dates[iso], qty, ttype.lower(), user))
+                 transaction_type, entered_by, order_type)
+            VALUES (?, ?, ?, 0, 0, ?, ?, ?)
+        """, (pid, dates[iso], qty, ttype.lower(), user, order_type))
         imported += 1
 
     c.commit()

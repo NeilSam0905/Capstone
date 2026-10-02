@@ -83,7 +83,8 @@ PENDING_IMPORT_DDL = """CREATE TABLE IF NOT EXISTS Pending_Import_Row (
     note              TEXT,               -- inventory rows
     source_file       TEXT,
     held_at           TEXT,
-    entered_by        TEXT                -- who imported it; carried into Fact_Sales
+    entered_by        TEXT,               -- who imported it; carried into Fact_Sales
+    order_type        TEXT                -- tally rows: walk_in / bulk / pre_order
 )"""
 
 # App_User: the accounts that can sign in to the API (backend/auth.py).
@@ -94,7 +95,34 @@ APP_USER_DDL = """CREATE TABLE IF NOT EXISTS App_User (
     password_hash  TEXT NOT NULL,
     created_at     TEXT
 )"""
-_TABLES = (PRODUCT_STATUS_DDL, PENDING_IMPORT_DDL, APP_USER_DDL)
+# Restock_Log: each restock order and the day it arrived, recorded in the
+# Tally Interface, so lead times are measured per supplier instead of taken
+# from the verbal 14 / 18 / 28-day estimates (step5a_set_lead_times.py uses a
+# supplier's median once it has enough deliveries). Operational: no pipeline
+# step clears it.
+RESTOCK_LOG_DDL = """CREATE TABLE IF NOT EXISTS Restock_Log (
+    restock_id    INTEGER PRIMARY KEY,
+    supplier_name TEXT    NOT NULL,   -- normalised, as on Dim_Product
+    ordered_on    TEXT    NOT NULL,   -- 'YYYY-MM-DD'
+    delivered_on  TEXT,               -- NULL until it arrives
+    note          TEXT,
+    entered_by    TEXT,
+    date_logged   TEXT
+)"""
+# Upcoming_Order: bulk / organisation orders and pre-orders the store knows
+# are coming. The forecasts add each on its expected date, on top of everyday
+# (walk-in) demand (scripts/order_types.py). Operational.
+UPCOMING_ORDER_DDL = """CREATE TABLE IF NOT EXISTS Upcoming_Order (
+    order_id      INTEGER PRIMARY KEY,
+    product_id    INTEGER NOT NULL,
+    expected_date TEXT    NOT NULL,   -- 'YYYY-MM-DD'
+    quantity      INTEGER NOT NULL,
+    order_type    TEXT    NOT NULL,   -- 'bulk' | 'pre_order'
+    note          TEXT,
+    entered_by    TEXT,
+    date_logged   TEXT
+)"""
+_TABLES = (PRODUCT_STATUS_DDL, PENDING_IMPORT_DDL, APP_USER_DDL, RESTOCK_LOG_DDL, UPCOMING_ORDER_DDL)
 
 # Columns added after databases already existed. CREATE TABLE IF NOT EXISTS
 # cannot add a column to a table that is already there, so each is added here
@@ -103,6 +131,9 @@ _TABLES = (PRODUCT_STATUS_DDL, PENDING_IMPORT_DDL, APP_USER_DDL)
 _COLUMNS = (
     ("Fact_Sales", "entered_by", "TEXT"),
     ("Pending_Import_Row", "entered_by", "TEXT"),
+    # walk_in / bulk / pre_order (scripts/order_types.py); NULL = walk-in
+    ("Fact_Sales", "order_type", "TEXT"),
+    ("Pending_Import_Row", "order_type", "TEXT"),
 )
 
 

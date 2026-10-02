@@ -8,3 +8,6 @@ fpdf2==2.8.7
 # Already a pipeline dependency (step0 reads the source workbooks with it), so
 # this pins it for the backend's own install rather than adding anything new.
 openpyxl==3.1.5
+
+# Daily-use server (backend/serve.py): runs on Windows, unlike gunicorn.
+waitress==3.0.2

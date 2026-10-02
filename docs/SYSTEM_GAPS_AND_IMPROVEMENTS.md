@@ -46,13 +46,13 @@ server and backups (1.2, 1.3); then the USTore practices (3.2, 3.4, 5).
 | 2 | Calendar (`Dim_Date`, `calendar_ranges.csv`) **ends 2026-12-31** | From 1 Jan 2027 tally entries are rejected and the calendar check goes blind | Group decision | S |
 | 3 | **First-term enrollment** (July–August) is missing from the calendar in every year | The biggest demand event of the year is invisible to the forecast | Group decision | S |
 | 4 | `transaction_type` **case mismatch**; non-sales counted as demand | App-entered sales vanish from category forecasts; damaged/promo/transfer items inflate FSN, forecasts and reorder points | Code | S (**fixed 2026-10-02**, see 3.1) |
-| 5 | **No login** on the API; CORS open to every site | Anyone who can reach the server can add products, tallies, closures or start a pipeline run | Code | M |
+| 5 | **No login** on the API; CORS open to every site | Anyone who can reach the server can add products, tallies, closures or start a pipeline run | Code | M (**done 2026-10-02**, see 1.2) |
 | 6 | Renamed item names **stop the pipeline** | Every sheet redesign needs a developer (50 names in July) | Code + group decision | M (**done 2026-10-02**, see 6.1) |
 | 7 | **New tally workbooks need a code edit** | Next academic year's workbook is never read unless `step0` is changed | Code | S (**done 2026-10-02**, see 6.2) |
-| 8 | Fast list **keeps dead items** | 28 of 58 Fast items sold nothing in 90 days, 13 in a year | Group decision | S |
-| 9 | Bulk / organisation orders not logged separately | Largest error cause tested: item error 64.5% → 38–51% if known | USTore + code | M |
+| 8 | Fast list **keeps dead items** | 28 of 58 Fast items sold nothing in 90 days, 13 in a year | Group decision | S (**done in code 2026-10-02**, see 4.1; pinned values await the group) |
+| 9 | Bulk / organisation orders not logged separately | Largest error cause tested: item error 64.5% → 38–51% if known | USTore + code | M (**code done 2026-10-02**, see 3.4; USTore now has to record them) |
 | 10 | Pinned checks fail and docs are stale after the July update | The team cannot tell a real failure from a known one | Group decision | S |
-| 11 | Runs on **development servers**; no scheduled **database backup** | Not stable for daily use; a lost or corrupted `ustore.db` loses all entries since the last vault commit | Code | S |
+| 11 | Runs on **development servers**; no scheduled **database backup** | Not stable for daily use; a lost or corrupted `ustore.db` loses all entries since the last vault commit | Code | S (**done 2026-10-02**, see 1.3) |
 
 The rest of this file explains each one, then lists smaller gaps and optimisations.
 
@@ -92,6 +92,13 @@ entered a tally row (Event_Log has `created_by`; Fact_Sales does not).
 **Fix (before any shared deployment):** a login (even one shared staff PIN to start), CORS limited to the
 dashboard's own address, and an `entered_by` column on app-entered Fact_Sales rows.
 
+**Status: done 2026-10-02 (commit `88fb624`).** `backend/auth.py`: every `/api` route except
+`/api/auth/*` needs a signed-in session (accounts in `App_User`, hashed passwords); CORS and writes are
+limited to the dashboard's address (`USTORE_ALLOWED_ORIGINS` adds more); the signed-in user is recorded
+in `Fact_Sales.entered_by`, `Event_Log.created_by`, `Closure_Log.created_by` and
+`Inventory_Count.counted_by`. **The default `staff` / `staff123` account is created on the first login
+and its password is in this public repository: change it before any shared use.**
+
 ### 1.3 Development servers and no scheduled backup
 
 **Found:** the README starts the system with `python app.py` (Flask's built-in development server) and
@@ -105,6 +112,16 @@ corrupted `ustore.db` loses every tally, count, closure and event entered since 
 **Fix (code):** serve the API with a production server (`waitress` works on Windows), serve the built
 frontend (`npm run build`), and take a nightly copy of `ustore.db` with SQLite's backup API (safe while
 the app is running) plus a scheduled `vault.py lock`.
+
+**Status: done 2026-10-02.** `backend/serve.py` serves the API and the built dashboard from one address
+with waitress (`python serve.py`, or `--host 0.0.0.0` for the store's network; the login's origin check
+accepts the shared address with no setting). While it runs it backs up `ustore.db` once a day with
+SQLite's online backup API into `backups/` (gitignored), checks each copy with `PRAGMA integrity_check`
+and keeps the last 14 (`backend/backup.py`; `--list`, and `--restore`, which saves the current database
+first). Tested: signed in through it, a write passed the origin check, a page reload kept the app, a
+backup was taken at start. **Not done:** a scheduled `vault.py lock`. The vault only protects data once
+committed and pushed, and an automatic commit to a public repository would be wrong; the daily backups
+cover the "lost file" risk, and a pipeline run still updates the vault.
 
 ---
 
@@ -125,6 +142,12 @@ continues into January 2027"*. The only AY 2026–27 term present is the first t
 **Fix (group decision; `calendar_ranges.csv` is a protected file):** add the AY 2026–27 second term and
 special term from the published UST calendar, and extend `Dim_Date` (`populate_dim_date.py`'s end date)
 to at least 2027-12-31. Needed before December.
+
+**Status (2026-10-02): still the group's; the deadline can no longer be missed.** The calendar itself is
+not extended (protected file). The Tally Interface now shows a warning from 120 days before the calendar's
+last day (it is showing now: 90 days left), and a tally or import dated after that day is refused with
+"The calendar ends on 2026-12-31 … it has to be extended" instead of "Date not found in the calendar"
+(`backend/validation.py` `calendar_gap_message`).
 
 ### 2.2 First-term enrollment is not in the calendar in any year
 
@@ -231,6 +254,23 @@ of all units sold, 132 of them over 20× (13.7%). The biggest months are January
 Each row has an empty `bulk_order_confirmed` column for the store to mark which were organisation or
 pre-orders, and which were ordinary rushes such as enrollment. The order-type field itself is not built
 yet (schema and Tally Interface change).
+
+**Status: code done 2026-10-02** (`scripts/order_types.py`). Nothing changes until the store uses it: on
+the current data every table, forecast and reorder point is identical.
+- A sale carries `Fact_Sales.order_type`: `walk_in` (default), `bulk`, `pre_order`. The Tally Interface's
+  Transaction Type list has "SALE — walk-in", "SALE — bulk or organisation order" and "SALE — pre-order";
+  imports read an optional "Order Type" column (held rows keep it). Entry tables tag bulk / pre-order rows.
+- **History:** step 2 reads `bulk_order_confirmed` in `data/bulk_day_candidates.csv` ("yes"/"bulk" →
+  bulk, "pre-order" → pre-order, blank or "no" → walk-in; anything else is reported, not guessed) and marks
+  those item-days. So the store's answers to 3.7 #4 take effect at the next run.
+- **Forecasts** (steps 1b, 4, 4b, 4c) train on walk-in sales only. Classification, reorder demand and the
+  dashboard still count every sale: the stock left either way. (Whether bulk orders should also stay out
+  of FSN or the reorder points is a separate question for the group.)
+- **Known orders:** an organisation order or pre-order the store already knows about is recorded under
+  "Upcoming Bulk Orders" (item, expected date, quantity; `Upcoming_Order`), and steps 4 and 4c add it on
+  that date on top of everyday demand. When collected it is tallied as SALE — bulk / pre-order, so it does
+  not count twice.
+- Tests: `tests/test_order_types.py`.
 
 ### 3.5 Incomplete product details
 
@@ -374,6 +414,11 @@ enrollment dates in `calendar_ranges.csv`, a protected file.
   quantity instead. Real ordering and holding costs from USTore are needed (Block 5 / B9).
 - **Lead times are verbal** (14 / 18 / 28 days by garment type). Recording the order and delivery date of
   each restock would let them be measured per supplier.
+  **Status: done 2026-10-02.** The Tally Interface's "Restock Deliveries" card records each restock
+  (supplier, ordered on, delivered on; `Restock_Log`) and shows per supplier the deliveries so far, their
+  median and range, and the lead time in use. From 3 delivered restocks, step 5a gives that supplier's items
+  the median instead of the garment estimate, labelled "measured (n deliveries)" in `Result_Prescriptive`.
+  With nothing recorded, every lead time and reorder point is unchanged. Tests: `tests/test_restocks.py`.
 - **ROP uses 365-day actual sales**, not the forecast. That is deliberate (it prices 210 items against 123
   on a 30-day basis) but means the forecast does not drive the reorder point; Chapter 3 now says so.
 
@@ -514,6 +559,12 @@ real failure hides among them.
 - `USTore_Forecast_Testing_Summary.xlsx` and `USTore_with_Synthetic_Current_Model_Results.xlsx` were built
   on data ending 8 July.
 
+**Status (2026-10-02):** `README.md` now gives the current figures (84,430 rows, 95,182 units, 520 products,
+F 30 / S 238 / N 252 with the 4.1 / 4.2 rules, July complete) and the measured run times, and says the
+pinned checks still expect the pre-July values until the group approves new ones. `DIVERGENCE_REGISTER.md`
+was corrected earlier (3.6). Not changed: the 30 Sep session summary is a dated snapshot, and the two
+workbooks need their experiments re-run, not an edit.
+
 ### 7.3 Branches
 
 - `main` is **76 commits behind** `neil`; GitHub's default branch shows an old version of the project.
@@ -550,6 +601,26 @@ A full run took **114 s** on 2026-09-30:
 - **Every run rebuilds everything**, even when only today's tallies changed. An incremental mode (skip
   step 0 and step 1 when no workbook or mapping file changed) would bring a routine run down to about 40 s.
 
+**Status: done 2026-10-02.** Measured on the same data and code (sandbox runs, every table and CSV
+identical to the run before the change):
+
+| Run | Before | Now |
+|---|---:|---:|
+| step 0 (when it converts) | 34.6 s | 27.3 s (read-only mode) |
+| step 0 (no workbook changed) | 34.6 s | 1.0 s (skipped) |
+| step 1 | 45.6 s | 2.2 s |
+| Full run, a workbook changed | 124.7 s | 73.6 s |
+| Routine run, no workbook changed | 124.7 s | 54.6 s |
+
+- Step 0 writes the two price columns step 1 needs (`data/tbs_item_prices.csv`,
+  `data/may2024_dsr_prices.csv`) while it has the workbooks open, so step 1 opens no workbook at all. That
+  also means step 1 now runs on a machine without `rawdata/`, from the vaulted CSVs.
+- Step 0 reads each sheet once in openpyxl's read-only mode (`SheetGrid`); outputs are byte-identical.
+- Step 0 fingerprints its inputs (each workbook's contents and the script itself, in `.step0_state.json`,
+  gitignored) and keeps its outputs when nothing changed; `--force` converts anyway. Step 1 is not skipped:
+  at 2 s there is nothing left to save, and it reads the vocabulary, which settled names change.
+- Left: step 2 (~17 s) still reloads all of `Fact_Sales`.
+
 ---
 
 ## Suggested order
@@ -560,7 +631,9 @@ A full run took **114 s** on 2026-09-30:
 4. Group: approve the post-July expected values; update README and docs (7.1, 7.2).
 5. Code: read new workbooks automatically; rename button and import review list (6.1, 6.2) — **done
    2026-10-02**; the group still needs to confirm the vocabulary-write extension in 6.1.
-6. Group: Fast-list rule and Non-moving definition (4.1, 4.2); renamed product pairs (3.3).
+6. Group: Fast-list rule and Non-moving definition (4.1, 4.2) — **in code since 2026-10-02**; the group
+   approves the new pinned values. Renamed product pairs (3.3).
 7. USTore: monthly counts, bulk-order logging, real costs, delivery dates (3.2, 3.4, 5).
-8. Code: login, production server and backups before any shared deployment (1.2, 1.3); speed-ups (8);
-   merge branches (7.3).
+8. Code: login, production server and backups before any shared deployment (1.2, 1.3); speed-ups (8) —
+   **done 2026-10-02**, as are order types and known orders (3.4), measured lead times (5) and the
+   calendar warning (2.1). Merging branches (7.3) is still open.

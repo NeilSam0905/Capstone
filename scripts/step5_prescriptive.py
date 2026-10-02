@@ -135,7 +135,7 @@ from forecasting.baselines import (
     rolling_mean_fit_predict, rolling_median_fit_predict, seasonal_naive_fit_predict,
 )
 from forecasting.intermittent import croston_fit_predict, sba_fit_predict
-from step5a_set_lead_times import classify as classify_lead_time_tier
+from step5a_set_lead_times import lead_time as lead_time_label, measured_lead_times
 
 DB_NAME = "ustore.db"
 HORIZON = 30
@@ -402,11 +402,14 @@ def main():
     # Re-derive the actual tier label the same way step5a computed it (not
     # guessed back from lead_time_days, which can't tell "embroidered_shirt"
     # apart from "default" - both are 18 days).
+    # A supplier's measured lead time (Restock_Log) takes over from the garment
+    # estimate the same way here as in step5a.
     product_meta = pd.read_sql_query(
-        "SELECT product_id, item_name, category FROM Dim_Product", con
+        "SELECT product_id, item_name, category, supplier_name FROM Dim_Product", con
     ).set_index("product_id")
+    measured = measured_lead_times(con)
     lt_categories = product_meta.apply(
-        lambda r: classify_lead_time_tier(r["item_name"], r["category"])[1], axis=1
+        lambda r: lead_time_label(r["item_name"], r["category"], r["supplier_name"], measured)[1], axis=1
     )
 
     for pid, st in stats.items():
