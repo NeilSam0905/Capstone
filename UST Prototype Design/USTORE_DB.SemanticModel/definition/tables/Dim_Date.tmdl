@@ -1,0 +1,213 @@
+table Dim_Date
+	lineageTag: f36538c0-19f5-4a7f-ba8b-663dc2146f46
+
+	measure 'Enrollment Days' = CALCULATE(COUNTROWS(Dim_Date), Dim_Date[is_enrollment_period] = 1)
+		formatString: 0
+		lineageTag: 757bccc7-0ac0-4ff7-932a-142f61592d8e
+
+	measure 'Event Days' = CALCULATE(COUNTROWS(Dim_Date), Dim_Date[is_event_day] = 1)
+		formatString: 0
+		lineageTag: 93ec3afb-9ae5-4946-b425-1e81afce5492
+
+	measure 'Sem Break Days' = CALCULATE(COUNTROWS(Dim_Date), Dim_Date[is_sem_break] = 1)
+		formatString: 0
+		lineageTag: 6f85acc5-e9d5-4273-9075-7c343f022067
+
+	column date_id
+		dataType: double
+		lineageTag: e1731681-26a2-4597-8caa-082785fc81d3
+		summarizeBy: none
+		sourceColumn: date_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column calendar_date
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 02b3862d-6e9e-4ae2-98b8-51c54ebdc43a
+		summarizeBy: none
+		sourceColumn: calendar_date
+
+		variation Variation
+			isDefault
+			relationship: 903d540b-3952-45e2-b4ca-364c100c3966
+			defaultHierarchy: LocalDateTable_f291a074-5e56-45f8-acf0-f71edc8586b4.'Date Hierarchy'
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column semester_id
+		dataType: string
+		lineageTag: 9f0c6086-cb2f-4212-83bd-3500093d0aed
+		summarizeBy: none
+		sourceColumn: semester_id
+
+		annotation SummarizationSetBy = Automatic
+
+	column semester_week
+		dataType: double
+		lineageTag: 5b35dccf-b26b-416e-a4fd-8583cbc35d7d
+		summarizeBy: sum
+		sourceColumn: semester_week
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column is_enrollment_period
+		dataType: double
+		lineageTag: de23c3ee-f47e-4c34-85e2-822d2822092e
+		summarizeBy: sum
+		sourceColumn: is_enrollment_period
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column is_exam_week
+		dataType: double
+		lineageTag: 6a550906-5749-41ac-a82f-e77bfdc00407
+		summarizeBy: sum
+		sourceColumn: is_exam_week
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column is_event_day
+		dataType: double
+		lineageTag: 03950b3e-8471-470e-9084-1cd24d70e42b
+		summarizeBy: sum
+		sourceColumn: is_event_day
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column is_sem_break
+		dataType: double
+		lineageTag: 99ad2b71-db2b-4f29-b21c-e6905441f6cb
+		summarizeBy: sum
+		sourceColumn: is_sem_break
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column is_tally_date
+		dataType: double
+		lineageTag: 0d757137-38fc-458d-9b94-32578135349e
+		summarizeBy: sum
+		sourceColumn: is_tally_date
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column is_store_closed
+		dataType: double
+		lineageTag: f33aa24f-32aa-4765-86a5-982756505e94
+		summarizeBy: sum
+		sourceColumn: is_store_closed
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column is_tally_date_positive
+		dataType: double
+		lineageTag: 336390e2-2ea8-4848-8b4d-d9c81092e2ca
+		summarizeBy: sum
+		sourceColumn: is_tally_date_positive
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column Month
+		dataType: dateTime
+		formatString: mmmm yyyy
+		lineageTag: 2235f749-b1de-4480-ad27-6553943408f9
+		summarizeBy: none
+		sourceColumn: Month
+
+		variation Variation
+			isDefault
+			relationship: 73e058d5-3f22-48ca-b798-057f9c51d3ed
+			defaultHierarchy: LocalDateTable_bf2e061e-dc97-4cfe-a1a8-f7f696d37da8.'Date Hierarchy'
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isDateTimeCustom":true}
+
+	column day_type
+		dataType: string
+		lineageTag: 1f641615-5edc-432f-9c9a-30c673a1e22c
+		summarizeBy: none
+		sourceColumn: day_type
+
+		annotation SummarizationSetBy = Automatic
+
+	column week_start
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: d7772f23-4d28-4562-8f11-78a31cabc088
+		summarizeBy: none
+		sourceColumn: week_start
+
+		variation Variation
+			isDefault
+			relationship: 9922b5f2-db4a-4515-9a12-9f62f2ac376a
+			defaultHierarchy: LocalDateTable_075a5013-a7dd-46b5-8673-efd6e9fd879a.'Date Hierarchy'
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column day_name
+		dataType: string
+		lineageTag: 8d13b453-2752-46d4-8cc2-4dc24bfe3f49
+		summarizeBy: none
+		sourceColumn: day_name
+
+		annotation SummarizationSetBy = Automatic
+
+	column day_num
+		dataType: int64
+		formatString: 0
+		lineageTag: 7183c5ff-8b78-4181-98b6-181024468a98
+		summarizeBy: sum
+		sourceColumn: day_num
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Dim_Date = m
+		mode: import
+		source =
+				let
+				    Source = Odbc.DataSource("DRIVER={SQLite3 ODBC Driver};Database=" & UstoreDbPath, [HierarchicalNavigation=true]),
+				    Dim_Date_Table = Source{[Name="Dim_Date",Kind="Table"]}[Data],
+				    #"Changed Type" = Table.TransformColumnTypes(Dim_Date_Table,{{"calendar_date", type date}}),
+				    #"Inserted Start of Month" = Table.AddColumn(#"Changed Type", "Start of Month", each Date.StartOfMonth([calendar_date]), type date),
+				    #"Renamed Columns" = Table.RenameColumns(#"Inserted Start of Month",{{"Start of Month", "Month"}}),
+				    #"Added Conditional Column" = Table.AddColumn(#"Renamed Columns", "day_type", each if [is_store_closed] = 1 then "Store closed" else if [is_sem_break] = 1 then "Sem break" else if [is_enrollment_period] = 1 then "Enrollment" else if [is_exam_week] = 1 then "Exam week" else if [is_event_day] = 1 then "Event day" else "Regular day"),
+				    #"Inserted Start of Week" = Table.AddColumn(#"Added Conditional Column", "Start of Week", each Date.StartOfWeek([calendar_date]), type date),
+				    #"Renamed Columns1" = Table.RenameColumns(#"Inserted Start of Week",{{"Start of Week", "week_start"}}),
+				    #"Inserted Day Name" = Table.AddColumn(#"Renamed Columns1", "Day Name", each Date.DayOfWeekName([calendar_date]), type text),
+				    #"Renamed Columns2" = Table.RenameColumns(#"Inserted Day Name",{{"Day Name", "day_name"}}),
+				    #"Inserted Day of Week" = Table.AddColumn(#"Renamed Columns2", "Day of Week", each Date.DayOfWeek([calendar_date]), Int64.Type),
+				    #"Renamed Columns3" = Table.RenameColumns(#"Inserted Day of Week",{{"Day of Week", "day_num"}}),
+				    #"Changed Type1" = Table.TransformColumnTypes(#"Renamed Columns3",{{"day_num", Int64.Type}}),
+				    #"Sorted Rows" = Table.Sort(#"Changed Type1",{{"day_num", Order.Ascending}})
+				in
+				    #"Sorted Rows"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

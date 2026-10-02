@@ -1,0 +1,96 @@
+table Result_Forecast
+	lineageTag: ff7f90f7-13ac-47d9-afab-30455e841cae
+
+	column forecast_id
+		dataType: double
+		lineageTag: 36fb0c8d-2cfb-454e-8cd8-1774e7af2b40
+		summarizeBy: sum
+		sourceColumn: forecast_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column product_id
+		dataType: double
+		lineageTag: 64b7c6cb-5dc8-4ce8-a00c-0d2cc9cc6095
+		summarizeBy: none
+		sourceColumn: product_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column forecast_date
+		dataType: string
+		lineageTag: 11ce12a8-188b-4c0f-b124-7083c7540382
+		summarizeBy: none
+		sourceColumn: forecast_date
+
+		annotation SummarizationSetBy = Automatic
+
+	column yhat
+		dataType: double
+		lineageTag: a0c4b3bb-41b2-415b-89a2-4cc5a00d0383
+		summarizeBy: sum
+		sourceColumn: yhat
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column yhat_lower
+		dataType: double
+		lineageTag: deebe356-ecb0-454a-99a6-10ad2085fa3d
+		summarizeBy: sum
+		sourceColumn: yhat_lower
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column yhat_upper
+		dataType: double
+		lineageTag: 2205dec4-7753-4ca7-8184-880f9e6dcde3
+		summarizeBy: sum
+		sourceColumn: yhat_upper
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column model_type
+		dataType: string
+		lineageTag: 8da11364-b6b8-4964-adae-f87506ab83fd
+		summarizeBy: none
+		sourceColumn: model_type
+
+		annotation SummarizationSetBy = Automatic
+
+	column is_heuristic
+		dataType: double
+		lineageTag: a087fb8e-aee9-4267-b034-de1aa2e293cf
+		summarizeBy: sum
+		sourceColumn: is_heuristic
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column snapshot_date
+		dataType: string
+		lineageTag: 95bc69b5-a6a8-4b32-b5c6-5f42027427b6
+		summarizeBy: none
+		sourceColumn: snapshot_date
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Result_Forecast = m
+		mode: import
+		source =
+				let
+				    Source = Odbc.DataSource("DRIVER={SQLite3 ODBC Driver};Database=" & UstoreDbPath, [HierarchicalNavigation=true]),
+				    Result_Forecast_Table = Source{[Name="Result_Forecast",Kind="Table"]}[Data]
+				in
+				    Result_Forecast_Table
+

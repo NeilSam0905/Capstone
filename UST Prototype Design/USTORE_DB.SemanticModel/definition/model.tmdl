@@ -1,0 +1,28 @@
+model Model
+	culture: en-US
+	defaultPowerBIDataSourceVersion: powerBI_V3
+	sourceQueryCulture: en-PH
+	dataAccessOptions
+		legacyRedirects
+		returnErrorValuesAsNull
+
+annotation __PBI_TimeIntelligenceEnabled = 1
+
+annotation PBI_QueryOrder = ["UstoreDbPath","Dim_Date","Dim_Parameters","Dim_Product","Result_Prescriptive","Result_Forecast_Metrics","Result_Forecast","Fact_Sales"]
+
+annotation PBI_ProTooling = ["DevMode"]
+
+ref table Dim_Date
+ref table Dim_Parameters
+ref table Dim_Product
+ref table Result_Prescriptive
+ref table Result_Forecast_Metrics
+ref table Result_Forecast
+ref table Fact_Sales
+ref table DateTableTemplate_8a7844dc-cc0a-4a00-a001-53ec923fe48a
+ref table LocalDateTable_bf2e061e-dc97-4cfe-a1a8-f7f696d37da8
+ref table LocalDateTable_f291a074-5e56-45f8-acf0-f71edc8586b4
+ref table LocalDateTable_075a5013-a7dd-46b5-8673-efd6e9fd879a
+
+ref cultureInfo en-US
+

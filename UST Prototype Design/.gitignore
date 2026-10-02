@@ -15,3 +15,6 @@ dist/
 # Local environment config (Power BI embed URL, etc.)
 .env
 .env.local
+
+**/.pbi/localSettings.json
+**/.pbi/cache.abf

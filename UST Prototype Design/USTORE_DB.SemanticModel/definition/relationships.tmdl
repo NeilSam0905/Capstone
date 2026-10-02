@@ -1,0 +1,31 @@
+relationship AutoDetected_96b87b3d-093b-4839-b4f8-ca99723847de
+	fromColumn: Fact_Sales.date_id
+	toColumn: Dim_Date.date_id
+
+relationship AutoDetected_03f4e0c4-a3ec-4827-82b7-478773e55b30
+	fromColumn: Result_Forecast_Metrics.product_id
+	toColumn: Dim_Product.product_id
+
+relationship AutoDetected_504f77fd-a7da-49b3-ad8e-7dc8c2d45f7f
+	fromColumn: Result_Forecast.product_id
+	toColumn: Dim_Product.product_id
+
+relationship AutoDetected_d21e138b-e6d3-46cf-a66c-01ca4561459a
+	fromColumn: Fact_Sales.product_id
+	toColumn: Dim_Product.product_id
+
+relationship 73e058d5-3f22-48ca-b798-057f9c51d3ed
+	joinOnDateBehavior: datePartOnly
+	fromColumn: Dim_Date.Month
+	toColumn: LocalDateTable_bf2e061e-dc97-4cfe-a1a8-f7f696d37da8.Date
+
+relationship 903d540b-3952-45e2-b4ca-364c100c3966
+	joinOnDateBehavior: datePartOnly
+	fromColumn: Dim_Date.calendar_date
+	toColumn: LocalDateTable_f291a074-5e56-45f8-acf0-f71edc8586b4.Date
+
+relationship 9922b5f2-db4a-4515-9a12-9f62f2ac376a
+	joinOnDateBehavior: datePartOnly
+	fromColumn: Dim_Date.week_start
+	toColumn: LocalDateTable_075a5013-a7dd-46b5-8673-efd6e9fd879a.Date
+

@@ -1,0 +1,182 @@
+table Result_Forecast_Metrics
+	lineageTag: 9866a8b6-e459-49a3-af0d-8001d5f2e9c5
+
+	column metric_id
+		dataType: double
+		lineageTag: a2af0ac4-3267-43aa-9c73-376ce6af6667
+		summarizeBy: sum
+		sourceColumn: metric_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column product_id
+		dataType: double
+		lineageTag: 154be5e9-a10b-4eac-9963-babd9070aa4e
+		summarizeBy: none
+		sourceColumn: product_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column item_name
+		dataType: string
+		lineageTag: 0e87e9ff-6713-4494-8e56-bb8c7d19ab90
+		summarizeBy: none
+		sourceColumn: item_name
+
+		annotation SummarizationSetBy = Automatic
+
+	column tier
+		dataType: string
+		lineageTag: 8dfb30d7-664a-4ec8-b749-78882b9505cf
+		summarizeBy: none
+		sourceColumn: tier
+
+		annotation SummarizationSetBy = Automatic
+
+	column validation_method
+		dataType: string
+		lineageTag: c1b674db-9414-44c6-be0e-87ade6a0ab0b
+		summarizeBy: none
+		sourceColumn: validation_method
+
+		annotation SummarizationSetBy = Automatic
+
+	column period_scope
+		dataType: string
+		lineageTag: 1be5aa15-b16e-4722-9397-f630eb03e897
+		summarizeBy: none
+		sourceColumn: period_scope
+
+		annotation SummarizationSetBy = Automatic
+
+	column n_obs
+		dataType: double
+		lineageTag: 983795ce-6061-45e0-88d1-83694ebbfdb2
+		summarizeBy: sum
+		sourceColumn: n_obs
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column mae
+		dataType: double
+		lineageTag: a457f259-5eab-4c33-bf78-260886612a4d
+		summarizeBy: sum
+		sourceColumn: mae
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column rmse
+		dataType: double
+		lineageTag: 975f9899-fd01-4b08-b0f0-f96d23a4d541
+		summarizeBy: sum
+		sourceColumn: rmse
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column mape
+		dataType: double
+		lineageTag: 26f2301d-37e1-45af-969c-f14cb4fe099b
+		summarizeBy: sum
+		sourceColumn: mape
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column naive_mae
+		dataType: double
+		lineageTag: 7f6164b2-def1-4e29-822c-c3e3941d3d11
+		summarizeBy: sum
+		sourceColumn: naive_mae
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column naive_rmse
+		dataType: double
+		lineageTag: b97beee3-2ff7-4c93-959f-cb5fb79103b2
+		summarizeBy: sum
+		sourceColumn: naive_rmse
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column naive_mape
+		dataType: double
+		lineageTag: b760a350-776b-4d02-9b1c-96a6773abdd1
+		summarizeBy: sum
+		sourceColumn: naive_mape
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column beats_naive_mae
+		dataType: double
+		lineageTag: 3e803f43-39a1-4f48-b93a-848beca801c2
+		summarizeBy: sum
+		sourceColumn: beats_naive_mae
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column meets_mape_threshold
+		dataType: double
+		lineageTag: 179fb89d-e7b1-4821-bf1f-5cb0bc068e38
+		summarizeBy: sum
+		sourceColumn: meets_mape_threshold
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column snapshot_date
+		dataType: string
+		lineageTag: 7d9fb270-6b3e-4a81-ab91-18bd88a8cab6
+		summarizeBy: none
+		sourceColumn: snapshot_date
+
+		annotation SummarizationSetBy = Automatic
+
+	column mase
+		dataType: double
+		lineageTag: 0d5ffeee-8e21-4db9-b479-8976b61228cc
+		summarizeBy: sum
+		sourceColumn: mase
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column naive_mase
+		dataType: double
+		lineageTag: 585dc55a-9081-4361-b300-2569624ccd79
+		summarizeBy: sum
+		sourceColumn: naive_mase
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	partition Result_Forecast_Metrics = m
+		mode: import
+		source =
+				let
+				    Source = Odbc.DataSource("DRIVER={SQLite3 ODBC Driver};Database=" & UstoreDbPath, [HierarchicalNavigation=true]),
+				    Result_Forecast_Metrics_Table = Source{[Name="Result_Forecast_Metrics",Kind="Table"]}[Data]
+				in
+				    Result_Forecast_Metrics_Table
+

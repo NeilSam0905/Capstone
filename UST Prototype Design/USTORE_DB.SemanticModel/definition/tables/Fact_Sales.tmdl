@@ -1,0 +1,142 @@
+table Fact_Sales
+	lineageTag: 4f258b19-cfd8-4a58-a628-127098bd8aad
+
+	measure 'Units Sold' = SUM(Fact_Sales[quantity_sold])
+		formatString: 0
+		lineageTag: e7624129-8e36-44d4-8406-915c0f73f4a2
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Line Total (ref)' =
+			
+			SUMX(Fact_Sales, Fact_Sales[quantity_sold] * RELATED(Dim_Product[unit_price_php]))
+		formatString: #,0.00\ "₱";-#,0.00\ "₱";#,0.00\ "₱"
+		lineageTag: 3f286580-88e5-40e8-963e-e5bd0e1e31ff
+
+		annotation PBI_FormatHint = {"currencyCulture":"es-PH"}
+
+	measure 'Avg Daily Units' =
+			
+			DIVIDE(SUM(Fact_Sales[quantity_sold]), DISTINCTCOUNT(Fact_Sales[date_id]))
+		lineageTag: 98953222-dcc5-4b76-85fb-c07d4eb3d181
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column sale_id
+		dataType: double
+		lineageTag: 6eec41be-1712-46a4-a3f5-d65f43e02031
+		summarizeBy: sum
+		sourceColumn: sale_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column product_id
+		dataType: double
+		lineageTag: 87b4c6ae-ea8e-4351-9021-39e4d563e0eb
+		summarizeBy: none
+		sourceColumn: product_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column date_id
+		dataType: double
+		lineageTag: aa29aafb-923e-4c96-9117-ace358b6dac1
+		summarizeBy: none
+		sourceColumn: date_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column quantity_sold
+		dataType: double
+		formatString: 0
+		lineageTag: 4318f12b-5d55-4766-b19b-91e572671c6f
+		summarizeBy: sum
+		sourceColumn: quantity_sold
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	column cumulative_monthly_units
+		dataType: double
+		lineageTag: a418e3db-f402-4fbd-b2ba-95fe53942eed
+		summarizeBy: sum
+		sourceColumn: cumulative_monthly_units
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column daily_depletion_rate
+		dataType: double
+		lineageTag: 33a90ca6-c731-4284-a109-833398177128
+		summarizeBy: sum
+		sourceColumn: daily_depletion_rate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column days_of_supply
+		dataType: double
+		lineageTag: 45064a37-dc08-4f17-bb66-61b78d974651
+		summarizeBy: sum
+		sourceColumn: days_of_supply
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column is_censored
+		dataType: double
+		lineageTag: c35e39e0-ebbb-41ae-b290-2c88d082d2a9
+		summarizeBy: sum
+		sourceColumn: is_censored
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column imputation_flag
+		dataType: double
+		lineageTag: 50f4c1d5-7aca-4053-9054-3a97f1bf5a10
+		summarizeBy: sum
+		sourceColumn: imputation_flag
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column tally_date_flag
+		dataType: double
+		lineageTag: 566ec614-b18f-4210-ace7-db1ae183186f
+		summarizeBy: sum
+		sourceColumn: tally_date_flag
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column transaction_type
+		dataType: string
+		lineageTag: 5f94502d-bdfc-42a8-8227-7dedbe571ba4
+		summarizeBy: none
+		sourceColumn: transaction_type
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Fact_Sales = m
+		mode: import
+		source =
+				let
+				    Source = Odbc.DataSource("DRIVER={SQLite3 ODBC Driver};Database=" & UstoreDbPath, [HierarchicalNavigation=true]),
+				    Fact_Sales_Table = Source{[Name="Fact_Sales",Kind="Table"]}[Data]
+				in
+				    Fact_Sales_Table
+
