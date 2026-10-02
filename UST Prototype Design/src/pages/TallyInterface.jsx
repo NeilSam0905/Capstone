@@ -16,7 +16,7 @@ import Icon from '../components/Icon';
 import ComboBox from '../components/ComboBox';
 import SearchSelect from '../components/SearchSelect';
 import Modal from '../components/Modal';
-import { num, usDate, usDateTime, longMonth } from '../lib/format';
+import { num, usDate, usDateTime, longMonth, displayUser } from '../lib/format';
 import brandMark from '../assets/ustore-mark.png';
 
 const TYPE_TONE = { SALE: 'ok', DAMAGED: 'crit', PROMO: 'info', TRANSFER: 'hvl' };
@@ -160,7 +160,7 @@ function ImportResult({ result }) {
   );
 }
 
-export default function TallyInterface({ setView }) {
+export default function TallyInterface({ setView, user, signOut }) {
   const [reloadKey, setReloadKey] = useState(0);
   const bump = useCallback(() => setReloadKey(k => k + 1), []);
 
@@ -187,9 +187,13 @@ export default function TallyInterface({ setView }) {
             <div className="tally-head__sub">Internal Inventory Tally Tool </div>
           </div>
         </div>
-        <button className="btn btn--gold" onClick={() => setView('dashboard')}>
-          View Analytics Dashboard <Icon name="arrow" size={15} />
-        </button>
+        <div className="user-chip">
+          {user && <span className="user-chip__name">Signed in as <b>{displayUser(user)}</b></span>}
+          {signOut && <button className="btn btn--on-dark" onClick={signOut}>Sign out</button>}
+          <button className="btn btn--gold" onClick={() => setView('dashboard')}>
+            View Analytics Dashboard <Icon name="arrow" size={15} />
+          </button>
+        </div>
       </header>
 
       <div className="tally-body">

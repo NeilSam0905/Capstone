@@ -93,11 +93,35 @@ export function peekCached(loader) {
   }
 }
 
+/* ---------------------------------------------------------------- auth
+
+   Every route but /auth/* answers 401 { auth_required: true } without a
+   signed-in session (backend/auth.py). That is not an error a screen can do
+   anything about, so it is turned into one event here: App.jsx listens and
+   puts the login page back. It also throws, so a 401 body is never cached
+   as if it were the data a screen asked for. */
+const authListeners = new Set();
+
+/** Run `fn` when the server says the session has ended. Returns an
+ *  unsubscribe function. */
+export function onAuthExpired(fn) {
+  authListeners.add(fn);
+  return () => authListeners.delete(fn);
+}
+
+function sessionEnded(status, body) {
+  if (status !== 401 || !body?.auth_required) return false;
+  clearApiCache();
+  authListeners.forEach(fn => fn());
+  return true;
+}
+
 async function doFetch(method, path, body) {
   let res;
   try {
     res = await fetch(`${API_BASE}${path}`, {
       method,
+      credentials: 'same-origin',
       headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
@@ -108,9 +132,10 @@ async function doFetch(method, path, body) {
   }
   // Validation failures come back as 400 with a { ok:false, errors } body,
   // which callers already handle - only a response with no JSON body at
-  // all (network error, backend down) should throw.
+  // all (network error, backend down) or an ended session should throw.
+  let out;
   try {
-    return await res.json();
+    out = await res.json();
   } catch (err) {
     // This used to surface as "GET /meta returned no JSON (status 502)". A
     // method, a path and a status code mean nothing to whoever is running the
@@ -121,6 +146,8 @@ async function doFetch(method, path, body) {
     failed.status = res.status;
     throw failed;
   }
+  if (sessionEnded(res.status, out)) throw new Error(out.error);
+  return out;
 }
 
 async function request(method, path, body) {
@@ -179,6 +206,17 @@ export const UNATTRIBUTED = 'Unattributed';
 /** TRANSACTION_TYPE values. SALE is a sale; the rest are non-sale removals.
  *  Stored on Fact_Sales.transaction_type. */
 export const TRANSACTION_TYPES = ['SALE', 'DAMAGED', 'PROMO', 'TRANSFER'];
+
+// -------------------------------------------------------------------- auth
+
+/** Who is signed in -> { authenticated, user }. Never cached: it is the one
+ *  question whose answer changes without a write going through here. */
+export const getSession = () => doFetch('GET', '/auth/session');
+
+/** -> { ok:true, user } or { ok:false, error } (wrong password, locked out). */
+export const login = (username, password) => post('/auth/login', { username, password });
+
+export const logout = () => post('/auth/logout');
 
 // ---------------------------------------------------------------- metadata
 
@@ -409,7 +447,7 @@ async function upload(path, file, fields = {}) {
   for (const [k, v] of Object.entries(fields)) if (v != null) body.append(k, v);
   let res;
   try {
-    res = await fetch(`${API_BASE}${path}`, { method: 'POST', body });
+    res = await fetch(`${API_BASE}${path}`, { method: 'POST', body, credentials: 'same-origin' });
   } catch {
     throw new Error(
       'Cannot reach the backend. Make sure the Flask server is running on :5000 '
@@ -417,11 +455,14 @@ async function upload(path, file, fields = {}) {
     );
   }
   clearApiCache();   // an import changes Fact_Sales / Inventory_Count
+  let out;
   try {
-    return await res.json();
+    out = await res.json();
   } catch {
     return { ok: false, error: `Import failed (status ${res.status}).` };
   }
+  sessionEnded(res.status, out);
+  return out;
 }
 
 export const importInventoryCounts = (file, month) =>

@@ -244,15 +244,15 @@ def awaiting_run_count(c, vocab_path):
 # --------------------------------------------------------------- writes
 
 def hold_row(c, kind, raw_name, quantity, source_file, *, calendar_date=None,
-             count_month=None, transaction_type=None, note=None):
+             count_month=None, transaction_type=None, note=None, entered_by=None):
     c.execute(dbmod.PENDING_IMPORT_DDL)      # in case startup could not create it
     c.execute("""
         INSERT INTO Pending_Import_Row
             (kind, raw_name, calendar_date, count_month, quantity, transaction_type,
-             note, source_file, held_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             note, source_file, held_at, entered_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (kind, raw_name, calendar_date, count_month, quantity, transaction_type,
-          note, source_file, datetime.now().isoformat(timespec="seconds")))
+          note, source_file, datetime.now().isoformat(timespec="seconds"), entered_by))
 
 
 def apply_held(c, key, product_id):
@@ -270,11 +270,15 @@ def apply_held(c, key, product_id):
         if r["kind"] == "tally":
             if r["calendar_date"] not in dates:
                 continue            # cannot happen for a row checked when held; left held if it does
+            # entered_by is whoever imported the file, not whoever settled
+            # the name: they are the one who put these numbers in.
             c.execute("""
                 INSERT INTO Fact_Sales
-                    (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag, transaction_type)
-                VALUES (?, ?, ?, 0, 0, ?)
-            """, (product_id, dates[r["calendar_date"]], r["quantity"], r["transaction_type"] or "sale"))
+                    (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag,
+                     transaction_type, entered_by)
+                VALUES (?, ?, ?, 0, 0, ?, ?)
+            """, (product_id, dates[r["calendar_date"]], r["quantity"], r["transaction_type"] or "sale",
+                  r.get("entered_by")))
         else:
             c.execute("""
                 INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged)

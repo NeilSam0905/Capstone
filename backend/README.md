@@ -37,8 +37,13 @@ cd "UST Prototype Design" && npm run dev
 - **No checkout, payment, customer total, or receipt.** This is an internal inventory counting
   tool only (BIR compliance — see `docs/PROMPT_1_FRONTEND.md` §1). If an endpoint starts to look like a
   point of sale, that's a bug.
-- **No auth.** `Event_Log.created_by` is hardcoded `'local'`, matching the frontend's prior mock
-  behaviour.
+- **No open routes.** Every `/api` route except `/api/auth/*` needs a signed-in session (`auth.py`).
+  Accounts are in `App_User` (hashed passwords); the default `staff` / `staff123` account is created
+  on the first login attempt. CORS and writes are limited to the dashboard's address (Vite's 5173 /
+  4173); set `USTORE_ALLOWED_ORIGINS` (comma-separated) when it is served from elsewhere, e.g. over
+  the store's network. The signed-in user is recorded in `Fact_Sales.entered_by` (app-entered rows
+  only; pipeline rows leave it NULL), `Event_Log.created_by`, `Closure_Log.created_by` and
+  `Inventory_Count.counted_by`.
 - **PDF export is implemented.** `GET /api/reports/batch.pdf?month=YYYY-MM` renders the batch
   sales report with `fpdf2` (`batch_pdf.py`) — pure Python, no system libraries, which is why it
   is fpdf2 and not weasyprint or reportlab. `&inline=1` serves it for viewing instead of
@@ -52,6 +57,7 @@ See `UST Prototype Design/BACKEND_TODO.md` for the full contract this implements
 |---|---|
 | Reads | `/api/meta`, `/api/products`, `/api/products/:id/history`, `/api/sales/monthly`, `/api/reports/batch`, `/api/fsn/sensitivity`, `/api/stock`, `/api/reorder`, `/api/calendar`, `/api/calendar/:date`, `/api/calendar/closed`, `/api/tally/recent`, `/api/tally?date=`, `/api/events`, `/api/forecast/:productId`, `/api/forecast/category/:category`, `/api/forecast/categories`, `/api/suppliers`, `/api/categories`, `/api/months` |
 | Writes | `POST /api/tally`, `PUT /api/calendar/:date/closure`, `POST /api/events` |
+| Auth (`auth.py`, open) | `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/session` |
 | Names and workbooks (`names.py`) | `GET /api/names/review`, `POST /api/names/review`, `POST /api/products/:id/rename`, `POST /api/tally/workbook` |
 
 **Names and workbooks** keep the system running through sheet changes without a developer.

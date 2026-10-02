@@ -179,6 +179,20 @@ version built each SKU's series from only its own Fact_Sales dates, which
 gave series as short as 6 rows and left 5 SKUs unscoreable. Under the
 shared convention every Fast SKU reaches the full 12 folds.)
 
+--- 2023 synthetic history (training only) ---
+
+When scripts/load_synthetic_2023.py has filled Fact_Sales_Synthetic, every
+series is extended back to 2023-02-01 with it (forecasting/synthetic_history.py;
+--no-synthetic turns it off). The daily split is modelled from real 2023 batch
+totals, so it is TRAINING data only: folds are laid out from the end, so every
+scored window is still real sales, the forecast dates are unchanged, and the
+interval band (SD) is taken over real days. 2023-09..2024-04 has no data at all;
+it is zero-filled for the array models and passed as missing to the Prophet day
+shape. MASE's scale is taken over all training blocks, so it moves with the
+extra history; compare WMAPE / bias instead (scripts/validate_protocols.py).
+Result_Forecast.model_type is unchanged (scripts/verify_rebuild_state.py checks
+it against DEFAULT_MODEL); the run prints which history it used.
+
 --- Tiers ---
 
 The sale-day tiers (>=60 standard, 30-59 simplified, <30 minimal) are now
@@ -239,6 +253,7 @@ from forecasting.intermittent import tsb_fit_predict
 from forecasting.calendar_adjust import calendar_capped_fit_predict, load_day_types
 from forecasting.shape import day_shape, load_calendar as load_shape_calendar
 from forecasting.topdown import topdown_tsb_fit_predict
+from forecasting import synthetic_history as sh
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ustore.db")
 
@@ -479,6 +494,25 @@ def build_category_series(fact, products, idx):
     return {c: wide[c].to_numpy() for c in wide.columns}
 
 
+def extend_with_synthetic(con, idx, dim_date, cat_series, use=True):
+    """Prepend the 2023 synthetic TRAINING history (Fact_Sales_Synthetic, see
+    forecasting/synthetic_history.py) to the shared index and the category series.
+
+    Returns (ext_idx, n_pre, gap, breaks, cat_series, item_daily): the index
+    extended back to the first synthetic day, the number of days prepended, the
+    mask of prepended days with no data at all (2023-09..2024-04), is_sem_break
+    on ext_idx, the category series on ext_idx, and {product_id: daily synthetic
+    Series} for items to prepend with forecasting.synthetic_history.prepend.
+    With use=False or no synthetic table, everything comes back on `idx`."""
+    syn = sh.load(con) if use else None
+    ext, n_pre, gap = sh.extend_index(idx, syn)
+    breaks = (dim_date.set_index("calendar_date")[SCOPE_COLUMN]
+              .reindex(ext).fillna(0).to_numpy(dtype=float))
+    by_cat = sh.by_category(syn)
+    cats = {c: sh.prepend(v, by_cat.get(c), ext, n_pre) for c, v in cat_series.items()}
+    return ext, n_pre, gap, breaks, cats, sh.by_product(syn)
+
+
 def fold_scope(fold, breaks):
     """'semestral_break' if more than half the fold's test days are break
     days, else 'standard_period'. A 30-day window straddles the boundary far
@@ -586,6 +620,9 @@ def main():
                     help="forecasting model (default: %(default)s). "
                          "Use rolling_mean_30 to reproduce the published "
                          "benchmark numbers.")
+    ap.add_argument("--no-synthetic", action="store_true",
+                    help="train on real sales only (default: also the 2023 synthetic "
+                         "history in Fact_Sales_Synthetic, when loaded)")
     args = ap.parse_args()
     model_type = args.model
     make_model, model_desc = MODELS[model_type]
@@ -594,7 +631,7 @@ def main():
     create_result_tables(con)
 
     products, fact, dim_date = load_common(con)
-    idx, breaks = build_calendar(fact, dim_date)
+    real_idx, _ = build_calendar(fact, dim_date)
 
     # Tier sufficiency = distinct SALE-DAYS (quantity_sold > 0), not raw row
     # count: Fact_Sales carries a real zero-quantity row for every calendar day
@@ -615,7 +652,11 @@ def main():
     shape_kind = SHAPE_KIND.get(model_type)
     shaped = shape_kind is not None
     needs_category = model_type in NEEDS_CATEGORY
-    cat_series = build_category_series(fact, products, idx) if (needs_category or shaped) else {}
+    cat_series = build_category_series(fact, products, real_idx) if (needs_category or shaped) else {}
+    # 2023 synthetic history: training only. Every scored window and the
+    # forecast dates stay on real history (they are laid out from the end).
+    idx, n_pre, gap, breaks, cat_series, syn_items = extend_with_synthetic(
+        con, real_idx, dim_date, cat_series, use=not args.no_synthetic)
     cat_of = products.set_index("product_id")["forecast_category"].fillna(RESIDUE)
     if needs_category and cat_of.eq(RESIDUE).all():
         raise SystemExit("Dim_Product.forecast_category is empty - run "
@@ -641,12 +682,18 @@ def main():
         f"{shape_kind}, from each item's category (the 30-day total is unchanged; see the docstring)"
         if shaped else ("the model's own curve" if model_type in CURVE_MODELS else "flat")))
     print(f"Harness: {VALIDATION_METHOD} | horizon {HORIZON} | folds {MIN_FOLDS}-{MAX_FOLDS} "
-          f"| min_train {MIN_TRAIN}  (identical to model_benchmark.py)\n")
+          f"| min_train {MIN_TRAIN}  (identical to model_benchmark.py)")
+    print("Training history: " + (
+        f"real {real_idx[0].date()} .. {real_idx[-1].date()} + 2023 synthetic from {idx[0].date()} "
+        f"({n_pre} days prepended, {int(gap.sum())} of them with no data; "
+        f"{sum(1 for p in syn_items if p in set(fast['product_id']))} Fast items have synthetic sales)\n"
+        if n_pre else f"real only, {real_idx[0].date()} .. {real_idx[-1].date()}\n"))
 
     for _, row in fast.iterrows():
         pid, name, tier = int(row["product_id"]), row["item_name"], row["tier"]
         g = by_product.get(pid)
-        values = build_series(g, idx) if g is not None else np.zeros(len(idx))
+        values = sh.prepend(build_series(g, real_idx) if g is not None else np.zeros(len(real_idx)),
+                            syn_items.get(pid), idx, n_pre)
 
         # ONE fold layout per SKU, handed to both methods, so neither can be
         # advantaged by a different split.
@@ -685,8 +732,9 @@ def main():
             level = float(out[0])
             if shaped:
                 if cat_name not in shape_cache:
-                    shape_cache[cat_name] = day_shape(shape_kind, cat_vals, idx,
-                                                      shape_cal, forecast_dates)
+                    # The no-data gap goes in as NaN: Prophet skips missing days.
+                    shape_cache[cat_name] = day_shape(shape_kind, np.where(gap, np.nan, cat_vals),
+                                                      idx, shape_cal, forecast_dates)
                 weights, used = shape_cache[cat_name]
                 # day_shape says which shape it ACTUALLY used (prophet -> weekday
                 # -> flat on failure), and the row is labelled with that, so a
@@ -697,7 +745,8 @@ def main():
                 if used != "flat":
                     level = float(out.sum()) * weights
         reported = float(np.mean(out))
-        spread = float(np.std(values, ddof=1)) if values.size > 1 else 0.0
+        real = values[n_pre:]          # the band describes real sales only
+        spread = float(np.std(real, ddof=1)) if real.size > 1 else 0.0
         append_forecast(pid, level, spread, 0 if scored else 1,
                         last_date, snapshot_date, row_model, forecast_rows)
         model_totals[pid] = float(out.sum())

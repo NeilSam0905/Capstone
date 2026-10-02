@@ -82,9 +82,35 @@ PENDING_IMPORT_DDL = """CREATE TABLE IF NOT EXISTS Pending_Import_Row (
     transaction_type  TEXT,               -- tally rows, lower case
     note              TEXT,               -- inventory rows
     source_file       TEXT,
-    held_at           TEXT
+    held_at           TEXT,
+    entered_by        TEXT                -- who imported it; carried into Fact_Sales
 )"""
-_TABLES = (PRODUCT_STATUS_DDL, PENDING_IMPORT_DDL)
+
+# App_User: the accounts that can sign in to the API (backend/auth.py).
+# Passwords are werkzeug hashes. Operational, like Product_Status: no
+# pipeline step reads or clears it.
+APP_USER_DDL = """CREATE TABLE IF NOT EXISTS App_User (
+    username       TEXT PRIMARY KEY,
+    password_hash  TEXT NOT NULL,
+    created_at     TEXT
+)"""
+_TABLES = (PRODUCT_STATUS_DDL, PENDING_IMPORT_DDL, APP_USER_DDL)
+
+# Columns added after databases already existed. CREATE TABLE IF NOT EXISTS
+# cannot add a column to a table that is already there, so each is added here
+# when missing. Fact_Sales.entered_by is the signed-in user for rows the Tally
+# Interface writes; pipeline-loaded rows (tally_date_flag = 1) leave it NULL.
+_COLUMNS = (
+    ("Fact_Sales", "entered_by", "TEXT"),
+    ("Pending_Import_Row", "entered_by", "TEXT"),
+)
+
+
+def _add_missing_columns(con):
+    for table, column, decl in _COLUMNS:
+        cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        if cols and column not in cols:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 _init_lock = threading.Lock()
 _initialised = False
@@ -112,7 +138,13 @@ def ensure_initialised(force=False):
             con = _connect()
             try:
                 con.execute("PRAGMA journal_mode = WAL")
-                for stmt in (*_TABLES, *_INDEXES):
+                for stmt in _TABLES:
+                    con.execute(stmt)
+                # Committed before the indexes: a write that needs entered_by
+                # must not lose it to an index that could not be built.
+                _add_missing_columns(con)
+                con.commit()
+                for stmt in _INDEXES:
                     con.execute(stmt)
                 con.commit()
             finally:

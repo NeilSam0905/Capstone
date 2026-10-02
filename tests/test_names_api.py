@@ -87,7 +87,9 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(backend, "VOCAB_CSV", vocab)
     monkeypatch.setattr(backend, "INVENTORY_SOURCE_CSV", inventory)
     monkeypatch.setattr(backend, "RAWDATA_DIR", tmp_path / "rawdata")
+    monkeypatch.setattr(dbmod, "_initialised", False)    # migrate this database, not the last one
     client = backend.app.test_client()
+    assert client.post("/api/auth/login", json={"username": "staff", "password": "staff123"}).status_code == 200
     client.vocab, client.inventory, client.db, client.tmp = vocab, inventory, db_path, tmp_path
     return client
 
