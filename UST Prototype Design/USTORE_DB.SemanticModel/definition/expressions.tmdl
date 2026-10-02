@@ -1,0 +1,6 @@
+/// Full path to ustore.db on THIS machine. Set it once per PC: Transform data > Edit parameters > UstoreDbPath, then Refresh. Example: C:\Users\<you>\...\Capstone\ustore.db
+expression UstoreDbPath = "C:\path\to\Capstone\ustore.db" meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]
+	lineageTag: 39f4397c-05e9-425b-8622-c3b8ff4e4772
+
+	annotation PBI_ResultType = Text
+

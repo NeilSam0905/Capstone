@@ -1,0 +1,230 @@
+table Result_Prescriptive
+	lineageTag: a6672dd4-f3c9-4d2f-a485-dccdaf10a5ce
+
+	column result_id
+		dataType: double
+		lineageTag: 112e3f98-15b5-4bb3-b826-6ef6ba8d4ffb
+		summarizeBy: sum
+		sourceColumn: result_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column product_id
+		dataType: double
+		lineageTag: 6ceef483-67c4-477d-bd95-444cfaaaa5e9
+		summarizeBy: sum
+		sourceColumn: product_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column fsn_class
+		dataType: string
+		lineageTag: 70a4a0d1-cfef-4a11-b011-7369697aa466
+		summarizeBy: none
+		sourceColumn: fsn_class
+
+		annotation SummarizationSetBy = Automatic
+
+	column lead_time_days
+		dataType: double
+		lineageTag: 64bc0091-7ca0-4811-8ffd-d15ef52e54b0
+		summarizeBy: sum
+		sourceColumn: lead_time_days
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column lead_time_category
+		dataType: string
+		lineageTag: a58f2b42-afdb-42a9-b441-038d766239f7
+		summarizeBy: none
+		sourceColumn: lead_time_category
+
+		annotation SummarizationSetBy = Automatic
+
+	column ordering_cost_scenario
+		dataType: string
+		lineageTag: 5984353e-94fa-4ce0-a124-1286646c826b
+		summarizeBy: none
+		sourceColumn: ordering_cost_scenario
+
+		annotation SummarizationSetBy = Automatic
+
+	column ordering_cost_php
+		dataType: double
+		lineageTag: 4f5fca4f-5219-47be-89b5-bb583b6613ca
+		summarizeBy: sum
+		sourceColumn: ordering_cost_php
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column holding_cost_php_per_unit_year
+		dataType: double
+		lineageTag: 5127c0c9-c82c-47bd-90e2-b79785a7cf08
+		summarizeBy: sum
+		sourceColumn: holding_cost_php_per_unit_year
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column cost_ratio
+		dataType: double
+		lineageTag: 2f713d0b-bd96-4f12-a80d-67df9b549f9f
+		summarizeBy: sum
+		sourceColumn: cost_ratio
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column avg_daily_demand
+		dataType: double
+		lineageTag: aa912327-aa8c-4720-9a88-8c416182fe35
+		summarizeBy: sum
+		sourceColumn: avg_daily_demand
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column annual_demand
+		dataType: double
+		lineageTag: e942c385-89c5-4cc5-840f-5cc645bc9728
+		summarizeBy: sum
+		sourceColumn: annual_demand
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column sigma_demand
+		dataType: double
+		lineageTag: 8ee45107-29ac-47cd-a90f-007da9798c43
+		summarizeBy: sum
+		sourceColumn: sigma_demand
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column sigma_source
+		dataType: string
+		lineageTag: 5b328091-61b8-46f1-a49e-35ca12f13ae8
+		summarizeBy: none
+		sourceColumn: sigma_source
+
+		annotation SummarizationSetBy = Automatic
+
+	column z_value
+		dataType: double
+		lineageTag: 3a13f6e6-2d6a-4d7d-89bf-c362891881c5
+		summarizeBy: sum
+		sourceColumn: z_value
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column safety_stock
+		dataType: double
+		lineageTag: 3e0b39d3-df08-45b0-b531-9974e02c198a
+		summarizeBy: sum
+		sourceColumn: safety_stock
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column reorder_point
+		dataType: double
+		lineageTag: 50edf562-de03-4488-8f9e-203acb2a34aa
+		summarizeBy: sum
+		sourceColumn: reorder_point
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column eoq
+		dataType: double
+		lineageTag: 00416cfb-f1b5-4a9a-821b-23bed127234e
+		summarizeBy: sum
+		sourceColumn: eoq
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column cost_at_eoq
+		dataType: double
+		lineageTag: 3be7acdd-07c2-4750-a061-47020cbcf9d4
+		summarizeBy: sum
+		sourceColumn: cost_at_eoq
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column cost_at_half_eoq
+		dataType: double
+		lineageTag: 77f2f85f-69c3-4662-9602-8243301cac51
+		summarizeBy: sum
+		sourceColumn: cost_at_half_eoq
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column cost_at_double_eoq
+		dataType: double
+		lineageTag: 8c385320-bc20-4a95-96ca-6198a628f6d9
+		summarizeBy: sum
+		sourceColumn: cost_at_double_eoq
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column demand_method
+		dataType: string
+		lineageTag: f6fc583d-943a-4d83-af17-b508673b2dd1
+		summarizeBy: none
+		sourceColumn: demand_method
+
+		annotation SummarizationSetBy = Automatic
+
+	column is_provisional
+		dataType: double
+		lineageTag: 5eb1b052-42c7-4d44-be0f-342a8f94397c
+		summarizeBy: sum
+		sourceColumn: is_provisional
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column generated_at
+		dataType: string
+		lineageTag: 211e62ee-7350-4c05-9836-cc6c1cb54b94
+		summarizeBy: none
+		sourceColumn: generated_at
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Result_Prescriptive = m
+		mode: import
+		source =
+				let
+				    Source = Odbc.DataSource("DRIVER={SQLite3 ODBC Driver};Database=" & UstoreDbPath, [HierarchicalNavigation=true]),
+				    Result_Prescriptive_Table = Source{[Name="Result_Prescriptive",Kind="Table"]}[Data]
+				in
+				    Result_Prescriptive_Table
+

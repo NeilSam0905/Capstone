@@ -1,0 +1,56 @@
+table Dim_Parameters
+	lineageTag: 525d8071-b8c2-446d-8000-06ad96596ab3
+
+	column parameter_id
+		dataType: double
+		lineageTag: c53878c7-b1b5-43ff-8bea-3f3f4b677934
+		summarizeBy: sum
+		sourceColumn: parameter_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column parameter_name
+		dataType: string
+		lineageTag: 0c443ebe-72d3-4ac0-86cd-e4c0cd48bb56
+		summarizeBy: none
+		sourceColumn: parameter_name
+
+		annotation SummarizationSetBy = Automatic
+
+	column value
+		dataType: double
+		lineageTag: 28301052-ad27-4895-89f5-c2bc557d8a6e
+		summarizeBy: sum
+		sourceColumn: value
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column unit
+		dataType: string
+		lineageTag: e3147405-1f2b-4c47-8172-a207663350a1
+		summarizeBy: none
+		sourceColumn: unit
+
+		annotation SummarizationSetBy = Automatic
+
+	column last_updated
+		dataType: string
+		lineageTag: a2b5ebfc-a2c9-4a6b-9481-a6e051889bd8
+		summarizeBy: none
+		sourceColumn: last_updated
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Dim_Parameters = m
+		mode: import
+		source =
+				let
+				    Source = Odbc.DataSource("DRIVER={SQLite3 ODBC Driver};Database=" & UstoreDbPath, [HierarchicalNavigation=true]),
+				    Dim_Parameters_Table = Source{[Name="Dim_Parameters",Kind="Table"]}[Data]
+				in
+				    Dim_Parameters_Table
+

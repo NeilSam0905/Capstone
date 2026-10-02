@@ -1,0 +1,170 @@
+table Dim_Product
+	lineageTag: cb8b8aec-32c6-4f46-9ca2-4ff1f3c86e55
+
+	measure Fast = CALCULATE(COUNTROWS(Dim_Product), Dim_Product[fsn_class] = "FAST")
+		formatString: 0
+		lineageTag: c6474401-ee2b-47c5-9a31-693f7cf3c351
+
+	measure Slow = CALCULATE(COUNTROWS(Dim_Product), Dim_Product[fsn_class] = "SLOW")
+		formatString: 0
+		lineageTag: 6de18ef5-5995-4ad6-971c-ed04ffbe4488
+
+	measure Non = CALCULATE(COUNTROWS(Dim_Product), Dim_Product[fsn_class] = "NON")
+		formatString: 0
+		lineageTag: d0b5d9fb-354e-4697-8db4-adcc4d19c309
+
+	column product_id
+		dataType: double
+		lineageTag: 3e8c5ecc-63ff-4d37-8f97-a25a8f6fd564
+		summarizeBy: none
+		sourceColumn: product_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column item_name
+		dataType: string
+		lineageTag: 27171cf2-fb8c-48b2-8ce4-0414bf782c7f
+		summarizeBy: none
+		sourceColumn: item_name
+
+		annotation SummarizationSetBy = Automatic
+
+	column category
+		dataType: string
+		lineageTag: fe08818c-ade4-421d-b691-da4b528d53b6
+		summarizeBy: none
+		sourceColumn: category
+
+		annotation SummarizationSetBy = Automatic
+
+	column unit_price_php
+		dataType: double
+		lineageTag: a9f93bec-1af2-414c-b2fe-8afa722af4b6
+		summarizeBy: sum
+		sourceColumn: unit_price_php
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column supplier_name
+		dataType: string
+		lineageTag: c9006ace-e110-4d3f-971b-259fe3cf2950
+		summarizeBy: none
+		sourceColumn: supplier_name
+
+		annotation SummarizationSetBy = Automatic
+
+	column payment_status
+		dataType: string
+		lineageTag: c5d60b93-b37f-4772-9b50-313ff771fed7
+		summarizeBy: none
+		sourceColumn: payment_status
+
+		annotation SummarizationSetBy = Automatic
+
+	column lead_time_days
+		dataType: double
+		lineageTag: 14c12761-405d-4d10-8930-397e9a5e658b
+		summarizeBy: sum
+		sourceColumn: lead_time_days
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column fsn_class
+		dataType: string
+		lineageTag: 528b4288-f8f0-4255-83ac-3d1fd371f931
+		summarizeBy: none
+		sourceColumn: fsn_class
+		sortByColumn: fsn_sort
+
+		changedProperty = SortByColumn
+
+		annotation SummarizationSetBy = Automatic
+
+	column is_hvl
+		dataType: double
+		lineageTag: 2f4a42ee-aca3-4f1d-a7f2-740e87fd1f86
+		summarizeBy: sum
+		sourceColumn: is_hvl
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column entry_date
+		dataType: string
+		lineageTag: 5e7a8d94-31ad-4467-af6e-f72bc8662fc9
+		summarizeBy: none
+		sourceColumn: entry_date
+
+		annotation SummarizationSetBy = Automatic
+
+	column is_active
+		dataType: double
+		lineageTag: 56bae081-88de-45e8-8b20-e5b84a338bc1
+		summarizeBy: sum
+		sourceColumn: is_active
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column price_source
+		dataType: string
+		lineageTag: b6399746-c4c3-4fa0-9620-280fcd2bb876
+		summarizeBy: none
+		sourceColumn: price_source
+
+		annotation SummarizationSetBy = Automatic
+
+	column fsn_sort
+		dataType: string
+		isHidden
+		lineageTag: 072e55df-9451-4f5f-9e3e-79c83d532810
+		summarizeBy: none
+		sourceColumn: fsn_sort
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column forecast_category
+		dataType: string
+		lineageTag: 3c452798-35eb-4c96-8e21-c2237e85b9d4
+		summarizeBy: none
+		sourceColumn: forecast_category
+
+		annotation SummarizationSetBy = Automatic
+
+	column storage_category
+		dataType: string
+		lineageTag: fc4198cd-5120-48a0-95f8-23655fe781ad
+		summarizeBy: none
+		sourceColumn: storage_category
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Dim_Product = m
+		mode: import
+		source =
+				let
+				    Source = Odbc.DataSource("DRIVER={SQLite3 ODBC Driver};Database=" & UstoreDbPath, [HierarchicalNavigation=true]),
+				    Dim_Product_Table = Source{[Name="Dim_Product",Kind="Table"]}[Data],
+				    #"Added Conditional Column" = Table.AddColumn(Dim_Product_Table, "fsn_sort", each if [fsn_class] = "F" then 1 else if [fsn_class] = "S" then 2 else if [fsn_class] = "N" then 3 else 4),
+				    #"Replaced Value" = Table.ReplaceValue(#"Added Conditional Column",null,"OTHER",Replacer.ReplaceValue,{"category"}),
+				    #"Replaced Value1" = Table.ReplaceValue(#"Replaced Value",null,"UNASSIGNED",Replacer.ReplaceValue,{"supplier_name"}),
+				    #"Replaced Value2" = Table.ReplaceValue(#"Replaced Value1","F","FAST",Replacer.ReplaceValue,{"fsn_class"}),
+				    #"Replaced Value3" = Table.ReplaceValue(#"Replaced Value2","S","SLOW",Replacer.ReplaceValue,{"fsn_class"}),
+				    #"Replaced Value4" = Table.ReplaceValue(#"Replaced Value3","N","NON",Replacer.ReplaceValue,{"fsn_class"})
+				in
+				    #"Replaced Value4"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+
