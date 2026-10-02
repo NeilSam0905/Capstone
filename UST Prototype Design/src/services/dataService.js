@@ -427,18 +427,42 @@ async function upload(path, file, fields = {}) {
 export const importInventoryCounts = (file, month) =>
   upload('/inventory/import', file, { month });
 
+/** Either import also returns `held` / `held_names`: rows whose item name the
+ *  vocabulary does not know. They are not rejected; they wait under Names to
+ *  review and are loaded when the name is settled there. */
 export const importTallyEntries = file => upload('/tally/import', file);
+
+/** The store's own tally workbook (the "<MONTH> - TBS" sheets), saved into
+ *  rawdata/ for the next pipeline run to read.
+ *  -> { ok, saved_as, months:['YYYY-MM'], replaced_file, takes_over:[{month, from:[...]}] }. */
+export const addTallyWorkbook = file => upload('/tally/workbook', file);
+
+// ------------------------------------------------------------ names to review
+
+/** Item names the vocabulary does not know yet — from the tally sheets (the
+ *  pipeline loaded them as provisional items) and from imported files (rows
+ *  held) — with the matcher's suggestion where it has one.
+ *  -> { names:[{ raw_name, source, units, supplier_name, held_rows, suggestion }],
+ *       awaiting_run:[{ raw_name, item_name }], strong }. */
+export const getNamesToReview = () => get('/names/review');
+
+/** Settle one name. `action`: 'same' (with product_id), 'new' (an import-only
+ *  name also takes category / supplier_name), or 'discard' (import-only).
+ *  Appends one row to the controlled vocabulary. */
+export const settleName = ({ raw_name, action, product_id, category, supplier_name }) =>
+  post('/names/review', { raw_name, action, product_id, category, supplier_name });
+
+/** The tally sheet now calls an item something else. The new name is added
+ *  to the vocabulary as another name for the item: history and the name
+ *  shown here are kept. */
+export const renameProduct = (productId, newName) =>
+  post(`/products/${productId}/rename`, { new_name: newName });
 
 // ---------------------------------------------------------------- catalog
 
 /** Create one item so a count can be recorded against something the catalogue
- *  does not have yet.
- *
- *  Caveat the caller must surface: `Dim_Product` is rebuilt from
- *  `data/vocab_mapping_FINAL_v5.csv` by step1, which starts with
- *  `DELETE FROM Dim_Product`. An item added here therefore survives only until
- *  the next full pipeline run. Making it permanent means adding it to that
- *  hand-maintained mapping file. */
+ *  does not have yet. Permanent: the backend also writes it to the vocabulary
+ *  and the inventory source, which is what step1 rebuilds Dim_Product from. */
 export const addProduct = ({ item_name, category, supplier_name }) =>
   post('/products', { item_name, category, supplier_name });
 

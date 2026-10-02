@@ -34,6 +34,17 @@ original: Date, Item, Total Quantity, Supplier), reading directly from
 the original source workbooks in rawdata/ (renamed from
 drive-download-20260724T120738Z-1-001/ for convenience - same files).
 
+Which workbooks: every .xlsx in rawdata/ that has a "<MONTH> ... - TBS"
+sheet (find_workbooks / plan_sheets), so next academic year's workbook is
+read as soon as it is dropped in - or uploaded through the Tally Interface
+- with no edit here. This used to be a fixed list of four files. Skipped:
+Excel's "~$" lock files, and the "import_*" copies the Tally Interface
+archives after loading a Date/Item/Quantity table straight into Fact_Sales
+(reading those here as well would count the same sales twice). When the
+same month is in more than one workbook - an updated copy of a workbook
+saved under a new name - only the most recently modified workbook's sheet
+for that month is read, and the run says which copy it skipped.
+
 Date is written as ISO 8601 (YYYY-MM-DD). The source workbooks use a
 mix of DD/MM/YYYY, MM/DD/YYYY and real Excel date cells in their column
 headers; parse_date_header() below resolves those, and everything this
@@ -44,18 +55,19 @@ import calendar
 import csv
 import datetime
 import math
+import os
 import statistics
 from collections import defaultdict
 
 import openpyxl
 
 SRC_DIR = "rawdata"
-FILES = [
-    f"{SRC_DIR}/2024 5 MAY DSR & TBS.xlsx",
-    f"{SRC_DIR}/USTore TBS AUG-DEC 2024.xlsx",
-    f"{SRC_DIR}/2025 USTore TBS.xlsx",
-    f"{SRC_DIR}/USTore TBS OCTOBER A.Y. 2025-2026.xlsx",
-]
+# May 2024 is the one workbook whose tally sheet is not named "<MONTH> - TBS":
+# it is a plain "TBS" sheet beside 23 daily sales-report sheets.
+MAY_2024_WORKBOOK = "2024 5 MAY DSR & TBS.xlsx"
+# Tally Interface archives of an uploaded Date/Item/Quantity table (see
+# backend/app.py _archive_upload). Already loaded into Fact_Sales directly.
+APP_IMPORT_PREFIX = "import_"
 OUT_PATH = "data/USTore_sales_long_with_zeros.csv"
 DENSE_THRESHOLD = 0.7
 
@@ -160,6 +172,79 @@ def sheet_density(date_cols):
     return (len(real_dates) / span_days if span_days else 0.0), span_days
 
 
+def tbs_sheet_names(wb, path):
+    """The tally sheets in one workbook, in workbook order."""
+    if os.path.basename(path) == MAY_2024_WORKBOOK:
+        return ["TBS"]
+    return [sn for sn in wb.sheetnames if is_tbs_month_sheet(sn)]
+
+
+def find_workbooks(src_dir=SRC_DIR):
+    """Every .xlsx in src_dir that could hold tally sheets (see the module
+    docstring for what is skipped). Raises FileNotFoundError when there is
+    none, so the pipeline records this step as skipped and keeps the CSV it
+    already has rather than overwriting it with an empty one."""
+    names = sorted(os.listdir(src_dir)) if os.path.isdir(src_dir) else []
+    files = [os.path.join(src_dir, n) for n in names
+             if n.lower().endswith(".xlsx") and not n.startswith("~$")
+             and not n.startswith(APP_IMPORT_PREFIX)]
+    if not files:
+        raise FileNotFoundError(f"No tally workbooks (.xlsx) found in {src_dir}/")
+    return files
+
+
+def sheet_month(ws):
+    """'YYYY-MM' of the first real date in a tally sheet's header row, or None."""
+    header = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), ())
+    for value in header[1:]:
+        kind, d = parse_date_header(value)
+        if kind == "date":
+            return d.strftime("%Y-%m")
+    return None
+
+
+def plan_sheets(files):
+    """Which sheet of which workbook to convert: [(path, [sheet names])],
+    oldest workbook first, plus a note for every month found in more than one
+    workbook. Opens each workbook read-only and reads only the header rows.
+
+    A month in several workbooks is taken from the most recently modified
+    one: the store keeps extending its current workbook, so a second copy of
+    a month is an update of the first, and adding the two would count every
+    sale in it twice."""
+    found = []                         # (path, sheet, month)
+    for path in files:
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        try:
+            found += [(path, sn, sheet_month(wb[sn])) for sn in tbs_sheet_names(wb, path)]
+        finally:
+            wb.close()
+
+    holders = defaultdict(set)         # month -> workbooks that have it
+    for path, _sn, month in found:
+        if month:
+            holders[month].add(path)
+    owner, notes = {}, []
+    for month, paths in sorted(holders.items()):
+        owner[month] = max(paths, key=lambda p: (os.path.getmtime(p), p))
+        if len(paths) > 1:
+            others = sorted(os.path.basename(p) for p in paths - {owner[month]})
+            notes.append(f"{month} is in {len(paths)} workbooks - read from "
+                         f"'{os.path.basename(owner[month])}' (modified most recently), "
+                         f"skipped in {', '.join(repr(o) for o in others)}")
+
+    sheets = defaultdict(list)
+    for path, sn, month in found:
+        if month is None or owner[month] == path:
+            sheets[path].append(sn)
+    first = {p: min((m for pp, _s, m in found if pp == p and m), default="9999") for p in sheets}
+    plan = [(p, sheets[p]) for p in sorted(sheets, key=lambda p: (first[p], p))]
+    if not plan:
+        raise FileNotFoundError(f"No tally sheets ('<MONTH> ... - TBS') in any workbook in "
+                                f"{os.path.dirname(files[0]) or '.'}/")
+    return plan, notes
+
+
 def convert_sheet(ws, sheet_label, warnings, density_log):
     date_cols = []
     relevant_cols = []  # date/meta columns only - excludes stray trailing
@@ -238,20 +323,17 @@ def convert_sheet(ws, sheet_label, warnings, density_log):
             yield (0, obs.toordinal()), obs.strftime("%Y-%m-%d"), label, qty, supplier
 
 
-def convert(files, out_path):
+def convert(plan, out_path):
+    """`plan` is plan_sheets()'s [(workbook path, [sheet names])]."""
     agg = defaultdict(float)
     meta = {}
     warnings = []
     density_log = []
     per_sheet = []
 
-    for fn in files:
+    for fn, sheet_names in plan:
         wb = openpyxl.load_workbook(fn, data_only=True)
-        short = fn.split("/")[-1]
-        if short == "2024 5 MAY DSR & TBS.xlsx":
-            sheet_names = ["TBS"]
-        else:
-            sheet_names = [sn for sn in wb.sheetnames if is_tbs_month_sheet(sn)]
+        short = os.path.basename(fn)
 
         for sn in sheet_names:
             label = f"{short} :: {sn}"
@@ -278,9 +360,16 @@ def convert(files, out_path):
 
 
 def main():
-    per_sheet, warnings, density_log, n = convert(FILES, OUT_PATH)
+    plan, notes = plan_sheets(find_workbooks())
+    print(f"=== Tally workbooks in {SRC_DIR}/ ===")
+    for fn, sheets in plan:
+        print(f"  {os.path.basename(fn):45} {len(sheets):3} tally sheet(s)")
+    for note in notes:
+        print("  NOTE:", note)
 
-    print("=== Per-sheet density (real tally dates / calendar-day span) ===")
+    per_sheet, warnings, density_log, n = convert(plan, OUT_PATH)
+
+    print("\n=== Per-sheet density (real tally dates / calendar-day span) ===")
     for label, n_real, span, density, is_dense in density_log:
         tag = "DENSE (zero-filled)" if is_dense else "sparse (gaps kept as unobserved)"
         print(f"  {label:65} {n_real:3} dates / {span:3} days = {density:.2f}  -> {tag}")

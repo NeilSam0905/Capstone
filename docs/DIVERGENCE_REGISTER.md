@@ -20,7 +20,7 @@ is the finding, not an omission.
 
 | # | Chapter 3 says | System does | Where to explain |
 |---|---|---|---|
-| 1 ⚠ | Data scope 2023–2026 (§1.4.1, §3.1.1, Table 2) | Sales 2024-05-02 → **2026-07-31** (~~2026-06-30~~); inventory 2024-11-01 → 2026-04-01; 2023 = 6 undated batch aggregates, 1 of 34 labels matching a current SKU | Ch4 data description |
+| 1 ⚠ | Data scope 2023–2026 (§1.4.1, §3.1.1, Table 2) | Sales 2024-05-02 → **2026-07-31** (~~2026-06-30~~); inventory 2024-11-01 → 2026-04-01; 2023 = 6 undated batch aggregates, ~~1 of 34 labels matching a current SKU~~ **15 of 34 labels match a current product name ignoring capitals, 76% of the 2023 units** (some are generic, e.g. "Shirts") | Ch4 data description |
 | 2 | No artificial daily interpolation of zero-sale values (§3.3.2); historical zeros treated as missing (§3.1.2) | Zero-filled to ~84,000 rows | Ch4 — **argue this**, it's plausibly why the regressors now work (Block 2.5) |
 | 3 | Sufficiency tiers by observation count (§3.3.2, §3.3.4) | Counted on distinct non-zero sale dates — consequence of #2 | Ch4 method note |
 | 4 | `is_suspension_day` (Figure 5) | `is_store_closed` — matches all prose and the DDL | Ch4 footnote |

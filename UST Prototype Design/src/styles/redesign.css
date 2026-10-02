@@ -1291,3 +1291,22 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .closure__src--workbook { background: var(--accent-wash, #FBF3DC); color: #6b5200; }
 .closure__src--calendar { background: var(--bg, #F4F2EC); color: var(--muted); }
 .closure__src--both     { background: #E7F0E4; color: #2f5d2a; }
+
+/* ------------------------------------------------------- names to review */
+/* Item names the tally sheets or an import used that the item list does not
+   know yet (Tally Interface, "Names to review"). Each row carries its own
+   actions, so this is a list of small blocks rather than a table; capped in
+   height because a sheet redesign can bring fifty at once. */
+.review-list {
+  list-style: none; margin: 0; padding: 0;
+  max-height: 560px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+.review-row { padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.review-row + .review-row { border-top: 1px solid var(--line-soft); }
+.review-row__head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.review-row__name { font-size: 13.5px; color: var(--text); word-break: break-word; }
+.review-row__suggest { font-size: 12.5px; color: var(--text-2); }
+.review-row__pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.review-row__pick > :first-child { flex: 1 1 260px; min-width: 0; }
+.review-confirm { max-height: 360px; }

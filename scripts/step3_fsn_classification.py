@@ -51,15 +51,23 @@ HVL_MIN_DATES = 30
 EXCLUDE_CENSORED_DAYS = True
 
 
+def load_fact(con):
+    """Sales rows only. Damaged, promo and transfer removals recorded through the
+    Tally Interface leave the shelf but are not demand, so they must not raise an
+    item's ADUS. Case-insensitive: the interface used to store 'SALE'."""
+    return pd.read_sql(
+        "SELECT product_id, date_id, quantity_sold, imputation_flag, is_censored FROM Fact_Sales "
+        "WHERE LOWER(COALESCE(transaction_type, 'sale')) = 'sale'",
+        con,
+    )
+
+
 def main():
     con = sqlite3.connect(DB_PATH)
 
     products = pd.read_sql("SELECT product_id, item_name, entry_date FROM Dim_Product", con)
 
-    fact = pd.read_sql(
-        "SELECT product_id, date_id, quantity_sold, imputation_flag, is_censored FROM Fact_Sales",
-        con,
-    )
+    fact = load_fact(con)
     if EXCLUDE_CENSORED_DAYS:
         censored = fact["is_censored"] == 1
         print(f"Dropping {int(censored.sum())} censored zero-sale rows "

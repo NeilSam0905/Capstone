@@ -272,6 +272,28 @@ CREATE TABLE IF NOT EXISTS Product_Status (
 );
 """)
 
+# ----- OPERATIONAL TABLE: Pending_Import_Row -----------------------
+# Rows of a tally or stock-count file imported through the Tally
+# Interface whose item name the vocabulary does not know yet. Held, not
+# rejected (a tally import appends, so re-importing the file later would
+# double the rows that did load), and applied when the name is confirmed
+# under "Names to review". Operational: no pipeline step clears it.
+# backend/db.py creates the same table for a database built before it.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Pending_Import_Row (
+    pending_id        INTEGER PRIMARY KEY,
+    kind              TEXT    NOT NULL,   -- 'tally' | 'inventory'
+    raw_name          TEXT    NOT NULL,
+    calendar_date     TEXT,               -- tally rows: 'YYYY-MM-DD'
+    count_month       TEXT,               -- inventory rows: 'YYYY-MM'
+    quantity          INTEGER NOT NULL,
+    transaction_type  TEXT,               -- tally rows, lower case
+    note              TEXT,               -- inventory rows
+    source_file       TEXT,
+    held_at           TEXT
+);
+""")
+
 # ----- OPERATIONAL TABLE: Pipeline_Run -----------------------------
 # One row per end-to-end pipeline run (create_schema.py ->
 # step5_prescriptive.py), written by backend/pipeline.py when the Tally

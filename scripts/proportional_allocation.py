@@ -39,7 +39,11 @@ Weight (stock) fallback ladder, per constituent:
 If every constituent resolves to 0 -> equal split across constituents.
 
 Output (Fact_Sales-style long CSV):
-  Date, canonical_item_name, Total Quantity, Supplier, imputation_flag, weight
+  Date, canonical_item_name, Total Quantity, Supplier, imputation_flag, weight,
+  supplier_name, payment_status
+  - supplier_name / payment_status are step1's normalised supplier columns,
+    carried through so an item that only ever sells inside a price group
+    still has a supplier (step2 fills Dim_Product from them)
   - non-grouped rows pass through unchanged (imputation_flag=0, weight=1.0)
   - grouped rows are REPLACED by their allocated constituent rows
     (imputation_flag=1, weight=0.5); constituents allocated 0 units are dropped
@@ -152,12 +156,13 @@ def run(sales_path, inv_path, ag_path, map_path, out_path, audit_path):
     for r in open_mapped(sales_path):
         d=parse_date(r["Date"], sales_path); item=r[ITEM_COL].strip()
         supplier=r.get("Supplier","").strip()
+        sup_name=(r.get("supplier_name") or "").strip(); pay=(r.get("payment_status") or "").strip()
         Q=int(round(num(r["Total Quantity"])))
         iso=d.strftime("%Y-%m-%d")
         units_in+=Q
 
         if item not in groups:
-            out.append([iso,item,Q,supplier,0,"1.0"]); n_direct+=1; units_out+=Q
+            out.append([iso,item,Q,supplier,0,"1.0",sup_name,pay]); n_direct+=1; units_out+=Q
             continue
 
         # ---- price-grouped row: allocate ----
@@ -178,14 +183,14 @@ def run(sales_path, inv_path, ag_path, map_path, out_path, audit_path):
             basis_tally[b]+=1
             audit.append([iso,item,Q,c,round(w,2),b,a,supplier])
             if a>=0:
-                out.append([iso,c,a,supplier,1,"0.5"]); n_alloc+=1; units_out+=a
+                out.append([iso,c,a,supplier,1,"0.5",sup_name,pay]); n_alloc+=1; units_out+=a
         # reconcile per row
         assert sum(alloc)==Q, f"alloc mismatch {item} {iso}: {sum(alloc)} != {Q}"
 
     # sort chronologically: date, supplier, item (matches earlier sales_long ordering)
     out.sort(key=lambda x:(x[0], (x[3] or "").upper(), x[1].upper()))
     with open(out_path,"w",newline="",encoding="utf-8") as f:
-        w=csv.writer(f, lineterminator="\n"); w.writerow(["Date",ITEM_COL,"Total Quantity","Supplier","imputation_flag","weight"])
+        w=csv.writer(f, lineterminator="\n"); w.writerow(["Date",ITEM_COL,"Total Quantity","Supplier","imputation_flag","weight","supplier_name","payment_status"])
         w.writerows(out)
     with open(audit_path,"w",newline="",encoding="utf-8") as f:
         w=csv.writer(f, lineterminator="\n")

@@ -16,7 +16,7 @@ SKU sold zero that day".
 
 That is not a rounding issue. It includes a 66-day unbroken run
 (2024-06-01 .. 2024-08-05) and a 25-day run (2024-08-23 .. 2024-09-16)
-where no tally sheet exists at all - step0's `FILES` list simply jumps
+where no tally sheet exists at all - the workbooks step0 reads jump
 from the May 2024 workbook to the Aug 2024 one. Two months of "the store
 sold nothing" is asserted by the pipeline and supported by no evidence.
 

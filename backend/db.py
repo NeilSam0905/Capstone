@@ -35,6 +35,12 @@ INVENTORY_CSV = Path(__file__).resolve().parent.parent / "data" / "USTore_invent
 
 BUSY_TIMEOUT_MS = 30_000
 
+# The demand side of Fact_Sales, for any query aliasing it `f`. Historical rows
+# are 'sale'; the Tally Interface also records damaged, promo and transfer
+# removals, which leave the shelf but are not demand. Case-insensitive so rows
+# written in upper case before writes were normalised still count.
+SALE_ONLY = "LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'"
+
 # create_schema.py defines no indexes; every endpoint here joins Fact_Sales to
 # Dim_Product/Dim_Date on every request (not a one-off script run), so these
 # matter for response time. Doesn't touch create_schema.py itself - purely a
@@ -60,7 +66,25 @@ PRODUCT_STATUS_DDL = """CREATE TABLE IF NOT EXISTS Product_Status (
     discontinued  INTEGER NOT NULL DEFAULT 0,
     changed_at    TEXT
 )"""
-_TABLES = (PRODUCT_STATUS_DDL,)
+
+# Pending_Import_Row: rows of an imported tally or stock-count file whose item
+# name the vocabulary does not know yet. Held rather than rejected, because a
+# tally import appends - re-importing the file once the name is settled would
+# count every row that DID load a second time. Applied, and deleted, when the
+# name is confirmed under "Names to review" (backend/names.py).
+PENDING_IMPORT_DDL = """CREATE TABLE IF NOT EXISTS Pending_Import_Row (
+    pending_id        INTEGER PRIMARY KEY,
+    kind              TEXT    NOT NULL,   -- 'tally' | 'inventory'
+    raw_name          TEXT    NOT NULL,
+    calendar_date     TEXT,               -- tally rows: 'YYYY-MM-DD'
+    count_month       TEXT,               -- inventory rows: 'YYYY-MM'
+    quantity          INTEGER NOT NULL,
+    transaction_type  TEXT,               -- tally rows, lower case
+    note              TEXT,               -- inventory rows
+    source_file       TEXT,
+    held_at           TEXT
+)"""
+_TABLES = (PRODUCT_STATUS_DDL, PENDING_IMPORT_DDL)
 
 _init_lock = threading.Lock()
 _initialised = False

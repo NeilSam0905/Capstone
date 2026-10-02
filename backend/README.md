@@ -52,6 +52,19 @@ See `UST Prototype Design/BACKEND_TODO.md` for the full contract this implements
 |---|---|
 | Reads | `/api/meta`, `/api/products`, `/api/products/:id/history`, `/api/sales/monthly`, `/api/reports/batch`, `/api/fsn/sensitivity`, `/api/stock`, `/api/reorder`, `/api/calendar`, `/api/calendar/:date`, `/api/calendar/closed`, `/api/tally/recent`, `/api/tally?date=`, `/api/events`, `/api/forecast/:productId`, `/api/forecast/category/:category`, `/api/forecast/categories`, `/api/suppliers`, `/api/categories`, `/api/months` |
 | Writes | `POST /api/tally`, `PUT /api/calendar/:date/closure`, `POST /api/events` |
+| Names and workbooks (`names.py`) | `GET /api/names/review`, `POST /api/names/review`, `POST /api/products/:id/rename`, `POST /api/tally/workbook` |
+
+**Names and workbooks** keep the system running through sheet changes without a developer.
+`GET /api/names/review` lists item names the vocabulary does not know yet: from the tally sheets
+(`Name_Review`, written by step1, which loads each as a provisional item instead of stopping) and from
+imported files (`Pending_Import_Row`: `/api/tally/import` and `/api/inventory/import` hold rows with an
+unknown name rather than rejecting them, and recognise every sheet name the vocabulary already maps).
+`POST /api/names/review` settles one (`same` + `product_id`, `new`, or `discard` for import-only names)
+by appending one row to `data/vocab_mapping_FINAL_v5.csv` and applying any held rows.
+`POST /api/products/:id/rename` adds the sheet's new name for an existing item the same way: the item
+keeps its history and the name it is shown under. `POST /api/tally/workbook` saves the store's tally
+workbook into `rawdata/` for step0 (a same-named one is moved to `rawdata/replaced/`, never overwritten).
+Settled names show in `/api/pipeline/staleness` as `pending.name_decisions` until the next run.
 
 `/api/reorder` now returns real (provisional) ROP / Safety Stock / EOQ from `Result_Prescriptive`,
 grouped per SKU with both ordering-cost scenarios (`low_admin_cost`, `high_goods_value`) nested —

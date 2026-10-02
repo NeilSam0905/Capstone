@@ -15,7 +15,7 @@ import re
 import statistics
 from collections import defaultdict
 
-from db import INVENTORY_CSV, rows
+from db import INVENTORY_CSV, SALE_ONLY, rows
 
 ALL_SUPPLIERS = "All Suppliers"
 ALL_CATEGORIES = "All Categories"
@@ -130,7 +130,9 @@ def compute_stats(con, date_range=None, start=None, end=None):
     if hi:
         conds.append("substr(d.calendar_date, 1, 7) <= ?")
         args.append(hi)
-    where = "WHERE " + " AND ".join(conds) if conds else ""
+    # Every sales aggregate below counts sales only (see db.SALE_ONLY).
+    full = f"WHERE {SALE_ONLY}"
+    where = " AND ".join([full] + conds)
     args = tuple(args)
 
     agg_sql = """
@@ -160,13 +162,13 @@ def compute_stats(con, date_range=None, start=None, end=None):
     # pass supplies the sales figures. Holding membership on the full history
     # is what stops "Last 3 Months" from blanking the stock column for an item
     # that simply did not sell in those three months.
-    full_agg = rows(con, agg_sql.format(where=""))
+    full_agg = rows(con, agg_sql.format(where=full))
     if conds:
         win_agg = {a["product_id"]: a for a in rows(con, agg_sql.format(where=where), args)}
         monthly = rows(con, monthly_sql.format(where=where), args)
     else:
         win_agg = {a["product_id"]: a for a in full_agg}
-        monthly = rows(con, monthly_sql.format(where=""))
+        monthly = rows(con, monthly_sql.format(where=full))
     series = defaultdict(list)
     for m in monthly:
         series[m["product_id"]].append(m)

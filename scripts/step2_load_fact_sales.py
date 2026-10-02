@@ -4,8 +4,10 @@ anything unresolvable to Exception_Log instead of dropping it.
 
 Reads:
   - USTore_sales_long_allocated.csv (Date, canonical_item_name, Total
-    Quantity, Supplier, imputation_flag, weight) - names already
-    canonical and allocation already applied
+    Quantity, Supplier, imputation_flag, weight, supplier_name,
+    payment_status) - names already canonical and allocation already
+    applied; supplier_name / payment_status fill Dim_Product's gaps
+    (fill_missing_suppliers)
   - ustore.db (Dim_Product, Dim_Date already populated; Fact_Sales empty)
 
 No vocabulary mapping here any more (Block 2.2): mapping now happens once,
@@ -101,6 +103,36 @@ def clear_historical_fact_sales(con):
     requires - see tests/test_step2_load_fact_sales.py."""
     con.execute("DELETE FROM Fact_Sales WHERE tally_date_flag = 1")
 REASON_DATE_NO_MATCH = "date_no_match_in_dim_date"
+
+
+def fill_missing_suppliers(con, df):
+    """Dim_Product takes supplier_name / payment_status from step1's mapped
+    sales, where an item that only ever sells inside a price group never
+    appears by name - so it had no supplier, and its sales fell under
+    "Unattributed" in the batch sales report. The allocated rows carry the
+    group row's normalised supplier (proportional_allocation.py); fill the
+    gaps from them with the modal value, as step1 does. Only NULLs are
+    filled, so step1's own choices are never overridden. Returns the count.
+
+    `df` is the allocated CSV with its item column already renamed to Item."""
+    if "supplier_name" not in df.columns:
+        return 0
+    missing = {name for (name,) in con.execute(
+        "SELECT item_name FROM Dim_Product WHERE supplier_name IS NULL")}
+    filled = 0
+    for item, g in df[df["Item"].isin(missing)].groupby("Item"):
+        sup = g["supplier_name"].dropna().str.strip()
+        sup = sup[sup != ""]
+        if sup.empty:
+            continue
+        status = g["payment_status"].dropna().str.strip()
+        status = status[status != ""]
+        con.execute(
+            "UPDATE Dim_Product SET supplier_name = ?, payment_status = COALESCE(payment_status, ?) "
+            "WHERE item_name = ? AND supplier_name IS NULL",
+            (sup.mode().iloc[0], status.mode().iloc[0] if not status.empty else None, item))
+        filled += 1
+    return filled
 
 
 def create_exception_table(con):
@@ -365,6 +397,7 @@ def main():
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
         exceptions,
     )
+    n_supplier_filled = fill_missing_suppliers(con, df)
     con.commit()
 
     # ---- report ----
@@ -388,6 +421,7 @@ def main():
     flagged_or_isolated = imputed_loaded + n_exceptions
     pct = 100 * flagged_or_isolated / total_input if total_input else 0
     print(f"Flagged or isolated: {flagged_or_isolated} / {total_input} = {pct:.2f}%")
+    print(f"Dim_Product supplier filled from price-group rows : {n_supplier_filled} products")
 
     # row-level counts, so these are comparable with the load summary above;
     # `stats` counts product-days, which is the natural unit for the rules

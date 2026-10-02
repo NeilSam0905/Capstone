@@ -15,7 +15,7 @@ Chapter 4 describes the system that exists.
 
 | # | Build Plan says | Reality | Evidence |
 |---|---|---|---|
-| 1 | "Chapter 4's results run mostly on the historical **2023–2026** tally records" | Sales start **2024-05-02** and end 2026-07-31. 2023 is 6 undated batch aggregates, 1 of 34 labels matching a current SKU — it is not a usable training year | `assert_invariants.py`, "sales date span" |
+| 1 | "Chapter 4's results run mostly on the historical **2023–2026** tally records" | Sales start **2024-05-02** and end 2026-07-31. 2023 is 6 undated batch aggregates (~~1 of 34 labels matching a current SKU~~ 15 of 34 labels match a current product name ignoring capitals) — undated, so it is not a usable training year | `assert_invariants.py`, "sales date span" |
 | 2 | Phase 3: Prophet for Fast + HVL SKUs, unqualified | Prophet has never beaten a rolling median here. Across 7 methods on identical folds, `rolling_median_30` leads on MASE and Prophet is not runnable from a clean clone at all | `model_benchmark_summary.csv` |
 | 3 | "MAPE **<= 20%** for standard periods" | Provably unreachable — the perfect-forecast floor is ≈89% daily / ≈60% monthly on this series. The gate cannot be met by any model | Divergence #6; deferred decision **B2** |
 | 4 | Tiers by observation count: "**60+ obs** → standard fit" | Must be **distinct non-zero sale days**. Counting rows counts zero-fill padding as observations and collapses every SKU into the top tier (305/0/0) | `tier_counts.py`; Block 2.1 |

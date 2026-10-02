@@ -101,8 +101,10 @@ gap.**
 all**. The previous pipeline spread these across daily frequencies, inventing a
 within-batch shape the source never recorded.
 
-They now load into `Fact_Batch_Sales` as aggregates — **101 rows, 6,629 units,
-6 batches** — and the table has *no date column*, so they cannot leak into a
+They now load into `Fact_Batch_Sales` as aggregates — **100 rows, 6,592 units,
+6 batches** (~~101 rows, 6,629 units~~: May's "ADDITIONAL 50 NOT REMITTED MARCH APRIL",
+37 x PHP 50, is a payment correction and is now skipped, 2026-10-02) — and the table has
+*no date column*, so they cannot leak into a
 daily series. The file contains three different layouts (February's
 `Item | Total Quantity | Amount | Item Price` block; March–May's
 `DATE | Total Quantity | …`; June/July-Aug's identical layout with the item
@@ -119,7 +121,7 @@ Dim_Day_Status (calendar_date UNIQUE, day_status, legend_label, fill_colour,
 
 Fact_Batch_Sales (batch_label, supplier_name, item_name, raw_item_name,
                   total_quantity, amount_php, item_price_php,
-                  source_file, grain='batch_aggregate')   -- 101 rows, no date
+                  source_file, grain='batch_aggregate')   -- 100 rows, no date
 
 Result_Category_Prophet_Metrics (forecast_category, tier, n_folds,
                                  mape_pct, mae, mase, rmse, …)  -- 12 rows

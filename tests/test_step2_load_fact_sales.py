@@ -73,3 +73,29 @@ def test_multiple_historical_rows_are_all_cleared():
 
     after = con.execute("SELECT COUNT(*) FROM Fact_Sales").fetchone()[0]
     assert after == 0
+
+
+def test_supplier_filled_from_price_group_rows_only_where_missing():
+    """An item that only ever sells inside a price group never appears by name
+    in step1's mapped sales, so Dim_Product had no supplier for it. step2 fills
+    it from the allocated rows (modal value), and leaves existing ones alone."""
+    import pandas as pd
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE Dim_Product (item_name TEXT, supplier_name TEXT, payment_status TEXT)")
+    con.executemany("INSERT INTO Dim_Product VALUES (?, ?, ?)", [
+        ("Group-only Tote", None, None),          # only sold inside a price group
+        ("Named Mug", "TIGER FLASK", "PAID"),     # step1 already set it
+        ("No Supplier Info", None, None),         # nothing to fill from
+    ])
+    df = pd.DataFrame({
+        "Item":           ["Group-only Tote", "Group-only Tote", "Group-only Tote", "Named Mug", "No Supplier Info"],
+        "supplier_name":  ["BLAZE",           "BLAZE",           "NAPOLIZ ENTERPRISES", "BLAZE", None],
+        "payment_status": ["CONSIGNMENT",     "CONSIGNMENT",     "PAID",            "CONSIGNMENT", None],
+    })
+    assert step2.fill_missing_suppliers(con, df) == 1
+    got = dict((r[0], (r[1], r[2])) for r in con.execute("SELECT * FROM Dim_Product"))
+    assert got == {
+        "Group-only Tote": ("BLAZE", "CONSIGNMENT"),
+        "Named Mug": ("TIGER FLASK", "PAID"),
+        "No Supplier Info": (None, None),
+    }
