@@ -130,3 +130,79 @@ def test_zero_sales_in_training_window_classifies_slow_not_error():
 
     labels = fold_scoped_speed_labels(series, n_days)
     assert labels["dead"] == "slow"
+
+
+# ---------------------------------------------------------------------
+# The SECOND leak: the safety-stock service class.
+#
+# forecasting/category.fold_scoped_speed_labels closed the leak in the
+# POOLING group. The same full-history Dim_Product.fsn_class was also
+# feeding step5_prescriptive.Z_BY_CLASS to size safety stock, on every
+# --by path and in scripts/model_benchmark.py and
+# scripts/model_benchmark_ml.py, which is the more consequential half:
+# fill rate is the project's actual objective metric
+# (docs/DEGENERATE_FORECAST.md #21), so a leaked Z contaminated the one
+# number B3 is supposed to be decided on.
+#
+# That half was fixed in scripts/model_benchmark_category.py first and
+# NOT in the other two, which left the committed benchmark's fill rates
+# computed on a leaked class while the experiment CSVs used the fixed one
+# - and then compared the two directly. These tests pin the shared
+# implementation all three now call.
+
+from forecasting.category import (
+    build_service_class_fn, fold_scoped_service_classes,
+)
+
+
+def test_service_class_is_fold_scoped_not_full_history():
+    """The service class must be able to differ between a fold-scoped and
+    a full-history view for a SKU whose rate genuinely changes - same
+    mechanism as the pooling-label test above, asserted through the
+    service-class entry point the benchmark scripts actually call."""
+    n_days = 800
+    train_end = n_days // 2
+
+    def make(rate_first, rate_second):
+        v = np.zeros(n_days)
+        v[0:train_end:2] = rate_first
+        v[train_end::2] = rate_second
+        return v
+
+    series = _fillers(range(1, 21), n_days)
+    series["rises_late"] = make(1.0, 60.0)
+    series["stays_slow"] = make(1.0, 1.0)
+
+    class_fn = build_service_class_fn(series)
+
+    assert class_fn(train_end)["rises_late"] == "S"
+    assert class_fn(n_days)["rises_late"] == "F", (
+        "a SKU that only becomes a fast mover AFTER the fold origin must "
+        "still read F on the full history - otherwise this test is not "
+        "demonstrating a difference at all")
+    # control: a rate that never changes gets the same class either way
+    assert class_fn(train_end)["stays_slow"] == class_fn(n_days)["stays_slow"] == "S"
+
+
+def test_service_classes_are_keys_z_by_class_actually_knows():
+    """Every label must be a key step5_prescriptive.Z_BY_CLASS recognises.
+
+    This guards a SILENT failure, not a loud one: the lookup at the call
+    site is `Z_BY_CLASS.get(label, 0.0)`, so a label drifting to 'fast'/
+    'slow' (what fold_scoped_speed_labels returns) instead of 'F'/'S'
+    would not raise - it would quietly set every safety stock to zero and
+    report a uniformly lower fill rate for every method. A benchmark that
+    silently stops buffering is exactly the kind of defect that gets
+    written up as a finding about the data.
+    """
+    from step5_prescriptive import Z_BY_CLASS
+
+    series = _fillers(range(1, 21), n_days=400)
+    labels = set(fold_scoped_service_classes(series, 400).values())
+
+    assert labels, "no SKUs classified - the assertion below would be vacuous"
+    assert labels <= set(Z_BY_CLASS), (
+        f"service classes {sorted(labels)} are not all keys of Z_BY_CLASS "
+        f"{sorted(Z_BY_CLASS)} - Z_BY_CLASS.get(..., 0.0) would silently "
+        f"zero the safety stock rather than raising")
+    assert all(Z_BY_CLASS[lab] > 0 for lab in labels)

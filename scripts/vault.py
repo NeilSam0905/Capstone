@@ -77,6 +77,13 @@ MAGIC = b"USTV1\n"
 # What is protected: store sales, prices, stock, forecasts and every result
 # derived from them. Paths are repo-relative, "/"-separated.
 PROTECTED = ["ustore.db", "data/*.csv", "data/*.xlsx", "docs/*.csv", "*.xlsx"]
+# Patterns that hold at ANY depth beneath their directory, not just directly
+# inside it. Without this, data/pre_contract/*.csv - store-derived results, the
+# pre-contract prescriptive preview among them - were outside the guard
+# entirely: is_protected() pairs fnmatch with a depth check, and the depth check
+# is what makes "*.xlsx" mean the repo root rather than every folder. Two files
+# sat there tracked in plain form while the hook reported nothing to refuse.
+RECURSIVE = {"data/*.csv", "data/*.xlsx", "docs/*.csv"}
 # The 131 MB raw inventory workbook is over GitHub's 100 MB file limit even
 # encrypted; it stays local-only, as it already was (.gitignore).
 EXCLUDED = ["Copy of USTORE INVENTORY REPORT (1).xlsx"]
@@ -168,14 +175,30 @@ def is_protected(rel):
     rel = rel.replace("\\", "/")
     if rel in EXCLUDED:
         return False
-    # "*.xlsx" means the repo root only, not every folder.
-    return any(fnmatch.fnmatch(rel, p) and rel.count("/") == p.count("/") for p in PROTECTED)
+    # fnmatch's "*" spans "/" too, so the depth check is what makes "*.xlsx"
+    # mean the repo root rather than every folder. Patterns in RECURSIVE opt out
+    # of it: store data is store data however deeply it is filed.
+    for p in PROTECTED:
+        if fnmatch.fnmatch(rel, p) and (p in RECURSIVE or rel.count("/") == p.count("/")):
+            return True
+    return False
 
 
 def local_files():
+    """Every plain protected file on disk.
+
+    RECURSIVE patterns are globbed with rglob, because Path.glob's "*" stops at
+    a directory boundary where fnmatch's does not. Without that split,
+    is_protected() would refuse a file the hook sees while local_files() never
+    collected it - so `lock` could not store what `check-commit` would not let
+    you commit, and the file could be neither vaulted nor committed.
+    """
     out = set()
     for pat in PROTECTED:
-        for p in ROOT.glob(pat):
+        head, _, tail = pat.rpartition("/")
+        paths = ((ROOT / head).rglob(tail) if pat in RECURSIVE and head
+                 else ROOT.glob(pat))
+        for p in paths:
             rel = p.relative_to(ROOT).as_posix()
             if p.is_file() and is_protected(rel) and not p.name.startswith("~$"):
                 out.add(rel)

@@ -43,9 +43,10 @@ that touches a CSV (see `docs/WORK_PLAN_STATUS_HISTORY.md` Block 1 for what it c
 | — | `scripts/proportional_allocation.py` | Splits price-grouped tally rows (a single row covering several SKUs sharing a price point) into per-SKU rows, weighted by each SKU's beginning-of-month stock. Reads step 1's *mapped* CSVs and joins on `canonical_item_name` (see Block 2.2 in `docs/WORK_PLAN_STATUS_HISTORY.md`); defaults now point at those files, so plain `python scripts/proportional_allocation.py` is correct. Outputs `data/USTore_sales_long_allocated.csv` (+ `data/allocation_audit.csv` documenting every split). Zero-quantity rows survive the split — a grouped row with 0 units on a given day emits 0 for every constituent instead of being dropped. |
 | 2 | `scripts/step2_load_fact_sales.py` | Loads the allocated CSV into `Fact_Sales` (84,430 rows: 67,708 zero-quantity + 16,722 positive; sums to **95,182** units with the full July 2026 sheet — it was 84,399 rows / 89,232 units before, the values the pinned checks still expect until the group approves new ones; see Block 0 in `docs/WORK_PLAN_STATUS_HISTORY.md` for why the older figure was 88,481), routing unresolvable rows to `Exception_Log` instead of dropping them. Item names arrive canonical, so it joins straight to `Dim_Product` and applies no mapping of its own. Derives `cumulative_monthly_units`, `daily_depletion_rate`, `days_of_supply` and `is_censored` — the four rules behind those are settled in the script's docstring and summarised under Blocks 2.4/2.6 in `docs/WORK_PLAN_STATUS_HISTORY.md`. |
 | 3 | `scripts/step3_fsn_classification.py` | Computes ADUS (Average Daily Units Sold) per SKU, weighting imputed/allocated rows at 0.5, and classifies Fast/Slow/Non-moving at the 80th-percentile ADUS cutoff (currently F=30, S=238, N=252: no item counts as Fast without a sale in the last 90 days, and an item with no recorded sales is Non-moving — `docs/SYSTEM_GAPS_AND_IMPROVEMENTS.md` 4.1 and 4.2; before those two rules it was F=58, S=229, N=233). Days flagged `is_censored` are dropped from the ADUS denominator — `EXCLUDE_CENSORED_DAYS = False` reverts that, see Block 2.4 in `docs/WORK_PLAN_STATUS_HISTORY.md`. Flags High-Velocity-Limited (HVL) items with thin history. Writes `fsn_class`/`is_hvl` back to `Dim_Product`. |
-| 4 | `scripts/step4_forecast_model.py` | Forecasts **every** Fast SKU (30) and writes `Result_Forecast` + `Result_Forecast_Metrics`. Default model `topdown_tsb+calendar+prophet_shape`: a **50/50 blend** of (a) the item's category 6-month average x the item's share of the category over the last 30 days and (b) **TSB** (alpha = beta = 0.05, a smoothed recent-sales rate that decays on items that stop selling), **lowered when the school calendar shows quieter days ahead** (semester break, exams; `forecasting/calendar_adjust.py`, never raised), with the 30-day total spread over the days by the item's **category's calendar-aware Prophet pattern** (weekday pattern as the fallback). Chosen by scoring 47 methods on the project's walk-forward harness (**horizon 30, 3–12 folds, min_train 60**, a **30-day aggregate** per fold; `scripts/test_item_forecast_methods.py`, `data/item_forecast_method_test.csv`): **mean MASE 1.71 against 2.52 for the Prophet it replaced**, better on 46 of 57 items; the calendar adjustment takes it to **1.67** (pooled WMAPE 64.1% to 60.3%, `scripts/test_calendar_adjustment.py`). On the 45 items that still sell it is 2.16 against 2.61 (13 "Fast" items have not sold in a year, and Prophet kept forecasting them). Still not accurate in absolute terms (MASE below 1 for 23 of 57 items), and with no seasonal term it under-forecasts busy months and over-forecasts quiet ones. The series ends at the last day any SKU sold, not at the last row of `Fact_Sales`: zero-filled padding days at the end of the panel (23 of them while the July 2026 sheet stopped at 2026-07-08) had dragged every trailing mean down (Fast-SKU forecasts summed to 647 units against 3,291 actually sold in the last 30 real days). `--model prophet`, `tsb`, `rolling_mean_30`, `ewma_a0.1`, `topdown_tsb` (flat) and `topdown_tsb+weekday_shape` stay selectable. Sale-day tiers (38/10/10) are descriptive labels only. **Takes ~10 seconds** (a few minutes with `--model prophet`). Previously fit Prophet per SKU with full-MCMC production fits at 1–2 hours; renamed from `step4_prophet_forecast.py`. |
-| 4c | `scripts/step4c_category_forecast.py` | Forecasts each **category's** combined sales (trailing 6-month average lowered when the school calendar shows quieter days ahead, `RM6_6month_180d+calendar`; macro MASE 1.14 to **1.09**, pooled WMAPE 45.2% to **41.8%**, MASE below 1 in 6 of 12 categories, `scripts/test_calendar_adjustment.py`) and writes `Result_Category_Forecast` + `Result_Category_Forecast_Metrics`; this is what the Demand Forecast screen shows for a category. Covers every item in the category, not just Fast ones. Validated on the same walk-forward harness as step 4 against a harder bar (repeat the last 30 days): **beats it in 12 of 12 categories, pooled WMAPE 45.2%**. Prophet was tested and lost - see the script's docstring and `data/category_forecast_method_comparison.csv` (`scripts/compare_category_forecast_methods.py`). The 30-day total is spread over the days by a calendar-aware Prophet pattern (`--shape`; weekday pattern as fallback) so the chart is not a flat line: **2.8% lower day-by-day error than flat**, almost all of it in months containing a semester break (`scripts/test_category_forecast_shape.py`). Takes ~15 seconds; optional in the pipeline (the screen falls back to summing item forecasts). |
+| 4 | `scripts/step4_forecast_model.py` | Forecasts **every** Fast SKU (30) and writes `Result_Forecast` + `Result_Forecast_Metrics`. Default model `topdown_tsb+calendar+weekday_shape`: a **50/50 blend** of (a) the item's category 6-month average x the item's share of the category over the last 30 days and (b) **TSB** (alpha = beta = 0.05, a smoothed recent-sales rate that decays on items that stop selling), **lowered when the school calendar shows quieter days ahead** (semester break, exams; `forecasting/calendar_adjust.py`, never raised), with the 30-day total spread over the days by the item's **category's weekday pattern** (`topdown_tsb+calendar+prophet_shape` is the same model with a Prophet-fitted day curve, and stays selectable). The shape only redistributes the 30-day total, which is what the harness scores, so the two are identical on the primary metric — see `docs/FORECASTING_EXPLORATION_NOTES.md` §2.6 for why the dependency-free curve is the default. Chosen by scoring 47 methods on the project's walk-forward harness (**horizon 30, 3–12 folds, min_train 60**, a **30-day aggregate** per fold; `scripts/test_item_forecast_methods.py`, `data/item_forecast_method_test.csv`): **mean MASE 1.71 against 2.52 for the Prophet it replaced**, better on 46 of 57 items; the calendar adjustment takes it to **1.67** (pooled WMAPE 64.1% to 60.3%, `scripts/test_calendar_adjustment.py`). On the 45 items that still sell it is 2.16 against 2.61 (13 "Fast" items have not sold in a year, and Prophet kept forecasting them). Still not accurate in absolute terms (MASE below 1 for 23 of 57 items), and with no seasonal term it under-forecasts busy months and over-forecasts quiet ones. The series ends at the last day any SKU sold, not at the last row of `Fact_Sales`: zero-filled padding days at the end of the panel (23 of them while the July 2026 sheet stopped at 2026-07-08) had dragged every trailing mean down (Fast-SKU forecasts summed to 647 units against 3,291 actually sold in the last 30 real days). `--model prophet`, `tsb`, `rolling_mean_30`, `ewma_a0.1`, `topdown_tsb` (flat), `topdown_tsb+weekday_shape`, `topdown_tsb+prophet_shape` and `topdown_tsb+calendar+prophet_shape` stay selectable. Sale-day tiers (38/10/10) are descriptive labels only. **Takes ~10 seconds** (a few minutes with `--model prophet`). Previously fit Prophet per SKU with full-MCMC production fits at 1–2 hours; renamed from `step4_prophet_forecast.py`. |
+| 4c | `scripts/step4c_category_forecast.py` | Forecasts each **category's** combined sales (trailing 6-month average lowered when the school calendar shows quieter days ahead, `RM6_6month_180d+calendar`; macro MASE 1.14 to **1.09**, pooled WMAPE 45.2% to **41.8%**, MASE below 1 in 6 of 12 categories, `scripts/test_calendar_adjustment.py`) and writes `Result_Category_Forecast` + `Result_Category_Forecast_Metrics`; this is what the Demand Forecast screen shows for a category. Covers every item in the category, not just Fast ones. Validated on the same walk-forward harness as step 4 against a harder bar (repeat the last 30 days): **beats it in 12 of 12 categories, pooled WMAPE 45.2%**. Prophet was tested and lost - see the script's docstring and `data/category_forecast_method_comparison.csv` (`scripts/compare_category_forecast_methods.py`). The 30-day total is spread over the days by the category's weekday pattern (`--shape`, default `weekday`; `prophet` stays selectable) so the chart is not a flat line: **2.8% lower day-by-day error than flat**, almost all of it in months containing a semester break (`scripts/test_category_forecast_shape.py`). Takes ~15 seconds; optional in the pipeline (the screen falls back to summing item forecasts). |
 | 5a | `scripts/step5a_set_lead_times.py` | Sets `Dim_Product.lead_time_days` per product from a name-keyword classifier (jacket/windbreaker → 28d, embroidered → 18d, shirt/jersey/polo/tee → 14d, else → 18d default). Provisional, pending Block 5 (USTore site visit). |
+| 4b | `scripts/step4b_policy_forecast.py` | **Publishes the predictive stage the prescriptive layer actually consumes.** `forecasting.policy.resolve_rates`' demand rate and `empirical_buffer`'s lead-time interval are written into `Result_Forecast` as `model_type='policy_rate'` — **208 SKUs priced, 58 flagged `insufficient_data`, 266 of 266 accounted for** — alongside step 4's point-forecast rows rather than replacing them. Runs after `step5a` because the interval is measured at each SKU's own lead-time horizon. Not skippable: `step5` reads these rows instead of recomputing, and exits if they are absent. See `docs/PRESCRIPTIVE_CONTRACT.md` §5. |
 | 5 | `scripts/step5_prescriptive.py` | ROP / Safety Stock / EOQ per Fast+Slow SKU, using `step5a`'s real lead time and a holding cost derived from USTore's stated inventory value (arithmetic + every assumption written to `Dim_Parameters`, all flagged provisional). Ordering cost is genuinely ambiguous, so every SKU is priced under **two** scenarios (`low_admin_cost` / `high_goods_value`) rather than one guess — see `docs/STATUS_AND_NEXT_STEPS.md` for the numbers. Writes `Result_Prescriptive`. |
 
 Supporting/one-off scripts still in the repo: `scripts/build_vocab_mapping.py` /
@@ -140,8 +141,26 @@ you're revisiting the vocabulary itself).
   repo root — the store's sales, prices, stock and everything derived from them.
   They are committed **only encrypted**, in `vault/` (see below).
 - `rawdata/*.xlsx` — the real client tally-sheet workbooks. Sensitive (supplier
-  names, prices, sales volumes). Only step 0 reads them; every later step reads
-  `data/*.csv` (restored from `vault/`), so the pipeline runs without them.
+  names, prices, sales volumes). Steps **0 and 1** read them: step 1's
+  `may2024_dsr` and `tbs_item_price` price sources parse them directly, and
+  neither has a fallback, so **step 1 fails without `rawdata/` and the pipeline
+  stops there** — it is not marked optional the way step 0 is. Every step from
+  `proportional_allocation.py` onward reads only `data/*.csv` (restored from
+  `vault/`) and runs without them.
+
+  To get them: they are still committed at the tip of `origin/gambe`, under
+  `drive-download-20260724T120738Z-1-001/` — `f7ebb62` removed them from this
+  line on 2026-08-19 but `gambe` had already branched. Restore with
+
+  ```bash
+  mkdir -p rawdata && git ls-tree -r --name-only origin/gambe \
+    -- "drive-download-20260724T120738Z-1-001/" |
+    while read -r f; do git show "origin/gambe:$f" > "rawdata/${f##*/}"; done
+  ```
+
+  A full rebuild from those five workbooks reproduces the shipped database
+  exactly (verified 2026-09-30). See `docs/OPEN_ISSUES.md` issues 7 and 11 —
+  11 is the question of whether they should be on a branch at all.
 - `Copy of USTORE INVENTORY REPORT (1).xlsx` — 131 MB, over GitHub's file limit
   even encrypted; local only.
 - Superseded vocabulary-mapping versions, to keep the repo readable.
@@ -185,9 +204,13 @@ The README covers the pipeline and how to run it. Everything else lives in
 |---|---|
 | **What's broken / still to do** | `docs/OPEN_ISSUES.md` |
 | **Open team decisions** (B1–B15) | `docs/STATUS_AND_NEXT_STEPS.md` |
+| **The criterion that replaced `MAPE ≤ 20%`** | `docs/ACCEPTANCE_STANDARD.md` |
+| **What the prescriptive layer actually consumes** (a rate + an uncertainty, not a point forecast) | `docs/PRESCRIPTIVE_CONTRACT.md` |
+| **Is the reorder point any good?** — rolling-origin holdout | `docs/POLICY_HOLDOUT.md` |
+| **Is it any good against *real stock*?** — and why the holdout overstates it | `docs/INVENTORY_SIMULATION.md` |
 | The forecasting model, and whether it meets the criteria | `docs/ROLLING_MEAN_FORECAST.md` |
 | Why an error-based acceptance criterion fails here | `docs/DEGENERATE_FORECAST.md` |
-| Why service level is a frontier, not a threshold | `docs/SERVICE_LEVEL_FRONTIER.md` |
+| Why service level is a frontier, not a threshold — *note: `POLICY_HOLDOUT.md` later found no interior knee on the policy's own curve* | `docs/SERVICE_LEVEL_FRONTIER.md` |
 | Method comparison (10 methods, identical folds) | `docs/FORECAST_METHOD_COMPARISON.md` |
 | Fast-moving benchmark: 29 methods, raw vs cleaned, by category (incl. Prophet and the ML learners) | `docs/FAST_MOVING_BENCHMARK.md` |
 | Category-grain experiment: 27 methods aggregated, and why it does not ship | `docs/FAST_MOVING_BENCHMARK.md` §6.15, `docs/DIVERGENCE_REGISTER.md` #24 |
@@ -198,6 +221,13 @@ The README covers the pipeline and how to run it. Everything else lives in
 | Power BI build spec | `docs/POWERBI_DASHBOARD_PLAN.md` |
 | Backend / frontend contracts | `backend/README.md`, `UST Prototype Design/README.md` |
 | Historical status against the work plan | `docs/WORK_PLAN_STATUS_HISTORY.md` |
+| **Session logs, newest last** — what changed, what it cost the record, what is open | `docs/WORKLOG_POLICY_AND_ACCEPTANCE.md`, `docs/WORKLOG_INVENTORY_AND_RATE_WINDOW.md` |
+
+> **Reading order for a new session.** Start at the newest work log
+> (`docs/WORKLOG_INVENTORY_AND_RATE_WINDOW.md`) — its §9 is the current open list and its §7
+> records two things the written record has not caught up with: `docs/CHAPTER_4_DRAFT.md`
+> predates the policy layer, and the descriptive → predictive → prescriptive chain is broken
+> between its second and third stages.
 
 ## Changes added since the ETL pipeline above (frontend + backend)
 
@@ -267,12 +297,23 @@ wildly different costs:
 | **Run Pipeline (Without Forecast)** | everything except step 4 | **~45 s** when no tally workbook changed |
 | **Run Full Pipeline + Forecast** | everything | **~55 s** when no tally workbook changed; **~75 s** when step 0 has a new or changed workbook to convert (measured 2026-10-02) |
 
-Step 4 is the only step that can be opted out of (`pipeline.SKIPPABLE`),
-and it is safe to skip because nothing downstream reads its output —
-`step5_prescriptive.py` derives demand from observed history
-(`--demand-basis trailing`, the default), not from `Result_Forecast`. A
-no-forecast run still rebuilds the database, the FSN classes and the
-reorder points; it just leaves whatever forecasts are already there alone.
+Step 4 is still the only step that can be opted out of
+(`pipeline.SKIPPABLE`), and it is safe to skip because nothing downstream
+reads **its** output: step 4 publishes the `rolling_mean_30` point
+forecast, which the Demand Forecast screen draws and no other step
+consumes. A no-forecast run still rebuilds the database, the FSN classes
+and the reorder points; it just leaves whatever point forecasts are
+already there alone.
+
+**Step 4b is a different matter and is not skippable.** It publishes the
+demand *rate* and the lead-time *interval* into the same table under
+`model_type='policy_rate'`, and `step5_prescriptive.py` reads them rather
+than recomputing — which is what makes the descriptive → predictive →
+prescriptive progression literal instead of a diagram. Skipping it leaves
+step 5 with no policy rows, and step 5 exits with a message rather than
+silently falling back. `--recompute-policy` restores the pre-wiring
+behaviour as a control, and the two paths are required to produce an
+identical `Result_Prescriptive`.
 
 What the run does *not* destroy, and why that matters if you are reading
 these scripts and expecting a from-scratch rebuild to be a wipe:

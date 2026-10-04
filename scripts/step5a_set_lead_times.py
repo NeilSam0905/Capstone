@@ -53,11 +53,17 @@ Until then - and today, with nothing recorded - nothing changes.
 Safe to re-run: recomputes and overwrites lead_time_days for every
 product each time.
 """
+import os
 import re
 import sqlite3
 import statistics
+import sys
 
 import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from forecasting.category import storage_category_sql
 
 DB_PATH = "ustore.db"
 
@@ -124,7 +130,9 @@ def lead_time(item_name, category, supplier_name, measured):
 
 def main():
     con = sqlite3.connect(DB_PATH)
-    df = pd.read_sql("SELECT product_id, item_name, category, supplier_name FROM Dim_Product", con)
+    df = pd.read_sql(
+        f"SELECT product_id, item_name, {storage_category_sql(con)}, supplier_name "
+        "FROM Dim_Product", con)
     measured = measured_lead_times(con)
 
     results = df.apply(

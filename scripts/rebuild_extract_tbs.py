@@ -91,14 +91,22 @@ def load_mappings():
     vocab_path = os.path.join(DATA_DIR, "vocab_mapping_FINAL_v5.csv")
     supp_path = os.path.join(DATA_DIR, "supplier_mapping.csv")
     vocab, supp = {}, {}
+    # dtype=str + fillna("") rather than astype(str), which is what
+    # step1_apply_mapping.py does with the same two files. astype(str) renders a
+    # blank cell as the LITERAL STRING "nan": supplier_mapping.csv deliberately
+    # leaves supplier_name empty on two rows - "(Paid)" and
+    # "Subli. Shirt 2 colors", both annotated "no supplier can be recovered from
+    # these rows" - and this turned that into 179 sales rows attributed to a
+    # supplier named nan. It read back as NULL through pandas' default
+    # na_values, which is why it survived: the round trip hid it.
     if os.path.exists(vocab_path):
-        v = pd.read_csv(vocab_path)
-        vocab = dict(zip(v["raw_name"].astype(str).str.strip().str.upper(),
-                         v["canonical_item_name"].astype(str).str.strip()))
+        v = pd.read_csv(vocab_path, dtype=str).fillna("")
+        vocab = dict(zip(v["raw_name"].str.strip().str.upper(),
+                         v["canonical_item_name"].str.strip()))
     if os.path.exists(supp_path):
-        s = pd.read_csv(supp_path)
-        supp = dict(zip(s["raw_supplier"].astype(str).str.strip().str.upper(),
-                        s["supplier_name"].astype(str).str.strip()))
+        s = pd.read_csv(supp_path, dtype=str).fillna("")
+        supp = dict(zip(s["raw_supplier"].str.strip().str.upper(),
+                        s["supplier_name"].str.strip()))
     return vocab, supp
 
 

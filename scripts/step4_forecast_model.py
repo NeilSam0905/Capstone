@@ -249,6 +249,7 @@ from forecasting.baselines import (
     ewma_fit_predict, naive_fit_predict, rolling_mean_fit_predict,
 )
 from forecasting.evaluate import make_folds, walk_forward_evaluate
+from forecasting.history import history_index
 from forecasting.intermittent import tsb_fit_predict
 from forecasting.calendar_adjust import calendar_capped_fit_predict, load_day_types
 from forecasting.shape import day_shape, load_calendar as load_shape_calendar
@@ -304,6 +305,10 @@ MODELS = {
     "topdown_tsb+prophet_shape": (
         _topdown, f"{_TOPDOWN_DESC}; the {HORIZON}-day total is spread over the days by "
                   f"the item's category's Prophet pattern"),
+    "topdown_tsb+calendar+weekday_shape": (
+        _topdown_calendar, f"{_TOPDOWN_DESC}, lowered when the school calendar shows quieter "
+                           f"days ahead; the {HORIZON}-day total is spread over the days by the "
+                           f"item's category's weekday pattern"),
     "topdown_tsb+weekday_shape": (
         _topdown, f"{_TOPDOWN_DESC}; the {HORIZON}-day total is spread over the days by "
                   f"the item's category's weekday pattern"),
@@ -327,15 +332,27 @@ MODELS = {
 # measured negative result is worth more than an untested claim.
 # The calendar adjustment on top (scripts/test_calendar_adjustment.py): mean MASE
 # 1.71 -> 1.67, pooled WMAPE 64.1% -> 60.3%, better on 41 of 57 items.
-DEFAULT_MODEL = "topdown_tsb+calendar+prophet_shape"
+# Changed from "topdown_tsb+calendar+prophet_shape" when the tyrone and neil
+# lines were consolidated. The LEVEL is identical - the same calendar-adjusted
+# blend, measured at mean MASE 1.67 - and the harness scores the 30-day total,
+# so on the primary metric the two are the same model. They differ only in how
+# that total is spread over the days, where the weekday pattern measured 0.977
+# against Prophet's 0.972 overall and 0.981 against 0.995 in ordinary months
+# (docs/FORECASTING_EXPLORATION_NOTES.md section 2.6). Taking the 0.005 keeps
+# Prophet and its cmdstan toolchain off the default reproduction path, which
+# forecasting/__init__.py and docs/ROLLING_MEAN_FORECAST.md both rely on.
+# --model topdown_tsb+calendar+prophet_shape restores the previous default.
+DEFAULT_MODEL = "topdown_tsb+calendar+weekday_shape"
 
 # Models whose factory needs the item's category series (see MODELS).
 NEEDS_CATEGORY = {"topdown_tsb", "topdown_tsb+prophet_shape", "topdown_tsb+weekday_shape",
+                  "topdown_tsb+calendar+weekday_shape",
                   "topdown_tsb+calendar+prophet_shape"}
 
 # A level model that gets its category's day-by-day shape on top (forecasting/shape.py).
 # The 30-day total is the level model's, unchanged: the shape only redistributes it.
 SHAPE_KIND = {"topdown_tsb+prophet_shape": "prophet", "topdown_tsb+weekday_shape": "weekday",
+              "topdown_tsb+calendar+weekday_shape": "weekday",
               "topdown_tsb+calendar+prophet_shape": "prophet"}
 
 # Models whose STORED forecast varies by day: Prophet draws its own curve, the
@@ -471,10 +488,7 @@ def build_calendar(fact, dim_date):
     step4c_category_forecast.py does, so a category and its items describe
     the same 30 days. (step5_prescriptive.py::load_series still spans the
     whole panel; its 365-day window makes that a ~6% effect, not 5x.)"""
-    last_sale = fact.loc[fact["quantity_sold"] > 0, "calendar_date"].max()
-    if pd.isna(last_sale):
-        last_sale = fact["calendar_date"].max()
-    idx = pd.date_range(fact["calendar_date"].min(), last_sale, freq="D")
+    idx = history_index(fact)
     breaks = (dim_date.set_index("calendar_date")[SCOPE_COLUMN]
               .reindex(idx).fillna(0).to_numpy(dtype=float))
     return idx, breaks
@@ -778,7 +792,13 @@ def main():
 
     # Clear + refill in one transaction: on failure SQLite rolls back to the
     # previous run's forecasts rather than to nothing.
-    con.execute("DELETE FROM Result_Forecast")
+    # Clear only THIS model's rows. Result_Forecast also carries the policy
+    # rate and interval that step4b publishes and step5 consumes
+    # (model_type='policy_rate'); an unqualified DELETE here would silently
+    # empty the predictive stage the prescriptive layer reads, and step5 would
+    # then fail loudly - which is better than it silently recomputing, but the
+    # right fix is not to delete somebody else's rows in the first place.
+    con.execute("DELETE FROM Result_Forecast WHERE model_type IS NOT 'policy_rate'")
     con.execute("DELETE FROM Result_Forecast_Metrics")
     con.executemany(
         """INSERT INTO Result_Forecast

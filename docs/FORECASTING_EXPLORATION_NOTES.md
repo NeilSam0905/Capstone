@@ -139,9 +139,21 @@ zero days, and is 45.2% with them trimmed. Both forecast steps now end their
 history at the last day any SKU sold, and the forecast window starts the day
 after (07-09 to 08-07).
 
-- Not fixed: `step5_prescriptive.py::load_series` still spans the padded panel.
-  Its window is 365 days so the effect is ~6% understatement of annual demand,
-  not 5x. Root cause is upstream in the step0/step2 zero-fill to month end.
+- Fixed 2026-09-30: `step5_prescriptive.py::load_series` spanned the padded
+  panel. Its window is 365 days so the effect was ~6% on the denominator, not
+  5x — but trimming re-anchors the window as well, and the knock-on was much
+  larger than 6%: six more SKUs clear the rate threshold, the empirical buffer
+  grows 52% because the last folds had been scoring against fabricated zero
+  actuals, and the acceptance verdict flips. The rule now lives in one place,
+  `step5_prescriptive.history_index()`, shared with
+  `validate_policy_holdout.py`. Full before/after in `docs/OPEN_ISSUES.md`
+  under "the padding fix". Root cause is still upstream in the step0/step2
+  zero-fill to month end, which is untouched.
+- Still unfixed, and now inconsistent: `model_benchmark.py::load_daily_series`
+  spans the padded panel, so `tools/service_frontier.py` (which imports it)
+  and every benchmark table measure a 821-day span while the deployed policy
+  measures 798. Changing it would move every published benchmark figure,
+  including the 0.9490 ceiling, so it is a decision rather than a patch.
 - Fixed (only matters for `--model prophet` now): item-level Prophet's calendar
   regressors were zero in the forecast window (`forecasting/prophet_model.py::
   load_calendar` reindexes Dim_Date onto the shared index, so future dates came
@@ -183,6 +195,19 @@ date-aware shape (`step4c_category_forecast.py --shape`).
   three leading shapes are within noise of each other overall, so Prophet was
   kept as the default because it was asked for and is never worse than flat;
   `--shape weekday` is the dependency-free option and the automatic fallback.
+
+**Changed 2026-09-30: `weekday` is now the default shape, in both `step4c` and
+`step4`.** Nothing measured here moved — this is a dependency decision, recorded
+rather than made silently. The shape only redistributes a 30-day total and the
+harness scores the total, so on the primary metric the two are identical; they
+differ only in the daily curve, where the table above puts Prophet at 0.972
+overall against weekday's 0.977, and weekday **ahead** in ordinary months (0.981
+against 0.995). Prophet keeps the edge in break-heavy months (0.921 against
+0.966), which is the case for keeping it selectable, not for making a `cmdstan`
+toolchain a precondition for running the pipeline at all. `step4`'s default is
+`topdown_tsb+calendar+weekday_shape` and `step4c`'s is `--shape weekday`;
+`topdown_tsb+calendar+prophet_shape` and `--shape prophet` are unchanged and
+still there, and `requirements/requirements-prophet.txt` is what installs them.
 
 ### 2.7 The item forecast was Prophet, and a simple blend beats it (changed)
 

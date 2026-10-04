@@ -3,6 +3,13 @@ ustore.db
 # only while something has it open, and are machine-local like the db itself.
 ustore.db-wal
 ustore.db-shm
+# Any copy of the database under another name - `ustore.db.pre_contract`,
+# `ustore.db.pre_rebuild-2026-09-30`, whatever the next one is called. The bare
+# `ustore.db` above does not match these, so before this line a backup left
+# anywhere in the tree was stageable: `git add -A -- data/` picked up 10 MB of
+# real sales, prices and supplier names. No slash, so it matches at any depth,
+# which is where these actually get left (data/pre_contract/).
+ustore.db.*
 __pycache__/
 *.pyc
 .venv/
@@ -32,6 +39,15 @@ rawdata/
 data/*.csv
 data/*.xlsx
 docs/*.csv
+# ...and the same at any depth below them. A gitignore "*" stops at a directory
+# boundary, so the three patterns above cover data/x.csv and not
+# data/pre_contract/x.csv - which is how two store-derived files ended up
+# tracked in plain form. scripts/vault.py's PROTECTED list had the identical
+# hole for the identical reason; both are fixed, and they have to agree or the
+# hook refuses a file git is happy to stage.
+data/**/*.csv
+data/**/*.xlsx
+docs/**/*.csv
 /*.xlsx
 .vault_state.json
 *.vaulttmp

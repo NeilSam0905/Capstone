@@ -39,13 +39,14 @@ def _db():
     con.executescript("""
         CREATE TABLE Dim_Date (date_id INTEGER PRIMARY KEY, calendar_date TEXT, is_sem_break INTEGER DEFAULT 0);
         CREATE TABLE Dim_Product (product_id INTEGER PRIMARY KEY, item_name TEXT, fsn_class TEXT,
-                                  is_hvl INTEGER DEFAULT 0, lead_time_days INTEGER, forecast_category TEXT);
+                                  is_hvl INTEGER DEFAULT 0, lead_time_days INTEGER, forecast_category TEXT,
+                                  unit_price_php REAL);
         CREATE TABLE Fact_Sales (sale_id INTEGER PRIMARY KEY, product_id INTEGER, date_id INTEGER,
                                  quantity_sold INTEGER, imputation_flag INTEGER DEFAULT 0,
                                  tally_date_flag INTEGER DEFAULT 0, transaction_type TEXT DEFAULT 'sale',
                                  is_censored INTEGER, days_of_supply REAL, order_type TEXT);
         INSERT INTO Dim_Date VALUES (1, '2026-08-01', 0), (2, '2026-08-02', 0), (3, '2026-08-03', 0);
-        INSERT INTO Dim_Product VALUES (1, 'Test Tote', 'F', 0, 18, 'Bags');
+        INSERT INTO Dim_Product VALUES (1, 'Test Tote', 'F', 0, 18, 'Bags', 150);
         INSERT INTO Fact_Sales (product_id, date_id, quantity_sold, tally_date_flag, order_type) VALUES
             (1, 1, 5, 1, NULL),
             (1, 2, 3, 0, 'walk_in'),

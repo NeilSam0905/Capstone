@@ -51,9 +51,25 @@ corrected and uncorrected models are scored against the same imperfect
 target, so the A/B comparison is fair - but the residual error floor it
 implies is a property of the data, not of either model.
 
-Genuine zero-sale days are preserved. The 23 days at the end of the span
-(2026-07-09 .. 07-31) carry 176 Fact_Sales rows each with quantity 0:
-they are observed, and they stay in.
+Genuine zero-sale days are preserved - but the 23 at the end of the span
+are not among them, and this module used to say they were.
+
+They carry 176 `Fact_Sales` rows each with quantity 0, which is what the
+paragraph here previously took as proof that they were observed. It is
+proof of step0's zero-fill instead: the "JULY 2026 - TBS" sheet has a date
+column for every day of the month and does not hold one literal zero
+anywhere in it - every cell is blank or positive - so a blank means "not
+written up yet", never "counted, sold nothing". Checked against the
+workbook, not inferred from the panel.
+
+`step4_forecast_model.build_calendar`, `step4c_category_forecast` and
+`step5_prescriptive.load_series` all end their history at the last date
+any SKU sold, and share that rule through `forecasting/history.py`. This
+module does not - `observed_mask_from_index` reads `Dim_Date.is_tally_date`,
+which is 1 on all 23 - so a correction applied here still counts them as
+trading days. That is harmless today only because nothing in the deployed
+path imports this module; it is research code. Wiring it to
+`history.history_end` is the fix if it ever ships.
 ------------------------------------------------------------------
 """
 import numpy as np
