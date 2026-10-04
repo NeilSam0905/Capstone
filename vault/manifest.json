@@ -1,6 +1,6 @@
 {
  "FOR CICS STUDENTS.xlsx": "b68907e2f9a7c4480e7360d235e8e62c9247c2e94e635a5572b0304143041d05",
- "Group 8 ERRATA SHEET.xlsx": "204827436c887bb068d6f2812d8ae7f19bbfaa7bec59a3aa6f5c1dd156230fc6",
+ "Group 8 ERRATA SHEET.xlsx": "3005df94b87f78cf8d8590501dff6f6eb55ea4187174c9850b4ac13926364c93",
  "Model_Comparison.xlsx": "bdd4aaccab8f156f98b139c39f84ec7870e35a24a87c153d5a973fab854452ee",
  "data/USTore_Current_Model_Results.xlsx": "93f69609f2844b00de13519384a5c1f0b4e3b7096631e657aa0eb9b3e87ad431",
  "data/USTore_Data_Gaps.xlsx": "ba951d965878fdc881226dd04452f86915b8943c3ab5114bc60e4e50dd6f0c77",
@@ -24,11 +24,11 @@
  "data/calendar_adjustment_test.csv": "5e343c0d7d004f681deb91f54ebbc5cfb98132ec01262292ff7c83d93a1b09c6",
  "data/calendar_hurdle_results.csv": "4d303366c39c54821c4a90193cb2593b9b6213889be5e850a8428c339ce197b7",
  "data/calendar_ranges.csv": "f7b30741d48193f7f8050396e11270a170ee0d9476d4bf7922977b4ea95735f6",
- "data/category_assignment_audit.csv": "c9f63944ff4a6d6057effc57f0e6634cfcda75c7e367df897305001fe4988473",
+ "data/category_assignment_audit.csv": "05ce0edef912cf3e031dbf8d2f7a1b286db6873f05228b32c1d65cc41062b699",
  "data/category_benchmark_folds.csv": "a579783d52caadd2d7d45b93c4437b540caaa81536c897cb4ff524c124e24d68",
  "data/category_benchmark_summary.csv": "867e57fdc80181365b180a8d3f1a85d3989da20cc078853f3b3e249ba12bd131",
  "data/category_daily_series.csv": "a03f016aa6f67e36962bc3aca5991369ce9fa3d92bc5156b5e6245b4ac3ab0e9",
- "data/category_daily_series_fast.csv": "5f4e44a931d785cbb7e70c1faca47efccf555812a01c7f432d2eb5a7da7c9500",
+ "data/category_daily_series_fast.csv": "543015389db5730f442c88a4af4dfa6924a58619b22f7c2d33c8adb831ffc0d1",
  "data/category_forecast_method_comparison.csv": "8a0fa55ddb005c76253e803255a112cede7e38d8f0a46326024d5b0bfcf6dfa9",
  "data/category_forecast_method_folds.csv": "8af900995f67393fa92a07c27859186ab235318a78dcdc0b16ce5aef0a1ee567",
  "data/category_forecast_param_tuning.csv": "a52e11c3fdf39b247cd82915b9d50f9a8aa6aac8d9423a73eda844b51cdaa2cb",
@@ -162,5 +162,5 @@
  "docs/products_without_forecast.csv": "32a58460ab4ec260718a8dcf74de2b0d7e853fcbda9a089e82477e1532519c63",
  "docs/unpriced_products.csv": "dcfa730bf272c4763f325a1cf1a78bcd894fe25efb5c0607804146f54fb08554",
  "prediction_targets_results.xlsx": "4dd103bad1bb9a44c6cee84d0df20b67ef320521c483311d073090f27337158c",
- "ustore.db": "24182262a22289944b42f24748061ebddef6f101991c65ac711ea5f21cb4c736"
+ "ustore.db": "f40dd63ec0b499fabde6b5de1becea6d675f13be3dd49fc03d4c6033eeffc0c4"
 }
