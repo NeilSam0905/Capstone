@@ -39,10 +39,12 @@ import batch_export
 import batch_pdf
 import catalog
 import db as dbmod
+import decision_rules
 import pipeline
 import validation
 import names                  # after pipeline: it needs scripts/ on sys.path
 import order_types            # scripts/order_types.py
+import calendar_extent        # scripts/calendar_extent.py
 
 app = Flask(__name__)
 auth.configure(app)
@@ -214,6 +216,33 @@ def con():
     return g.con
 
 
+def _extend_calendar(c):
+    """Make sure Dim_Date runs to the end of next year (scripts/
+    calendar_extent.py), so a date staff enter is never refused just because
+    the calendar file stops. One MAX() when it already does. Best-effort: if
+    the pipeline holds the write lock right now, the date checks downstream
+    still say what is wrong, and the next request tries again."""
+    try:
+        if calendar_extent.extend_dim_date(c):
+            c.commit()
+    except Exception:                       # noqa: BLE001 - never fail a request over this
+        app.logger.exception("could not extend Dim_Date")
+
+
+_calendar_checked = False
+
+
+@app.before_request
+def _extend_calendar_once():
+    """Once per server process, on its first request: covers a server that
+    has been running since last year, before anything reads the calendar.
+    Not at import time - the test suite imports this module."""
+    global _calendar_checked
+    if not _calendar_checked and request.path.startswith("/api/"):
+        _calendar_checked = True
+        _extend_calendar(con())
+
+
 @app.teardown_appcontext
 def _close_con(_exc):
     c = g.pop("con", None)
@@ -298,6 +327,12 @@ def get_meta():
     products = dbmod.rows(c, "SELECT product_id, unit_price_php FROM Dim_Product")
     stats, _ = catalog.compute_stats(c)
     dim_date_span = dbmod.one(c, "SELECT MIN(calendar_date) a, MAX(calendar_date) b FROM Dim_Date")
+    # The last day the published school calendar (calendar_ranges.csv) covers.
+    # Dim_Date runs further (scripts/calendar_extent.py), but past this day it
+    # knows no enrollment, exam week or break - staff have to log closures
+    # and events themselves, which is what the Tally Interface warns about.
+    academic_end = dbmod.one(
+        c, "SELECT MAX(calendar_date) d FROM Dim_Date WHERE semester_id IS NOT NULL")["d"]
     sales_span = dbmod.one(c, f"""
         SELECT MIN(d.calendar_date) a, MAX(d.calendar_date) b
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
@@ -324,6 +359,7 @@ def get_meta():
         "source": "ustore.db (live)",
         "sales_span": [sales_span["a"], sales_span["b"]],
         "calendar_span": [dim_date_span["a"], dim_date_span["b"]],
+        "academic_calendar_end": academic_end,
         "fact_sales_rows": fact_sales_rows,
         "total_units": total_units,
         "products": len(products),
@@ -813,6 +849,15 @@ def get_batch_report_xlsx():
 @app.get("/api/fsn/sensitivity")
 def get_fsn_sensitivity():
     return jsonify(catalog.fsn_sensitivity(con()))
+
+
+@app.get("/api/fsn/decision-rules")
+def get_fsn_decision_rules():
+    """What to do about each SKU's FSN class (manuscript Sec. 3.3.1), with the
+    per-semester velocity the "Review for Discontinuation" rule was judged on.
+    ?threshold= (units per selling day) overrides the default."""
+    threshold = decision_rules.parse_threshold(request.args.get("threshold"))
+    return jsonify(decision_rules.evaluate(con(), threshold))
 
 
 # --------------------------------------------------------------- reorder
@@ -1453,6 +1498,10 @@ def set_closure(iso_date):
     reason = (payload.get("reason") or "").strip() or None
 
     c = con()
+    # So the UPDATE below has a row to land on. A date past even the extended
+    # calendar is still logged, and populate_dim_date.py applies it once the
+    # calendar reaches it.
+    _extend_calendar(c)
     # Remediation D3. Log the toggle in Closure_Log (durable across a
     # populate_dim_date.py rebuild, which reads it back - see that
     # script) AND update Dim_Date directly (so the change is visible
@@ -1584,6 +1633,7 @@ def get_entries_by_date():
 def add_entry():
     payload = request.get_json(silent=True) or {}
     c = con()
+    _extend_calendar(c)
     errors = validation.validate_entry(c, payload)
     transaction_type = str(payload.get("transaction_type") or "").upper()
     order_type = _order_type(transaction_type, payload.get("order_type"))
@@ -1663,6 +1713,7 @@ def import_tally():
         return jsonify({"ok": False, "error": str(exc), "saved_to": saved}), 400
 
     c = con()
+    _extend_calendar(c)
     products = _product_index(c)
     dates = {r["calendar_date"]: r["date_id"]
              for r in dbmod.rows(c, "SELECT date_id, calendar_date FROM Dim_Date")}
@@ -1750,6 +1801,7 @@ def add_event():
         return jsonify({"ok": False, "errors": errors}), 400
 
     c = con()
+    _extend_calendar(c)     # see set_closure
     cur = c.execute("""
         INSERT INTO Event_Log (event_date, event_name, event_description, created_by, date_logged)
         VALUES (?, ?, ?, ?, ?)
@@ -2398,8 +2450,11 @@ def get_advisories():
     Returns an honest pending shape when the forecast hasn't been generated."""
     c = con()
     has_forecast = _has_forecast_table(c)
+    # Read once: every advisory's item list and the decision-rule ones below
+    # need the stock position, and each compute_catalog is a full scan.
+    products = {p["product_id"]: p for p in catalog.compute_catalog(c)}
 
-    def affected_items(fsn=("F",), limit=8):
+    def affected_items(fsn=("F",), limit=8, ids=None):
         """The SKUs an advisory is actually about, with the numbers that make
         it checkable: forecast, stock on hand, reorder point.
 
@@ -2407,8 +2462,17 @@ def get_advisories():
         actionable until it names them, so every advisory carries its own list
         and the interface shows it on click. LEFT JOINs throughout - a SKU with
         no forecast or no stock count still belongs in the list, reported as
-        null rather than dropped."""
-        placeholders = ",".join("?" * len(fsn))
+        null rather than dropped.
+
+        `ids`, when given, names the SKUs outright (already ranked by the
+        caller) instead of taking a class."""
+        if ids is not None:
+            ids = list(ids)[:limit]
+            if not ids:
+                return []
+            where, args = f"p.product_id IN ({','.join('?' * len(ids))})", tuple(ids)
+        else:
+            where, args = f"p.fsn_class IN ({','.join('?' * len(fsn))})", tuple(fsn)
         rows = dbmod.rows(c, f"""
             SELECT p.product_id, p.item_name, p.fsn_class, p.category,
                    COALESCE(p.supplier_name, ?) AS supplier_name,
@@ -2418,11 +2482,14 @@ def get_advisories():
                    (SELECT r.reorder_point FROM Result_Prescriptive r
                      WHERE r.product_id = p.product_id LIMIT 1) AS reorder_point
               FROM Dim_Product p
-             WHERE p.fsn_class IN ({placeholders})
+             WHERE {where}
              ORDER BY {"forecast_30d DESC," if has_forecast else ""} p.item_name
              LIMIT ?
-        """, (catalog.UNATTRIBUTED, *fsn, limit))
-        stock = {p["product_id"]: p["current_stock"] for p in catalog.compute_catalog(c)}
+        """, (catalog.UNATTRIBUTED, *args, limit))
+        if ids is not None:
+            rank = {pid: i for i, pid in enumerate(ids)}
+            rows.sort(key=lambda r: rank[r["product_id"]])
+        stock = {pid: p["current_stock"] for pid, p in products.items()}
         for r in rows:
             r["current_stock"] = stock.get(r["product_id"])
             r["below_rop"] = (
@@ -2467,7 +2534,8 @@ def get_advisories():
                 else f"{_us_date(run['start'])} to {_us_date(run['end'])}")
 
     # One advisory per window, so each carries its own dates.
-    for run in _date_runs([r["calendar_date"] for r in upcoming_periods if r["is_enrollment_period"]]):
+    enrollment_runs = _date_runs([r["calendar_date"] for r in upcoming_periods if r["is_enrollment_period"]])
+    for run in enrollment_runs:
         advisories.append({
             "type": "enrollment",
             "severity": "high",
@@ -2559,11 +2627,121 @@ def get_advisories():
             "items": [],
         })
 
+    # After the calendar fallback on purpose: these are standing decisions
+    # about the catalogue, not calendar signals, so they must not hide the
+    # "no upcoming calendar signals" card when that is the truth.
+    advisories.extend(_decision_rule_advisories(
+        c, products, enrollment_runs, upcoming_events, affected_items, has_forecast))
+
     return jsonify({
         "available": True,
         "has_forecast": has_forecast,
         "advisories": advisories,
     })
+
+
+def _next_high_traffic(enrollment_runs, upcoming_events):
+    """The next enrollment window or logged event, whichever starts first, as
+    (what, start, end) - or None when the calendar holds neither."""
+    options = [("enrollment", r["start"], r["end"]) for r in enrollment_runs[:1]]
+    options += [(e["event_name"], e["event_date"], e["event_date"]) for e in upcoming_events[:1]]
+    return min(options, key=lambda o: o[1]) if options else None
+
+
+def _decision_rule_advisories(c, products, enrollment_runs, upcoming_events,
+                              affected_items, has_forecast):
+    """The FSN decision rules (manuscript Sec. 3.3.1) as advisories: promote
+    the Slow movers, review the ones slow for two semesters running, clear out
+    the Non-moving items still holding stock. Each appears only when it names
+    at least one item. The rule itself lives in decision_rules.py; this only
+    words it and picks which items to list."""
+    rules = decision_rules.evaluate(c)
+    by_action = {}
+    for item in rules["items"]:
+        by_action.setdefault(item["action"], []).append(item["product_id"])
+
+    def most_stock_first(pids):
+        """Most units on hand first (uncounted last), then most units sold:
+        the items tying up the most shelf stock lead the list."""
+        def key(pid):
+            p = products.get(pid, {})
+            stock = p.get("current_stock")
+            return (stock is None, -(stock or 0), -(p.get("total_units") or 0))
+        return sorted(pids, key=key)
+
+    def plural(n, word):
+        return f"{n} {word}{'' if n == 1 else 's'}"
+
+    out = []
+
+    promote = by_action.get(decision_rules.PROMOTE, [])
+    if promote:
+        window = _next_high_traffic(enrollment_runs, upcoming_events)
+        if window:
+            what, start, end = window
+            when = _us_date(start) if start == end else f"{_us_date(start)} to {_us_date(end)}"
+            during = f"enrollment ({when})" if what == "enrollment" else f"{what} ({when})"
+        else:
+            during = "the next enrollment period or campus event"
+        out.append({
+            "type": "slow_moving",
+            "severity": "medium",
+            "title": "Promote Slow-Moving Items",
+            "description": f"{plural(len(promote), 'slow-moving item')} "
+                           f"{'sells' if len(promote) == 1 else 'sell'} only now and then. "
+                           "Move them with bundled pricing, better shelf placement, or targeted "
+                           f"marketing during {during}.",
+            "date_range": [window[1], window[2]] if window else None,
+            "has_forecast": has_forecast,
+            "basis": "Slow-moving items sold in the records but below the Fast cut (step3's "
+                     "80th-percentile ADUS), so they get no item forecast; the manuscript's rule "
+                     "for them is promotion (Sec. 3.3.1). Listed by units on hand, then units "
+                     "sold. Items slow for two semesters running are under Review for "
+                     "Discontinuation instead.",
+            "items": affected_items(ids=most_stock_first(promote)),
+        })
+
+    review = by_action.get(decision_rules.REVIEW, [])
+    if review:
+        sems = " and ".join(s["semester_id"] for s in rules["semesters"])
+        out.append({
+            "type": "discontinuation",
+            "severity": "medium",
+            "title": "Review for Discontinuation",
+            "description": f"{plural(len(review), 'slow-moving item')} sold below "
+                           f"{rules['threshold']:g} units per selling day in both {sems}. "
+                           "Decide whether to keep carrying them.",
+            "date_range": None,
+            "has_forecast": has_forecast,
+            "basis": "Velocity is ADUS per regular semester, measured as the FSN model measures "
+                     "it. An item carried before a semester but absent from its tally sheets "
+                     "counts as 0 for it. The threshold can be changed on the FSN Classification "
+                     f"page; this card uses the default, {rules['default_threshold']:g}.",
+            "items": affected_items(ids=most_stock_first(review)),
+        })
+
+    holding = [pid for pid in by_action.get(decision_rules.CLEAR_OUT, [])
+               if (products.get(pid, {}).get("current_stock") or 0) > 0]
+    if holding:
+        units = sum(products[pid]["current_stock"] for pid in holding)
+        out.append({
+            "type": "non_moving",
+            "severity": "medium",
+            "title": "Non-Moving Items Holding Stock",
+            "description": f"{plural(len(holding), 'item')} "
+                           f"{'has' if len(holding) == 1 else 'have'} no recorded sales but still "
+                           f"{'holds' if len(holding) == 1 else 'hold'} "
+                           f"{units:,} units on hand. Evaluate returning them to the supplier, "
+                           "marking them down for clearance, or discontinuing them.",
+            "date_range": None,
+            "has_forecast": has_forecast,
+            "basis": "Non-moving items have no recorded sale (step3) and are left out of every "
+                     "reorder calculation (Sec. 3.3.1). Only those with a stock count above zero "
+                     "are listed: without stock there is nothing to clear out.",
+            "items": affected_items(ids=most_stock_first(holding)),
+        })
+
+    return out
 
 
 # ------------------------------------------------------ tally workbooks

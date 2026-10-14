@@ -70,3 +70,8 @@ export function inspectEmbedUrl(url) {
   // a description of the setup.
   return { state: 'ok', method: isView ? 'Publish to web (public)' : null };
 }
+
+/** Element id of the Overview's advisories section. The topbar's Advisories
+ *  button scrolls to it on the Overview and opens a dialog everywhere else
+ *  (App.jsx), so both sides read the id from here. */
+export const ADVISORIES_ANCHOR = 'event-advisories';

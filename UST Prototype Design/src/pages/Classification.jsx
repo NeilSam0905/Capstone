@@ -1,12 +1,13 @@
-import { useMemo, useState } from 'react';
-import { getProducts, ALL_CATEGORIES, ALL_SUPPLIERS } from '../services/dataService';
+import { useMemo, useRef, useState } from 'react';
+import { getProducts, getDecisionRules, ALL_CATEGORIES, ALL_SUPPLIERS } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
 import DataTable from '../components/DataTable';
 import { Loading } from '../components/Pending';
 import { HBars } from '../components/charts';
 import FsnBandModal from '../components/FsnBandModal';
-import { num, FSN_TONE, FSN_LABEL } from '../lib/format';
+import Icon from '../components/Icon';
+import { num, FSN_TONE, FSN_LABEL, RULE, RULE_ORDER } from '../lib/format';
 
 /**
  * Classification (FSN).
@@ -22,21 +23,75 @@ import { num, FSN_TONE, FSN_LABEL } from '../lib/format';
  *     80th and 85th percentile cutoffs). That is a methods-section exhibit,
  *     not an operating one.
  *   - The ADUS, CV% and Stockout columns, for the same reason.
+ *
+ * The decision rules (manuscript Sec. 3.3.1) come from /api/fsn/decision-rules
+ * (backend/decision_rules.py): each item's action, and for "Review for
+ * Discontinuation" the two semesters it was judged on. Nothing about the rule
+ * is decided here; the page only words it and lets the threshold be changed.
  */
 /* Fast, Slow, Non-Moving — the reading order of the page, used for the item
    list's default sort. Not alphabetical, which would give F, N, S. */
 const FSN_ORDER = { F: 0, S: 1, N: 2 };
 
+/* Units per selling day. The backend's default is marked in the list; any
+   other value is sent as ?threshold=. */
+const THRESHOLD_CHOICES = [0.05, 0.1, 0.2, 0.3, 0.5];
+
+/** "AY2526-T1: 0.007 a day (1 unit)" for each semester a review was judged on. */
+function semesterTrail(readings) {
+  return (readings ?? []).map(r => r.on_sheet
+    ? `${r.semester_id}: ${r.adus.toFixed(3)} a day (${num(r.units)} unit${r.units === 1 ? '' : 's'})`
+    : `${r.semester_id}: not on the tally sheet`).join(' · ');
+}
+
 export default function Classification({ filters }) {
   const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
     { key: `classification:products:${filters.supplier}|${filters.category}|${filters.dateRange}` });
+  // null = the backend's default threshold, which is also the request the
+  // prefetch warms.
+  const [threshold, setThreshold] = useState(null);
+  const { data: rules } = useData(() => getDecisionRules(threshold ?? undefined), [threshold], null,
+    { key: `classification:rules:${threshold ?? 'default'}` });
 
   const [band, setBand] = useState(null);       // 'F' | 'S' | 'N' | null
   const [bestBand, setBestBand] = useState('All');
   const [q, setQ] = useState('');
   const [fsn, setFsn] = useState('All');
+  const [action, setAction] = useState('All');
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [supplier, setSupplier] = useState(ALL_SUPPLIERS);
+  const listRef = useRef(null);
+
+  // Each product with its rule. Joined here rather than served on
+  // /api/products because the threshold changes the rule without changing
+  // the catalogue, and the catalogue request is the expensive one.
+  const ruleById = useMemo(
+    () => new Map((rules?.items ?? []).map(r => [r.product_id, r])), [rules]);
+  const ruled = useMemo(() => products.map(p => {
+    const r = ruleById.get(p.product_id);
+    return {
+      ...p,
+      action: r?.action ?? null,
+      action_rank: r?.action ? RULE_ORDER.indexOf(r.action) : 99,
+      semesters: r?.semesters ?? [],
+    };
+  }), [products, ruleById]);
+  const ruleCounts = useMemo(() => {
+    const c = Object.fromEntries(RULE_ORDER.map(k => [k, 0]));
+    ruled.forEach(p => { if (p.action in c) c[p.action]++; });
+    return c;
+  }, [ruled]);
+
+  /** "Show these items": the rule becomes the list's only filter, and the
+      list scrolls into view, since it is below the fold. */
+  function showRule(key) {
+    setAction(key);
+    setFsn('All');
+    setQ('');
+    setCategory(ALL_CATEGORIES);
+    setSupplier(ALL_SUPPLIERS);
+    listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   const fsnCounts = useMemo(() => {
     const c = { F: 0, S: 0, N: 0 };
@@ -73,36 +128,48 @@ export default function Classification({ filters }) {
   // reader has at the top. The default is the order the page argues for: the
   // groups in the order the three cards above name them, and inside each
   // group the items that move the most. Any column heading still overrides it.
-  const shown = useMemo(() => products.filter(p =>
+  const shown = useMemo(() => ruled.filter(p =>
     (!needle
       || p.item_name.toLowerCase().includes(needle)
       || p.supplier_name.toLowerCase().includes(needle)
       || p.category.toLowerCase().includes(needle))
     && (fsn === 'All' || p.fsn_class === fsn)
+    && (action === 'All' || p.action === action)
     && (category === ALL_CATEGORIES || p.category === category)
     && (supplier === ALL_SUPPLIERS || p.supplier_name === supplier)
   ).sort((a, b) =>
     (FSN_ORDER[a.fsn_class] ?? 9) - (FSN_ORDER[b.fsn_class] ?? 9)
     || (b.avg_monthly ?? 0) - (a.avg_monthly ?? 0)
-  ), [products, needle, fsn, category, supplier]);
+  ), [ruled, needle, fsn, action, category, supplier]);
 
+  // Widths sum to 100 (see Overview's ProductsModal for why that matters).
   const columns = [
-    { key: 'item_name',     label: 'Product Name', strong: true, truncate: true, width: '30%' },
-    { key: 'category',      label: 'Category', truncate: true, width: '14%' },
-    { key: 'supplier_name', label: 'Supplier', truncate: true, width: '21%' },
-    { key: 'total_units',   label: 'Units Sold', num: true, strong: true, width: '11%', render: num },
+    { key: 'item_name',     label: 'Product Name', strong: true, truncate: true, width: '25%' },
+    { key: 'category',      label: 'Category', truncate: true, width: '12%' },
+    { key: 'supplier_name', label: 'Supplier', truncate: true, width: '17%' },
+    { key: 'total_units',   label: 'Units Sold', num: true, strong: true, width: '9%', render: num },
     {
-      key: 'avg_monthly', label: 'Avg / Month', num: true, width: '11%',
+      key: 'avg_monthly', label: 'Avg / Month', num: true, width: '9%',
       render: v => (v ?? 0).toFixed(1),
     },
     {
-      key: 'fsn_class', label: 'Classification', width: '13%',
+      key: 'fsn_class', label: 'Classification', width: '14%',
       render: (v, row) => (
         <span style={{ display: 'inline-flex', gap: 5 }}>
           <span className={`tag tag--${FSN_TONE[v]}`}>{FSN_LABEL[v]}</span>
           {row.is_hvl === 1 && <span className="tag tag--hvl" title="Sells quickly, but on few recorded days">Thin history</span>}
         </span>
       ),
+    },
+    {
+      // Sorted on the rule's display order, not its name.
+      key: 'action_rank', label: 'Action', width: '14%',
+      render: (_v, row) => {
+        const rule = RULE[row.action];
+        if (!rule) return <span className="nodata">&mdash;</span>;
+        const why = row.action === 'review_discontinuation' ? semesterTrail(row.semesters) : undefined;
+        return <span className={`tag tag--${rule.tone}`} title={why}>{rule.label}</span>;
+      },
     },
   ];
 
@@ -161,41 +228,21 @@ export default function Classification({ filters }) {
             : <HBars data={topSellers} color="var(--ink)" valueFmt={num} />}
         </div>
 
-        {/* Replaces the two technical notices this page used to carry (the HVL
-            "confidence modifier" note and the "ADUS denominator" one) with the
-            same facts in plain words. */}
-        <div className="card card__pad">
-          <div className="card-h">
-            <span className="section-h">FSN Classification Legend</span>
-          </div>
-          <div className="explain">
-            <div className="explain__row">
-              <span className="tag tag--ok">Fast</span>
-              <p>Sells regularly. Keep these in stock — running out costs the most sales.</p>
-            </div>
-            <div className="explain__row">
-              <span className="tag tag--warn">Slow</span>
-              <p>Sells now and then. Worth stocking, but in smaller quantities.</p>
-            </div>
-            <div className="explain__row">
-              <span className="tag tag--crit">Non-Moving</span>
-              <p>No sales recorded. Review before ordering more.</p>
-            </div>
-            {hvlCount > 0 && (
-              <div className="explain__row">
-                <span className="tag tag--hvl">Thin history</span>
-                <p>
-                  {hvlCount} fast-selling item{hvlCount === 1 ? '' : 's'}{hvlCount === 1 ? ' has' : ' have'} only
-                  been counted on a handful of days. {hvlCount === 1 ? 'It sells' : 'They sell'} quickly, but there is
-                  less history behind that, so treat the figure as less certain.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
+        {/* The manuscript's "decision rule card" (Sec. 3.3.1): the prescribed
+            action for each group, beside the best sellers and above the item
+            list that carries the same action per row. It also serves as the
+            key to the badges, which is what the plain legend it replaced did. */}
+        <DecisionRules
+          rules={rules}
+          counts={ruleCounts}
+          hvlCount={hvlCount}
+          onShow={showRule}
+          threshold={threshold}
+          setThreshold={setThreshold}
+        />
       </div>
 
-      <div className="card card__pad">
+      <div className="card card__pad" ref={listRef} style={{ scrollMarginTop: 12 }}>
         <div className="card-h">
           <span className="section-h">FSN Classification Item List</span>
           {/* A count, as a figure rather than a sentence - it is the one
@@ -231,6 +278,13 @@ export default function Classification({ filters }) {
             </select>
           </div>
           <div className="filter-field">
+            <label className="filter-field__label" htmlFor="cl-action">Action</label>
+            <select id="cl-action" value={action} onChange={e => setAction(e.target.value)}>
+              <option value="All">All Actions</option>
+              {RULE_ORDER.map(k => <option key={k} value={k}>{RULE[k].label}</option>)}
+            </select>
+          </div>
+          <div className="filter-field">
             <label className="filter-field__label" htmlFor="cl-category">Category</label>
             <select id="cl-category" value={category} onChange={e => setCategory(e.target.value)}>
               <option value={ALL_CATEGORIES}>{ALL_CATEGORIES}</option>
@@ -255,6 +309,106 @@ export default function Classification({ filters }) {
       {/* No onOpenFullList: the full list is the card directly behind this
           modal, so the button would point at itself. */}
       <FsnBandModal band={band} onClose={() => setBand(null)} products={products} />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ decision rules */
+
+/** What to do with each group (manuscript Sec. 3.3.1), with how many of the
+ *  products on screen it applies to and a link that lists them.
+ *
+ *  `counts` are over the products the topbar filters leave, so they agree with
+ *  the item list below. The Review row carries the threshold control because
+ *  that is the one rule with a number in it the store may want to move. */
+function DecisionRules({ rules, counts, hvlCount, onShow, threshold, setThreshold }) {
+  const semesters = rules?.semesters ?? [];
+  const judgedOn = semesters.length
+    ? semesters.map(s => s.semester_id).join(' and ')
+    : 'the last two semesters';
+  const dflt = rules?.default_threshold;
+  const selected = threshold ?? dflt;
+  const choices = dflt != null && !THRESHOLD_CHOICES.includes(dflt)
+    ? [...THRESHOLD_CHOICES, dflt].sort((a, b) => a - b)
+    : THRESHOLD_CHOICES;
+
+  const rows = [
+    {
+      key: 'keep_stocked',
+      text: <><b>Fast-moving.</b> Sells regularly. Forecast every 30 days and reorder at the reorder
+        point &mdash; running out costs the most sales.</>,
+    },
+    {
+      key: 'promote',
+      text: <><b>Slow-moving.</b> Sells now and then. Stock smaller quantities, and move it with bundled
+        pricing, better shelf placement, or targeted marketing during enrollment and campus events.</>,
+    },
+    {
+      key: 'review_discontinuation',
+      text: <><b>Slow for two semesters.</b> Sold under {rules ? rules.threshold : '…'} units per selling
+        day in both {judgedOn}. Decide whether to keep carrying it.</>,
+      control: (
+        <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          Threshold
+          <select className="inline-select" value={selected ?? ''} disabled={selected == null}
+                  onChange={e => {
+                    const v = Number(e.target.value);
+                    setThreshold(v === dflt ? null : v);
+                  }}
+                  aria-label="Review for discontinuation threshold, units per selling day">
+            {choices.map(v => (
+              <option key={v} value={v}>{v} / day{v === dflt ? ' (default)' : ''}</option>
+            ))}
+          </select>
+        </label>
+      ),
+    },
+    {
+      key: 'clear_out',
+      text: <><b>Non-moving.</b> No recorded sales, so it is never reordered. Return it to the supplier,
+        mark it down for clearance, or discontinue it.</>,
+    },
+  ];
+  if (counts.discontinued > 0) {
+    rows.push({ key: 'discontinued', text: <>Marked discontinued by the store; no rule applies.</> });
+  }
+
+  return (
+    <div className="card card__pad">
+      <div className="card-h">
+        <span className="section-h">Decision Rules</span>
+        <span className="hint">what to do with each group</span>
+      </div>
+      <div className="explain">
+        {rows.map(r => (
+          <div className="explain__row" key={r.key}>
+            <span className={`tag tag--${RULE[r.key].tone}`}>{RULE[r.key].label}</span>
+            <div>
+              <p>{r.text}</p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
+                {rules && (counts[r.key] > 0
+                  ? (
+                    <button type="button" className="linkish" onClick={() => onShow(r.key)}>
+                      Show {num(counts[r.key])} item{counts[r.key] === 1 ? '' : 's'} <Icon name="arrow" size={12} />
+                    </button>
+                  )
+                  : <span className="hint">No items</span>)}
+                {r.control}
+              </div>
+            </div>
+          </div>
+        ))}
+        {hvlCount > 0 && (
+          <div className="explain__row">
+            <span className="tag tag--hvl">Thin history</span>
+            <p>
+              {hvlCount} fast-selling item{hvlCount === 1 ? '' : 's'}{hvlCount === 1 ? ' has' : ' have'} only
+              been counted on a handful of days. {hvlCount === 1 ? 'It sells' : 'They sell'} quickly, but there is
+              less history behind that, so treat the figure as less certain.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

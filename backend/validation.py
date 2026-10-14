@@ -14,14 +14,18 @@ ISO_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
 def calendar_gap_message(con, iso_date):
-    """Why a date is not in Dim_Date. Past the calendar's last day it is not a
-    typo: the calendar has to be extended (calendar_ranges.csv and
-    populate_dim_date.py, a group decision - docs/SYSTEM_GAPS_AND_IMPROVEMENTS.md
-    2.1), and saying so is the only way whoever is tallying finds out why."""
-    last = con.execute("SELECT MAX(calendar_date) FROM Dim_Date").fetchone()[0]
+    """Why a date is not in Dim_Date. The calendar now extends itself to the
+    end of next year before every dated save (scripts/calendar_extent.py), so
+    this is only reached for a date before the calendar starts, or one so far
+    ahead it is almost certainly a typo - or if that extension could not run
+    (the pipeline held the database), in which case trying again works."""
+    first, last = con.execute(
+        "SELECT MIN(calendar_date), MAX(calendar_date) FROM Dim_Date").fetchone()
+    if first and iso_date < first:
+        return f"The calendar starts on {first}; earlier dates cannot be entered."
     if last and iso_date > last:
-        return (f"The calendar ends on {last}, so later dates cannot be entered yet. "
-                f"It has to be extended (calendar_ranges.csv) - tell whoever maintains the system.")
+        return (f"The calendar currently runs to {last}. Check the date - "
+                f"if it is right, try again in a moment.")
     return "Date not found in the calendar."
 
 

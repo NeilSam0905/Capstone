@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getProducts, getMonthlyUnits, getMeta, getStockPosition, getReorderAlerts, getAdvisories } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
@@ -8,12 +8,15 @@ import Modal from '../components/Modal';
 import FsnBandModal from '../components/FsnBandModal';
 import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
+import { AdvisoriesPanel, AdvisoriesJump } from '../components/Advisories';
+import { ADVISORIES_ANCHOR } from '../config';
 import { num, shortMonth, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
 import { ALL_CATEGORIES, ALL_SUPPLIERS } from '../services/dataService';
 
-export default function Overview({ filters, setPage }) {
+export default function Overview({ filters, setPage, user }) {
   const [productsOpen, setProductsOpen] = useState(false);
   const [fsnBand, setFsnBand] = useState(null);   // 'F' | 'S' | 'N' | null
+  const advisoriesRef = useRef(null);
   const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
     { key: `overview:products:${filters.supplier}|${filters.category}|${filters.dateRange}|${filters.rangeFrom}|${filters.rangeTo}` });
   const { data: monthly } = useData(() => getMonthlyUnits(filters), [filters], []);
@@ -24,13 +27,17 @@ export default function Overview({ filters, setPage }) {
   const { data: alerts } = useData(getReorderAlerts, []);
   const { data: advisories } = useData(getAdvisories, []);
 
-  // Compute reorder-now count by joining alerts to stock position
-  const stockById = new Map((stock?.items ?? []).map(p => [p.product_id, p.current_stock]));
-  const alertItems = (alerts?.available ? alerts.data.items : []).map(a => ({
-    ...a,
-    current_stock: stockById.get(a.product_id) ?? null,
-  }));
-  const reorderNow = alertItems.filter(a => a.current_stock != null && a.current_stock <= a.reorder_point);
+  // Below and near the reorder point, as /api/reorder flags them
+  // (needs_reorder: on hand <= ROP; approaching_rop: above ROP but within
+  // 20% of it), so this tile and the Reorder Alerts page count the same
+  // items. The stock position is only the filter: it holds the counted items
+  // the topbar's supplier and category leave, and an item outside it is not
+  // counted here.
+  const inView = new Set((stock?.items ?? []).map(p => p.product_id));
+  const alertItems = (alerts?.available ? alerts.data.items : [])
+    .filter(a => inView.has(a.product_id));
+  const belowRop = alertItems.filter(a => a.needs_reorder).length;
+  const nearRop = alertItems.filter(a => a.approaching_rop).length;
 
   const totals = useMemo(() => {
     const units = products.reduce((s, p) => s + p.total_units, 0);
@@ -96,9 +103,9 @@ export default function Overview({ filters, setPage }) {
         />
         <KPICard
           label="Items Below / Near ROP"
-          value={alerts?.available ? num(reorderNow.length) : <PendingValue />}
+          value={alerts?.available ? num(belowRop + nearRop) : <PendingValue />}
           sub={alerts?.available
-            ? `${reorderNow.length} item${reorderNow.length !== 1 ? 's' : ''} at or below reorder point`
+            ? `${num(belowRop)} at or below reorder point · ${num(nearRop)} within 20% of it`
             : alerts?.reason ?? 'Reorder data not yet available'}
           icon="alert"
           onClick={() => setPage?.('reorder')}
@@ -155,11 +162,17 @@ export default function Overview({ filters, setPage }) {
         </div>
       </div>
 
-      {/* Advisories — calendar-contextual, driven by real data */}
-      <div>
+      {/* Advisories — calendar-contextual, driven by real data. The id is
+          what the topbar's Advisories button scrolls to on this page
+          (App.jsx); on every other page that button opens them in a dialog. */}
+      <div id={ADVISORIES_ANCHOR} ref={advisoriesRef} style={{ scrollMarginTop: 12 }}>
         <div className="card-h"><span className="section-h">Upcoming Event Advisories</span></div>
         <AdvisoriesPanel advisories={advisories} setPage={setPage} />
       </div>
+
+      {/* Overview only: a floating pill that scrolls down to the section above,
+          which is the last thing on a long page. */}
+      <AdvisoriesJump target={advisoriesRef} user={user} />
 
       <ProductsModal
         open={productsOpen}
@@ -305,187 +318,5 @@ function ProductsModal({ open, onClose, products, stock }) {
           : <DataTable columns={columns} data={rows} pageSize={12} minWidth={900} />}
       </div>
     </Modal>
-  );
-}
-
-/* ---------------------------------------------------------------- advisories */
-
-/* Severity drives one token set — icon tint, chip tone, accent rail — instead
-   of the ad-hoc inline borderLeft/background pairs this used to carry. Keeping
-   them in one map is what stops "high" meaning warn in one place and crit in
-   another. */
-const SEVERITY = {
-  high:   { cls: 'is-high',   tag: 'warn', label: 'Act now' },
-  medium: { cls: 'is-medium', tag: 'gold', label: 'Plan for' },
-  low:    { cls: 'is-low',    tag: 'info', label: 'For info' },
-};
-
-const TYPE_ICON = {
-  enrollment: 'calPlus',
-  exam_week: 'file',
-  event: 'bell',
-  forecast_alert: 'trend',
-  info: 'clock',
-};
-
-const TYPE_LABEL = {
-  enrollment: 'Calendar',
-  exam_week: 'Calendar',
-  event: 'Event',
-  forecast_alert: 'Forecast',
-  info: 'Status',
-};
-
-function AdvisoriesPanel({ advisories, setPage }) {
-  if (!advisories) return <Loading label="Loading advisories…" />;
-
-  const items = advisories.advisories ?? [];
-
-  if (items.length === 0) {
-    return (
-      <div className="card card__pad">
-        <div className="hint">No upcoming calendar signals or events to advise on.</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="advisories">
-      {!advisories.has_forecast && (
-        <div className="notice notice--warn">
-          <b>Limited advisories:</b> the demand forecast has not been generated yet, so these are
-          based on calendar signals only. Run the forecast from the Tally Interface to enable
-          demand-driven recommendations.
-        </div>
-      )}
-      {items.map((advisory, i) => (
-        <AdvisoryCard key={i} advisory={advisory} setPage={setPage} />
-      ))}
-    </div>
-  );
-}
-
-/** One advisory.
- *
- *  Collapsed it is the sentence it always was, plus a scannable meta row.
- *  Expanded it answers the two questions the sentence raises and never used
- *  to: WHICH items, and on WHAT basis. Both come from the API (`items`,
- *  `basis`) rather than being inferred here — a screen must not invent an
- *  analytic the backend has not produced.
- *
- *  Only advisories that actually carry detail are expandable, so a chevron
- *  never promises something that is not there.
- */
-function AdvisoryCard({ advisory, setPage }) {
-  const [open, setOpen] = useState(false);
-  const sev = SEVERITY[advisory.severity] ?? SEVERITY.low;
-  const items = advisory.items ?? [];
-  const expandable = items.length > 0 || Boolean(advisory.basis);
-  const belowRop = items.filter(it => it.below_rop).length;
-
-  const dateText = advisory.date_range
-    && (advisory.date_range[0] === advisory.date_range[1]
-      ? usDate(advisory.date_range[0])
-      : `${usDate(advisory.date_range[0])} → ${usDate(advisory.date_range[1])}`);
-
-  const head = (
-    <>
-      <span className="advisory__icon"><Icon name={TYPE_ICON[advisory.type] || 'bell'} size={17} /></span>
-
-      <div className="advisory__main">
-        <div className="advisory__title">{advisory.title}</div>
-        <div className="advisory__desc">{advisory.description}</div>
-
-        <div className="advisory__meta">
-          <span className="advisory__kind">{TYPE_LABEL[advisory.type] || 'Advisory'}</span>
-          {dateText && <span>{dateText}</span>}
-          {items.length > 0 && (
-            <span>{num(items.length)} item{items.length === 1 ? '' : 's'}</span>
-          )}
-          {belowRop > 0 && (
-            <span className="advisory__flag">{num(belowRop)} below ROP</span>
-          )}
-        </div>
-      </div>
-
-      <span className="advisory__right">
-        <span className={`tag tag--${sev.tag}`}>{sev.label}</span>
-        {expandable && <span className={'advisory__chev' + (open ? ' is-open' : '')} aria-hidden="true" />}
-      </span>
-    </>
-  );
-
-  if (!expandable) {
-    return <div className={`card advisory ${sev.cls}`}><div className="advisory__head">{head}</div></div>;
-  }
-
-  return (
-    <div className={`card advisory ${sev.cls}` + (open ? ' is-open' : '')}>
-      <button type="button" className="advisory__head" onClick={() => setOpen(o => !o)} aria-expanded={open}>
-        {head}
-      </button>
-
-      {open && (
-        <div className="advisory__body">
-          {advisory.basis && (
-            <div className="advisory__basis">
-              <span className="advisory__basis-label">Why this is showing</span>
-              {advisory.basis}
-            </div>
-          )}
-
-          {items.length > 0 && (
-            <div style={{ overflowX: 'auto' }}>
-              <table className="tbl" style={{ minWidth: 620 }}>
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th>Class</th>
-                    <th className="num">Forecast 30d</th>
-                    <th className="num">On hand</th>
-                    <th className="num">ROP</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map(it => (
-                    <tr key={it.product_id}>
-                      <td>
-                        <b>{it.item_name}</b>
-                        <div className="hint">{it.supplier_name}</div>
-                      </td>
-                      <td><span className={`tag tag--${FSN_TONE[it.fsn_class] || 'info'}`}>{it.fsn_class || '—'}</span></td>
-                      <td className="num">
-                        {it.forecast_30d == null ? <span className="muted">—</span> : num(Math.round(it.forecast_30d))}
-                      </td>
-                      <td className="num">
-                        {it.current_stock == null
-                          ? <span className="muted">never counted</span>
-                          : num(it.current_stock)}
-                      </td>
-                      <td className="num">
-                        {it.reorder_point == null
-                          ? <span className="muted">—</span>
-                          : <span className={it.below_rop ? 'advisory__rop-hit' : undefined}>
-                              {num(Math.round(it.reorder_point))}
-                            </span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div className="btn-row" style={{ marginTop: 14 }}>
-            <button className="btn btn--ghost btn--sm" onClick={() => setPage?.('reorder')}>
-              Reorder Alerts <Icon name="arrow" size={12} />
-            </button>
-            <button className="btn btn--ghost btn--sm" onClick={() => setPage?.('forecast')}>
-              Demand Forecast <Icon name="arrow" size={12} />
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
   );
 }

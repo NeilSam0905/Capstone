@@ -2,9 +2,12 @@
 populate_dim_date.py
 ------------------------------------------------------------------
 Fills the Dim_Date table in ustore.db with one row per calendar day
-from 2023-01-01 to 2026-12-31, then applies the academic-calendar
-flags from calendar_ranges.csv, derives semester_id/semester_week
-from term windows, and populates is_tally_date from the sales data.
+from 2023-01-01 to the end of next year (or further, if Dim_Date
+already runs further - see calendar_end()), then applies the
+academic-calendar flags from calendar_ranges.csv, derives
+semester_id/semester_week from term windows, and populates
+is_tally_date from the sales data. Days past the last range in
+calendar_ranges.csv carry no academic flag (scripts/calendar_extent.py).
 
 HOW TO RUN:
     python populate_dim_date.py
@@ -68,8 +71,36 @@ DB_NAME = "ustore.db"
 CSV_NAME = "data/calendar_ranges.csv"
 SALES_WITH_ZEROS_CSV = "data/USTore_sales_long_with_zeros.csv"
 
-START_DATE = date(2023, 1, 1)
-END_DATE = date(2026, 12, 31)
+# START_DATE, the date_id rule and the Closure_Log / Event_Log readers are
+# shared with the backend, which appends days between pipeline runs
+# (calendar_extent.extend_dim_date). They are re-exported under their old
+# names here, so `pdd.load_closure_log` and friends still resolve.
+from calendar_extent import (  # noqa: E402  (scripts/ is on sys.path when this runs)
+    START_DATE, horizon_end, load_closure_log, load_event_dates,
+)
+
+
+def calendar_end(conn, today=None):
+    """Where the rebuilt Dim_Date stops: the end of next year (calendar_extent.
+    horizon_end), or later if Dim_Date already runs further - a day the
+    backend appended may carry Fact_Sales rows, and dropping it would orphan
+    them. It used to be fixed at 2026-12-31, the last day in
+    calendar_ranges.csv, which refused every entry after it."""
+    end = horizon_end(today)
+    try:
+        last = conn.execute("SELECT MAX(calendar_date) FROM Dim_Date").fetchone()[0]
+    except sqlite3.Error:
+        last = None
+    return max(end, date.fromisoformat(last)) if last else end
+
+
+def academic_end(csv_name):
+    """The last day calendar_ranges.csv says anything about. The last term's
+    window stops here rather than at the end of Dim_Date: past it there is no
+    published calendar, so those days get no semester_id, rather than all of
+    next year being counted as one long term."""
+    df = pd.read_csv(csv_name)
+    return pd.to_datetime(df["end_date"], format="%Y-%m-%d").max().date()
 
 FLAG_COLUMNS = [
     "is_enrollment_period",
@@ -125,50 +156,17 @@ def load_tally_dates(sales_csv, positive_only=False):
     return set(parsed.dt.date)
 
 
-def load_closure_log(con):
-    """Remediation D3. Latest Closure_Log row per closure_date wins (an
-    append-only log of toggle actions, not a snapshot), so a later
-    reopen correctly overrides an earlier closure. Returns {date: 0/1}.
-    Table may not exist yet on a database built before this migration -
-    that is a real error (create_schema.py first), not something to
-    silently skip."""
-    if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
-                       "AND name='Closure_Log'").fetchone():
-        raise RuntimeError("Closure_Log does not exist - run create_schema.py first "
-                           "(remediation D3 added this table).")
-    rows = con.execute("""
-        SELECT cl.closure_date, cl.is_closed
-        FROM Closure_Log cl
-        WHERE cl.closure_id = (
-            SELECT MAX(cl2.closure_id) FROM Closure_Log cl2
-            WHERE cl2.closure_date = cl.closure_date
-        )
-    """).fetchall()
-    return {date.fromisoformat(d): int(closed) for d, closed in rows}
-
-
-def load_event_dates(con):
-    """Remediation D3 (extended). Event_Log rows are a permanent flag,
-    same semantics backend/app.py's add_event() already applies at write
-    time (is_event_day never gets un-set) - this just makes that
-    survive a Dim_Date rebuild, which nothing previously did despite
-    create_schema.py's own comment claiming it."""
-    if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
-                       "AND name='Event_Log'").fetchone():
-        raise RuntimeError("Event_Log does not exist - run create_schema.py first.")
-    rows = con.execute("SELECT DISTINCT event_date FROM Event_Log").fetchall()
-    return {date.fromisoformat(d) for (d,) in rows}
-
-
 def main():
-    term_windows = derive_term_windows(CSV_NAME, END_DATE)
+    conn = sqlite3.connect(DB_NAME)
+    end_date = calendar_end(conn)
+    term_windows = derive_term_windows(CSV_NAME, academic_end(CSV_NAME))
     tally_dates = load_tally_dates(SALES_WITH_ZEROS_CSV)
     tally_dates_positive = load_tally_dates(SALES_WITH_ZEROS_CSV, positive_only=True)
 
     # ----- Step 1: one row per day, flags 0, semester fields empty -----
     rows = {}
     date_id = 1
-    for d in daterange(START_DATE, END_DATE):
+    for d in daterange(START_DATE, end_date):
         rows[d] = {
             "date_id": date_id,
             "calendar_date": d.isoformat(),
@@ -196,7 +194,7 @@ def main():
                 raise ValueError(f"Unknown flag '{flag}' in calendar_ranges.csv")
             for d in daterange(start, end):
                 if d not in rows:
-                    continue  # outside the 2023-01-01..2026-12-31 window
+                    continue  # outside the START_DATE..end_date window
                 rows[d][flag] = 1
 
     # ----- Step 3: is_tally_date(_positive) from the zero-inclusive sales data -----
@@ -215,7 +213,6 @@ def main():
                 rows[d]["semester_week"] = (d - start).days // 7 + 1
 
     # ----- Step 5: insert into SQLite -----
-    conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
     # ----- Step 4.5 (remediation D3): re-apply Closure_Log + Event_Log -----

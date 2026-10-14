@@ -137,7 +137,8 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
 .nav__back:hover { color: var(--nav-text-strong); }
 
 /* ----- Main column ----- */
-.main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* position: relative anchors the Overview's floating .advisories-jump pill. */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
 
 /* Topbar */
 .topbar {
@@ -177,6 +178,110 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
 .filter__chev { position: absolute; right: 10px; pointer-events: none; color: var(--muted); }
 /* "Change" beside an active custom date range: same height as the selects. */
 .topbar__edit-range { height: 34px; white-space: nowrap; flex-shrink: 0; }
+
+/* The Advisories button: on every dashboard page, last in the filter row and
+   the same height as the selects beside it. margin-left:auto keeps it at the
+   right edge once the row has wrapped to full width on narrower screens. */
+.topbar__advisories {
+  height: 34px; white-space: nowrap; flex-shrink: 0; margin-left: auto;
+  display: inline-flex; align-items: center; gap: 7px;
+}
+/* The count: a solid red circle, so it reads as "needs attention" at a
+   glance from anywhere on the page. */
+.topbar__badge {
+  min-width: 19px; height: 19px; padding: 0 6px; border-radius: 999px;
+  display: inline-grid; place-items: center;
+  font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums;
+  color: #fff; background: var(--crit);
+}
+
+/* Overview only: a pill floating at the bottom centre of the page area that
+   jumps down to the advisories, the last section of a long page. The app's
+   own primary style - ink with the gold accent - rather than an alarm colour:
+   it is a way in, not a warning.
+
+   Two layers, because two transforms would fight over one element:
+   .advisories-jump  is positioned against .main (which does not scroll, so
+                     it stays put while the page moves under it), centres
+                     itself, and fades away once the section is in view;
+   __body            carries the motion - it slides in on arrival, then hops
+                     every few seconds so it is noticed, and holds still
+                     under the pointer so it is easy to hit.
+   Below the modal scrim (60). */
+.advisories-jump {
+  position: absolute; left: 50%; bottom: 24px; z-index: 40;
+  transform: translateX(-50%);
+  transition: opacity .25s, transform .25s;
+}
+.advisories-jump.is-hidden {
+  opacity: 0; pointer-events: none;
+  transform: translateX(-50%) translateY(16px);
+}
+.advisories-jump__body {
+  display: flex; align-items: center; gap: 4px;
+  padding: 5px 5px 5px 7px; border-radius: 999px;
+  background: var(--ink); color: #fff;
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: 0 10px 26px rgba(20, 18, 14, .28), 0 2px 6px rgba(20, 18, 14, .16);
+  animation:
+    jump-in .55s cubic-bezier(.2, .9, .3, 1.25) both,
+    jump-hop 4.5s ease-in-out 1.6s infinite;
+}
+.advisories-jump__body:hover,
+.advisories-jump__body:focus-within { animation-play-state: paused; }
+
+/* The pill's main action: the count and the label. */
+.advisories-jump__go {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 2px 12px 2px 0; border: 0; background: none; color: inherit;
+  font: inherit; font-size: 13px; font-weight: 700; letter-spacing: .01em;
+  white-space: nowrap; cursor: pointer; border-radius: 999px;
+}
+.advisories-jump__go:focus-visible,
+.advisories-jump__close:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.advisories-jump__count {
+  min-width: 26px; height: 26px; padding: 0 8px; border-radius: 999px;
+  display: inline-grid; place-items: center;
+  font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums;
+  background: var(--accent); color: var(--ink);
+  animation: jump-glow 2s ease-out infinite;
+}
+
+/* "Don't show this again": set apart by a hairline, quieter than the action. */
+.advisories-jump__close {
+  width: 26px; height: 26px; border-radius: 999px; flex-shrink: 0;
+  display: inline-grid; place-items: center;
+  border: 0; border-left: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 0 999px 999px 0; padding-left: 2px;
+  background: none; color: rgba(255, 255, 255, .55); cursor: pointer;
+  transition: color .15s, background .15s;
+}
+.advisories-jump__close:hover { color: #fff; background: rgba(255, 255, 255, .1); }
+
+@keyframes jump-in {
+  from { opacity: 0; transform: translateY(28px) scale(.92); }
+  to   { opacity: 1; transform: none; }
+}
+/* Still for most of the cycle, then two quick hops - noticeable without
+   being something you have to look away from. */
+@keyframes jump-hop {
+  0%, 76%, 100% { transform: translateY(0); }
+  80%           { transform: translateY(-9px); }
+  85%           { transform: translateY(0); }
+  89%           { transform: translateY(-4px); }
+  93%           { transform: translateY(0); }
+}
+/* A gold ring that keeps spreading off the count. */
+@keyframes jump-glow {
+  0%   { box-shadow: 0 0 0 0 rgba(244, 180, 0, .6); }
+  70%  { box-shadow: 0 0 0 9px rgba(244, 180, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(244, 180, 0, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .advisories-jump, .advisories-jump__body, .advisories-jump__count {
+    transition: none; animation: none;
+  }
+}
 
 .scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 22px 26px 40px; }
 .scroll::-webkit-scrollbar { width: 9px; }
@@ -1032,6 +1137,9 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
    instead of an ad-hoc coloured border, a tinted icon chip, and a meta row
    that scans left-to-right. No inline colour anywhere in the JSX. */
 .advisories { display: flex; flex-direction: column; gap: 10px; }
+/* Inside the Advisories dialog (every page but the Overview) the list is the
+   one region that scrolls, as .modal-grow's tables do. */
+.advisories-scroll { flex: 1; min-height: 0; overflow: auto; padding-right: 2px; }
 
 .advisory {
   position: relative;

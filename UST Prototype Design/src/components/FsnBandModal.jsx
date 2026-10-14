@@ -12,9 +12,12 @@ import { num } from '../lib/format';
  * tiles, so both open the identical list rather than two that drift apart.
  */
 const BAND = {
-  F: { label: 'Fast-Moving',  tone: 'ok',   blurb: 'Sell regularly. Keep these in stock - running out costs the most sales.' },
-  S: { label: 'Slow-Moving',  tone: 'warn', blurb: 'Sell now and then. Worth stocking, but in smaller quantities.' },
-  N: { label: 'Non-Moving',   tone: 'crit', blurb: 'No sales recorded. Review before ordering more.' },
+  F: { label: 'Fast-Moving',  tone: 'ok',
+       blurb: 'Sell regularly. Keep these in stock - forecast and reorder at the reorder point; running out costs the most sales.' },
+  S: { label: 'Slow-Moving',  tone: 'warn',
+       blurb: 'Sell now and then. Stock smaller quantities and promote them: bundled pricing, better shelf placement, or marketing during enrollment and campus events. Those slow for two semesters running are flagged for discontinuation review on the FSN Classification page.' },
+  N: { label: 'Non-Moving',   tone: 'crit',
+       blurb: 'No sales recorded, so these are never reordered. Return them to the supplier, mark them down for clearance, or discontinue them.' },
 };
 
 export { BAND };

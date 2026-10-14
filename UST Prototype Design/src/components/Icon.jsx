@@ -30,6 +30,7 @@ export default function Icon({ name, size = 18, stroke = 2 }) {
     printer: <><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></>,
     sortAsc: <><polyline points="6 9 12 4 18 9"/></>,
     sortDesc: <><polyline points="6 15 12 20 18 15"/></>,
+    close: <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
     sortNone: <><polyline points="7 9 12 5 17 9"/><polyline points="7 15 12 19 17 15"/></>,
   }[name];
   return (

@@ -18,10 +18,13 @@ const CUSTOM_DEFAULT_MONTHS = 6;
  * nothing but the title when it is empty. A control that changes nothing on
  * screen is worse than no control at all: it invites the reader to trust a
  * cut that was never applied. App.jsx owns the per-page list.
+ *
+ * `action` is a control that belongs on every page whatever its filters (the
+ * Advisories button); it sits at the end of the row, after the filters.
  */
 export default function FilterBar({
   filters, setFilters, pageTitle, show = [],
-  forecastableSuppliers = false, supplierMonth,
+  forecastableSuppliers = false, supplierMonth, action = null,
 }) {
   const { data: suppliers } = useData(
     () => getSuppliers({ forecastable: forecastableSuppliers, month: supplierMonth }),
@@ -66,11 +69,13 @@ export default function FilterBar({
         <div className="topbar__crumb">USTore · Forecasting</div>
         <div className="topbar__title">{pageTitle}</div>
       </div>
-      {show.length > 0 && (
+      {(show.length > 0 || action) && (
         <div className="topbar__right">
-          <span className="topbar__filter-icon">
-            <Icon name="filter" size={15} />
-          </span>
+          {show.length > 0 && (
+            <span className="topbar__filter-icon">
+              <Icon name="filter" size={15} />
+            </span>
+          )}
           {show.includes('dateRange') && (
             <Filter label="Date Range" icon="cal" value={rangeValue}
                     onChange={setDateRange}
@@ -97,6 +102,7 @@ export default function FilterBar({
             <Filter label="Category" value={filters.category}
                     onChange={v => update('category', v)} options={categories} />
           )}
+          {action}
         </div>
       )}
     </header>

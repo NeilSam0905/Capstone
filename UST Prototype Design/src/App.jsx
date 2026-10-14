@@ -11,6 +11,8 @@ import TallyInterface from './pages/TallyInterface';
 import PowerBIDashboard from './pages/PowerBIDashboard';
 import Icon from './components/Icon';
 import ErrorBanner from './components/ErrorBanner';
+import { AdvisoriesButton, AdvisoriesModal } from './components/Advisories';
+import { ADVISORIES_ANCHOR } from './config';
 import useData from './hooks/useData';
 import {
   getMeta, getMonths, CUSTOM_RANGE, getSession, logout, onAuthExpired, clearApiCache,
@@ -153,6 +155,20 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
   const [reportMonth, setReportMonth] = useState(null);
   const selectedMonth = reportMonth ?? months[months.length - 1] ?? null;
 
+  // The advisories are the prescriptive half of the dashboard, so they are
+  // one click away on every page, through the topbar's Advisories button.
+  // The Overview already shows them in full,
+  // so there the button scrolls down to them; anywhere else it opens them in
+  // a dialog over the page. closeAdvisories is stable because Modal re-runs
+  // its open effect (and so re-focuses) whenever onClose changes identity.
+  const [advisoriesOpen, setAdvisoriesOpen] = useState(false);
+  const closeAdvisories = useCallback(() => setAdvisoriesOpen(false), []);
+  const openAdvisories = () => {
+    const section = page === 'overview' && document.getElementById(ADVISORIES_ANCHOR);
+    if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else setAdvisoriesOpen(true);
+  };
+
   const PageComponent = {
     overview:       Overview,
     classification: Classification,
@@ -228,7 +244,9 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
           show={shown}
           forecastableSuppliers={page === 'forecast'}
           supplierMonth={page === 'report' ? selectedMonth : undefined}
+          action={<AdvisoriesButton onClick={openAdvisories} />}
         />
+        <AdvisoriesModal open={advisoriesOpen} onClose={closeAdvisories} page={page} setPage={setPage} />
         <div className="scroll">
           {connectionError && <ErrorBanner error={connectionError} />}
           {/* setPage is handed to every page so a KPI or a chart can act as a
@@ -237,6 +255,7 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
           <PageComponent
             filters={pageFilters}
             setPage={setPage}
+            user={user}
             {...(page === 'report' ? { month: selectedMonth, setMonth: setReportMonth } : {})}
           />
         </div>

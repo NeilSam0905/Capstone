@@ -327,6 +327,12 @@ export const getCategoryForecast = category =>
 export const getCategoryForecasts = () => get('/forecast/categories');
 export const getReorderAlerts = () => get('/reorder');
 export const getAdvisories = () => get('/advisories');
+/** The FSN decision rules (manuscript Sec. 3.3.1): each SKU's action, and the
+ *  per-semester velocity "Review for Discontinuation" was judged on.
+ *  `threshold` (units per selling day) is omitted for the backend's default,
+ *  so the default request is the one prefetch warms. */
+export const getDecisionRules = threshold =>
+  get(`/fsn/decision-rules${qs({ threshold })}`);
 
 /** Stock position IS available for the items inventory covers — real
  *  counts and step2's days_of_supply. It carries no ROP, so it cannot say

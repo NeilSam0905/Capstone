@@ -149,6 +149,17 @@ last day (it is showing now: 90 days left), and a tally or import dated after th
 "The calendar ends on 2026-12-31 … it has to be extended" instead of "Date not found in the calendar"
 (`backend/validation.py` `calendar_gap_message`).
 
+**Status (2026-10-14): entries no longer stop; the academic calendar still does.** `Dim_Date` now extends
+itself to the end of next year (`scripts/calendar_extent.py`): `populate_dim_date.py` builds it that far on
+every run (keeping any day already in it, so app-entered rows are never orphaned), and the backend appends
+the missing days on its first request and before every dated save (tally, import, closure, event). Rows up
+to 2026-12-31 and every `date_id` are unchanged. The added days carry no enrollment, exam or break flag and
+no `semester_id` - `calendar_ranges.csv` is untouched - so every forecast reads them as ordinary days, as it
+already did for days with no row. Store closures and events logged by staff are applied to them. The Tally
+Interface banner now says that tallies after the school calendar's last day still save, and asks staff to
+record closures, holidays and events themselves. Still the group's: adding the AY 2026–27 second term and
+special term to `calendar_ranges.csv` (and 2.2), which is what restores the calendar check past 2026.
+
 ### 2.2 First-term enrollment is not in the calendar in any year
 
 **Found:** `calendar_ranges.csv` has 8 enrollment ranges, all of them January (second-term) or June

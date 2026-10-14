@@ -4,7 +4,7 @@ import KPICard from '../components/KPICard';
 import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
 import Pending, { Loading, PendingValue } from '../components/Pending';
-import { num, usDate } from '../lib/format';
+import { num, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
 
 export default function Reorder({ filters }) {
   const { data: stock, loading } = useData(() => getStockPosition(filters), [filters], null,
@@ -43,8 +43,13 @@ export default function Reorder({ filters }) {
   ];
 
   const alertColumns = [
-    { key: 'item_name', label: 'Product Name', strong: true, truncate: true, width: '20%' },
-    { key: 'fsn_class', label: 'Class', width: '6%' },
+    { key: 'item_name', label: 'Product Name', strong: true, truncate: true, width: '16%' },
+    {
+      key: 'fsn_class', label: 'Class', width: '10%',
+      render: v => v
+        ? <span className={`tag tag--${FSN_TONE[v] || 'info'}`}>{FSN_LABEL[v] || v}</span>
+        : <span className="muted">—</span>,
+    },
     { key: 'lead_time_days', label: 'Lead Time', num: true, width: '8%', render: v => `${v}d` },
     {
       key: 'current_stock', label: 'On Hand', num: true, width: '9%',

@@ -16,7 +16,7 @@
  */
 import {
   getMeta, getMonths, getCategories, getSuppliers, getProducts, getMonthlyUnits,
-  getStockPosition, getReorderAlerts, getAdvisories, getForecast,
+  getStockPosition, getReorderAlerts, getAdvisories, getDecisionRules, getForecast,
   getCategoryForecasts, getCategoryForecast, getBatchReport, onCacheCleared,
 } from './dataService';
 
@@ -55,6 +55,7 @@ async function run(gen) {
   await step(() => getStockPosition(DEFAULT_FILTERS));
   await step(getReorderAlerts);
   await step(getAdvisories);
+  await step(() => getDecisionRules());
   await step(getForecast);
 
   // Batch Sales Report opens on the latest month.

@@ -57,6 +57,17 @@ export const usDateTime = d => {
 export const FSN_TONE = { F: 'ok', S: 'warn', N: 'crit' };
 export const FSN_LABEL = { F: 'Fast', S: 'Slow', N: 'Non-Moving' };
 
+/** The FSN decision rules (backend/decision_rules.py, manuscript Sec. 3.3.1):
+ *  the action each item's class calls for, in display order. */
+export const RULE = {
+  keep_stocked:           { label: 'Keep in stock', tone: 'ok' },
+  promote:                { label: 'Promote',       tone: 'warn' },
+  review_discontinuation: { label: 'Review',        tone: 'gold' },
+  clear_out:              { label: 'Clear out',     tone: 'crit' },
+  discontinued:           { label: 'Discontinued',  tone: 'info' },
+};
+export const RULE_ORDER = Object.keys(RULE);
+
 
 /** Model provenance, as a reader's label.
  *

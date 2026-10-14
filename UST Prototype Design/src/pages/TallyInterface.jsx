@@ -642,7 +642,7 @@ function UpcomingOrders({ products, reloadKey }) {
   }
 
   return (
-    <details className="card card__pad card--upcoming collapse">
+    <details className="card card__pad card--upcoming collapse collapse--card">
       <summary>
         <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
           <Icon name="calPlus" size={14} /> Upcoming Bulk Orders
@@ -1689,29 +1689,33 @@ function EntriesByDate({ reloadKey }) {
  *  Deliberately only shown when there is something concrete to point at
  *  (`stale` is false when the pending counts are all zero), so it does not
  *  become a permanent decoration people learn to ignore. */
-/** The calendar (Dim_Date, from calendar_ranges.csv) has a last day, and no
- *  tally entry can be dated after it. Extending it is the group's decision
- *  (docs/SYSTEM_GAPS_AND_IMPROVEMENTS.md 2.1), so all this can do is make
- *  sure the deadline is seen in time: from CALENDAR_WARN_DAYS before it. */
+/** The published school calendar (enrollment, exam weeks, breaks -
+ *  calendar_ranges.csv) only runs so far ahead. The calendar the tally saves
+ *  into extends itself (scripts/calendar_extent.py), so entries after that
+ *  day still save; what the system stops knowing is when the store is shut
+ *  or busy. So from CALENDAR_WARN_DAYS before it, and after it, this asks
+ *  staff to record those days themselves - which the cards below do. */
 const CALENDAR_WARN_DAYS = 120;
 
 function CalendarEndBanner({ meta }) {
-  const end = meta?.calendar_span?.[1];
+  const end = meta?.academic_calendar_end;
   if (!end) return null;
   const daysLeft = Math.round((new Date(`${end}T00:00:00`) - new Date(`${today()}T00:00:00`)) / 86400000);
   if (daysLeft > CALENDAR_WARN_DAYS) return null;
   return (
-    <div className="notice notice--warn" style={{ display: 'flex', gap: 10 }}>
+    <div className="notice notice--info" style={{ display: 'flex', gap: 10 }}>
       <Icon name="cal" size={16} />
       <div>
         <b>
           {daysLeft >= 0
-            ? `The calendar ends on ${usDate(end)} — ${daysLeft} day${daysLeft === 1 ? '' : 's'} from now.`
-            : `The calendar ended on ${usDate(end)}.`}
+            ? `The school calendar is loaded up to ${usDate(end)} — ${daysLeft} day${daysLeft === 1 ? '' : 's'} from now.`
+            : `The school calendar ended on ${usDate(end)}.`}
         </b>
         <div style={{ marginTop: 4 }}>
-          Tallies dated after that day cannot be saved until it is extended with the next term&apos;s dates
-          (<span className="mono">data/calendar_ranges.csv</span>). Ask whoever maintains the system.
+          Tallies after that date still save. From then on the system does not know the school&apos;s
+          holidays, breaks or exam weeks, so record them yourself: mark each closing day and holiday
+          in <b>Store Closure / Suspension</b>, flag busy days in <b>Flag an Event</b>, and keep doing
+          the <b>Monthly Inventory Count</b>.
         </div>
       </div>
     </div>

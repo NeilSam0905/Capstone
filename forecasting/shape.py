@@ -39,7 +39,8 @@ CAL_COLS = ["is_enrollment_period", "is_exam_week", "is_event_day",
 
 def load_calendar(con):
     """Dim_Date's published-calendar flags, indexed by date. Known in advance
-    for every future date (Dim_Date runs to the end of 2026), so using them for
+    for every future date (Dim_Date runs to the end of next year; days past the
+    published calendar_ranges.csv carry no academic flag), so using them for
     the forecast window is not look-ahead."""
     cal = pd.read_sql_query(
         "SELECT calendar_date, %s FROM Dim_Date" % ", ".join(CAL_COLS), con,
