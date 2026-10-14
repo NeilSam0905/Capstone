@@ -42,6 +42,17 @@ def date_id_for(d):
     return (d - START_DATE).days + 1
 
 
+def _parse_day(value):
+    """A stored date, or None when it does not parse. The API checks dates
+    before storing them, but a row written before that check, or by hand,
+    must cost only itself - not every pipeline run that reads the log."""
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError:
+        print(f"calendar_extent: skipping unreadable date {value!r}")
+        return None
+
+
 def load_closure_log(con):
     """Remediation D3. Latest Closure_Log row per closure_date wins (an
     append-only log of toggle actions, not a snapshot), so a later
@@ -61,7 +72,8 @@ def load_closure_log(con):
             WHERE cl2.closure_date = cl.closure_date
         )
     """).fetchall()
-    return {date.fromisoformat(d): int(closed) for d, closed in rows}
+    days = ((_parse_day(d), closed) for d, closed in rows)
+    return {d: int(closed) for d, closed in days if d is not None}
 
 
 def load_event_dates(con):
@@ -74,7 +86,8 @@ def load_event_dates(con):
                        "AND name='Event_Log'").fetchone():
         raise RuntimeError("Event_Log does not exist - run create_schema.py first.")
     rows = con.execute("SELECT DISTINCT event_date FROM Event_Log").fetchall()
-    return {date.fromisoformat(d) for (d,) in rows}
+    days = (_parse_day(d) for (d,) in rows)
+    return {d for d in days if d is not None}
 
 
 def _has_table(con, name):

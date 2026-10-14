@@ -176,7 +176,7 @@ def _as_iso_date(value):
     if isinstance(value, date):
         return value.isoformat()
     s = str(value or "").strip()[:10]
-    return s if validation.ISO_DATE_RE.match(s) else None
+    return s if validation.is_iso_date(s) else None
 
 
 def _product_index(c):
@@ -1291,16 +1291,16 @@ def _restock_dates(payload, require_ordered=True):
     ordered = str(payload.get("ordered_on") or "").strip()
     delivered = str(payload.get("delivered_on") or "").strip() or None
     if require_ordered:
-        if not validation.ISO_DATE_RE.match(ordered):
+        if not validation.is_iso_date(ordered):
             errors["ordered_on"] = "Pick the date it was ordered."
         elif ordered > today_iso:
             errors["ordered_on"] = "The order date cannot be in the future."
     if delivered is not None:
-        if not validation.ISO_DATE_RE.match(delivered):
+        if not validation.is_iso_date(delivered):
             errors["delivered_on"] = "Delivered date must be YYYY-MM-DD."
         elif delivered > today_iso:
             errors["delivered_on"] = "The delivery date cannot be in the future."
-        elif ordered and validation.ISO_DATE_RE.match(ordered) and delivered < ordered:
+        elif ordered and validation.is_iso_date(ordered) and delivered < ordered:
             errors["delivered_on"] = "It cannot arrive before it was ordered."
     return ordered, delivered, errors
 
@@ -1491,7 +1491,7 @@ def get_date_flags(iso_date):
 
 @app.put("/api/calendar/<iso_date>/closure")
 def set_closure(iso_date):
-    if not validation.ISO_DATE_RE.match(iso_date):
+    if not validation.is_iso_date(iso_date):
         return jsonify({"ok": False, "errors": {"calendar_date": "Date must be YYYY-MM-DD."}}), 400
     payload = request.get_json(silent=True) or {}
     closed = 1 if payload.get("closed") else 0
@@ -1557,7 +1557,7 @@ def add_upcoming_order():
     if pid is None or not dbmod.one(c, "SELECT 1 FROM Dim_Product WHERE product_id = ?", (pid,)):
         errors["product_id"] = "Select an item."
     expected = str(payload.get("expected_date") or "").strip()
-    if not validation.ISO_DATE_RE.match(expected):
+    if not validation.is_iso_date(expected):
         errors["expected_date"] = "Pick the date it will be collected."
     elif expected < date.today().isoformat():
         errors["expected_date"] = "That date has passed - tally the sale instead."
@@ -1795,6 +1795,10 @@ def add_event():
     errors = {}
     if not calendar_date:
         errors["calendar_date"] = "Pick a date."
+    elif not validation.is_iso_date(calendar_date):
+        # Stored as given, and read back by populate_dim_date.py on every
+        # pipeline run - one malformed date used to fail every later run.
+        errors["calendar_date"] = "Date must be YYYY-MM-DD."
     if not event_name:
         errors["event_name"] = "Give the event a label."
     if errors:

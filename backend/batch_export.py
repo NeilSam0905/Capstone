@@ -51,6 +51,34 @@ from batch_pdf import long_month
 
 COLUMNS = ["Supplier", "Item", "Quantity", "Item Price (PHP)", "For Remittance (PHP)"]
 
+# --- formula injection -----------------------------------------------------
+#
+# Item and supplier names are typed by staff (Add Item, Rename, the
+# vocabulary), and these files are opened in Excel by Purchasing and Finance.
+# A name starting with one of these characters would be run as a formula
+# there - a remittance document is the last place for that.
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value):
+    """A CSV cell that Excel will show as text: a leading apostrophe on any
+    string that would otherwise start a formula (OWASP's CSV-injection
+    advice). Numbers pass untouched, so negative quantities stay numbers."""
+    if isinstance(value, str) and value.startswith(_FORMULA_START):
+        return "'" + value
+    return value
+
+
+def _text_cell(ws, row, col, value):
+    """Write a name into the sheet as text, never as a formula. openpyxl makes
+    any string starting with "=" a formula; forcing the cell type back to
+    string keeps the name exactly as typed, with no apostrophe showing. Only
+    for names: the sheet's own =SUM cells are written with ws.cell()."""
+    cell = ws.cell(row, col, value)
+    if isinstance(value, str) and cell.data_type == "f":
+        cell.data_type = "s"
+    return cell
+
 
 def _line_rows(report):
     """One row per line item, then a SUBTOTAL row per supplier — the same
@@ -75,7 +103,7 @@ def render_csv(report, month):
     writer.writerow([])
     writer.writerow(COLUMNS)
     for row in _line_rows(report):
-        writer.writerow(["" if v is None else v for v in row])
+        writer.writerow(["" if v is None else _csv_safe(v) for v in row])
     if report:
         writer.writerow([])
         writer.writerow(["GRAND TOTAL UNITS SOLD — ALL SUPPLIERS", "",
@@ -217,7 +245,7 @@ def render_xlsx(report, month, daily=None):
     # ---- one block per supplier -------------------------------------------
     row = 2
     for entry in report:
-        head = ws.cell(row, 1, entry["supplier"])
+        head = _text_cell(ws, row, 1, entry["supplier"])
         head.font = Font(name=NARROW, size=14, bold=True)
         head.fill = SUPPLIER_FILL
         for col in range(1, remit_col + 1):
@@ -227,7 +255,7 @@ def render_xlsx(report, month, daily=None):
         first_item_row = row
         for item in entry["items"]:
             by_date = quantities.get(item.get("product_id"), {})
-            ws.cell(row, 1, item["item_name"])
+            _text_cell(ws, row, 1, item["item_name"])
             for offset, iso in enumerate(days):
                 units = by_date.get(iso)
                 if units:

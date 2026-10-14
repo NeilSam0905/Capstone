@@ -30,6 +30,7 @@ pandas==2.3.3
 numpy==2.3.5
 scipy==1.16.3
 openpyxl==3.1.5
+defusedxml==0.7.1        # openpyxl's XML-bomb guard on uploaded .xlsx (see backend/requirements.txt)
 rapidfuzz==3.14.5
 scikit-learn==1.9.1
 cryptography==50.0.1

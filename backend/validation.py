@@ -13,6 +13,20 @@ ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ISO_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
+def is_iso_date(value):
+    """A real calendar day written YYYY-MM-DD. The pattern alone lets
+    '2026-13-45' through, and a stored date that will not parse breaks every
+    later reader of it - populate_dim_date.py among them - so every endpoint
+    that stores a date checks it with this."""
+    if not isinstance(value, str) or not ISO_DATE_RE.match(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def calendar_gap_message(con, iso_date):
     """Why a date is not in Dim_Date. The calendar now extends itself to the
     end of next year before every dated save (scripts/calendar_extent.py), so
@@ -63,7 +77,7 @@ def validate_entry(con, payload):
     calendar_date = payload.get("calendar_date")
     if not calendar_date:
         errors["calendar_date"] = "Pick a date."
-    elif not ISO_DATE_RE.match(calendar_date):
+    elif not is_iso_date(calendar_date):
         errors["calendar_date"] = "Date must be YYYY-MM-DD."
     elif calendar_date > date.today().isoformat():
         errors["calendar_date"] = "Date cannot be in the future."
