@@ -14,7 +14,7 @@ table Result_Prescriptive
 	column product_id
 		dataType: double
 		lineageTag: 6ceef483-67c4-477d-bd95-444cfaaaa5e9
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: product_id
 
 		annotation SummarizationSetBy = Automatic
@@ -218,6 +218,50 @@ table Result_Prescriptive
 		sourceColumn: generated_at
 
 		annotation SummarizationSetBy = Automatic
+
+	column rate_source
+		dataType: string
+		lineageTag: 497d15ef-faee-4753-bf21-3ee8ac972c1b
+		summarizeBy: none
+		sourceColumn: rate_source
+
+		annotation SummarizationSetBy = Automatic
+
+	column service_tier
+		dataType: string
+		lineageTag: 8ff070a2-3fd5-44ae-9f15-d954abaccc6e
+		summarizeBy: none
+		sourceColumn: service_tier
+
+		annotation SummarizationSetBy = Automatic
+
+	column buffer_quantile
+		dataType: double
+		lineageTag: 18c0e699-4a39-4584-be0c-0e053bea9e54
+		summarizeBy: sum
+		sourceColumn: buffer_quantile
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column buffer_source
+		dataType: string
+		lineageTag: ab2f4517-dc5e-4dd1-ae6a-64fc848faec6
+		summarizeBy: none
+		sourceColumn: buffer_source
+
+		annotation SummarizationSetBy = Automatic
+
+	column safety_stock_normal_legacy
+		dataType: double
+		lineageTag: 8ad1baae-041b-4ee7-9d7d-a14b2b123698
+		summarizeBy: sum
+		sourceColumn: safety_stock_normal_legacy
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	partition Result_Prescriptive = m
 		mode: import

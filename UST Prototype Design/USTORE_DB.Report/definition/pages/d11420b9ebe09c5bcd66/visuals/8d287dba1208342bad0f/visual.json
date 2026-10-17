@@ -3,10 +3,10 @@
   "name": "8d287dba1208342bad0f",
   "position": {
     "x": 670.13670886075954,
-    "y": 59.6253164556962,
-    "z": 7000,
+    "y": 104.99240506329114,
+    "z": 8000,
     "height": 300.07088607594937,
-    "width": 609.86329113924046,
+    "width": 174.33924050632911,
     "tabOrder": 7000
   },
   "visual": {
@@ -20,42 +20,14 @@
                 "Measure": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Dim_Product"
+                      "Entity": "Fact_Sales"
                     }
                   },
-                  "Property": "Fast"
+                  "Property": "Fast Unit Share"
                 }
               },
-              "queryRef": "Dim_Product.Fast",
-              "nativeQueryRef": "Fast"
-            },
-            {
-              "field": {
-                "Measure": {
-                  "Expression": {
-                    "SourceRef": {
-                      "Entity": "Dim_Product"
-                    }
-                  },
-                  "Property": "Slow"
-                }
-              },
-              "queryRef": "Dim_Product.Slow",
-              "nativeQueryRef": "Slow"
-            },
-            {
-              "field": {
-                "Measure": {
-                  "Expression": {
-                    "SourceRef": {
-                      "Entity": "Dim_Product"
-                    }
-                  },
-                  "Property": "Non"
-                }
-              },
-              "queryRef": "Dim_Product.Non",
-              "nativeQueryRef": "Non"
+              "queryRef": "Fact_Sales.Fast Unit Share",
+              "nativeQueryRef": "Fast Unit Share"
             }
           ]
         }
@@ -67,10 +39,10 @@
               "Measure": {
                 "Expression": {
                   "SourceRef": {
-                    "Entity": "Dim_Product"
+                    "Entity": "Fact_Sales"
                   }
                 },
-                "Property": "Fast"
+                "Property": "Fast Unit Share"
               }
             },
             "direction": "Descending"
@@ -83,59 +55,10 @@
       "label": [
         {
           "properties": {
-            "text": {
-              "expr": {
-                "Literal": {
-                  "Value": "'Fast-Moving Items'"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "Dim_Product.Fast"
-          }
-        },
-        {
-          "properties": {
-            "text": {
-              "expr": {
-                "Literal": {
-                  "Value": "'Slow-Moving Items'"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "Dim_Product.Slow"
-          }
-        },
-        {
-          "properties": {
-            "text": {
-              "expr": {
-                "Literal": {
-                  "Value": "'Non-Moving Items'"
-                }
-              }
-            },
             "position": {
               "expr": {
                 "Literal": {
-                  "Value": "'belowValue'"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "Dim_Product.Non"
-          }
-        },
-        {
-          "properties": {
-            "position": {
-              "expr": {
-                "Literal": {
-                  "Value": "'belowValue'"
+                  "Value": "'aboveValue'"
                 }
               }
             }
@@ -192,6 +115,52 @@
             "id": "default"
           }
         }
+      ],
+      "shapeCustomRectangle": [
+        {
+          "properties": {
+            "tileShape": {
+              "expr": {
+                "Literal": {
+                  "Value": "'rectangleRoundedByPixel'"
+                }
+              }
+            }
+          },
+          "selector": {
+            "id": "default"
+          }
+        },
+        {
+          "properties": {
+            "tileShape": {
+              "expr": {
+                "Literal": {
+                  "Value": "'rectangleRoundedByPixel'"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Fact_Sales.Fast Unit Share"
+          }
+        }
+      ],
+      "value": [
+        {
+          "properties": {
+            "underline": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          },
+          "selector": {
+            "id": "default"
+          }
+        }
       ]
     },
     "visualContainerObjects": {
@@ -201,7 +170,7 @@
             "show": {
               "expr": {
                 "Literal": {
-                  "Value": "true"
+                  "Value": "false"
                 }
               }
             },

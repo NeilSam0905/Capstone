@@ -7,7 +7,7 @@
     "z": 3000,
     "height": 299.71370143149284,
     "width": 600.7361963190184,
-    "tabOrder": 3000
+    "tabOrder": 2000
   },
   "visual": {
     "visualType": "clusteredColumnChart",
@@ -122,7 +122,7 @@
                   "expr": {
                     "ThemeDataColor": {
                       "ColorId": 1,
-                      "Percent": 0.2
+                      "Percent": 0
                     }
                   }
                 }
@@ -162,8 +162,9 @@
               "solid": {
                 "color": {
                   "expr": {
-                    "Literal": {
-                      "Value": "'#51CA48'"
+                    "ThemeDataColor": {
+                      "ColorId": 8,
+                      "Percent": 0
                     }
                   }
                 }
@@ -204,8 +205,8 @@
                 "color": {
                   "expr": {
                     "ThemeDataColor": {
-                      "ColorId": 0,
-                      "Percent": -0.5
+                      "ColorId": 1,
+                      "Percent": 0
                     }
                   }
                 }
@@ -316,7 +317,7 @@
             "text": {
               "expr": {
                 "Literal": {
-                  "Value": "'Demand by Academic context'"
+                  "Value": "'Average Daily Units by Calendar Period'"
                 }
               }
             },

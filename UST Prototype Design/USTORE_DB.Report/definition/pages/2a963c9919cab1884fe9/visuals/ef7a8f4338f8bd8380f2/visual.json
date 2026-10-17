@@ -3,11 +3,11 @@
   "name": "ef7a8f4338f8bd8380f2",
   "position": {
     "x": 0,
-    "y": 60.866290018832387,
+    "y": 100.65956367326231,
     "z": 2000,
-    "height": 660,
+    "height": 324.70826991374935,
     "width": 1280,
-    "tabOrder": 2000
+    "tabOrder": 1000
   },
   "visual": {
     "visualType": "pivotTable",
@@ -86,16 +86,16 @@
         "sort": [
           {
             "field": {
-              "Measure": {
+              "Column": {
                 "Expression": {
                   "SourceRef": {
-                    "Entity": "Fact_Sales"
+                    "Entity": "Dim_Product"
                   }
                 },
-                "Property": "Units Sold"
+                "Property": "supplier_name"
               }
             },
-            "direction": "Descending"
+            "direction": "Ascending"
           }
         ]
       }
@@ -144,6 +144,13 @@
               "expr": {
                 "Literal": {
                   "Value": "true"
+                }
+              }
+            },
+            "steppedLayoutIndentation": {
+              "expr": {
+                "Literal": {
+                  "Value": "10D"
                 }
               }
             }
@@ -223,7 +230,7 @@
             "value": {
               "expr": {
                 "Literal": {
-                  "Value": "1025.099410082121D"
+                  "Value": "1016.0425675674403D"
                 }
               }
             }

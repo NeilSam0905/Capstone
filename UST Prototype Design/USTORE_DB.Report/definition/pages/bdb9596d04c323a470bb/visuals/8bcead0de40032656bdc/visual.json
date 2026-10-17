@@ -2,12 +2,12 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.6.0/schema.json",
   "name": "8bcead0de40032656bdc",
   "position": {
-    "x": 630.18404907975457,
-    "y": 420.12269938650309,
-    "z": 7000,
-    "height": 299.71370143149284,
-    "width": 649.81595092024543,
-    "tabOrder": 7000
+    "x": 626.15859938208041,
+    "y": 419.85581874356336,
+    "z": 5000,
+    "height": 299.89701338825955,
+    "width": 653.8414006179197,
+    "tabOrder": 5000
   },
   "visual": {
     "visualType": "pivotTable",
@@ -27,8 +27,9 @@
                 }
               },
               "queryRef": "Dim_Date.day_name",
-              "nativeQueryRef": "day_name",
-              "active": true
+              "nativeQueryRef": "Day",
+              "active": true,
+              "displayName": "Day"
             }
           ]
         },
@@ -36,107 +37,19 @@
           "projections": [
             {
               "field": {
-                "HierarchyLevel": {
+                "Column": {
                   "Expression": {
-                    "Hierarchy": {
-                      "Expression": {
-                        "PropertyVariationSource": {
-                          "Expression": {
-                            "SourceRef": {
-                              "Entity": "Dim_Date"
-                            }
-                          },
-                          "Name": "Variation",
-                          "Property": "week_start"
-                        }
-                      },
-                      "Hierarchy": "Date Hierarchy"
+                    "SourceRef": {
+                      "Entity": "Dim_Date"
                     }
                   },
-                  "Level": "Year"
+                  "Property": "week_start"
                 }
               },
               "queryRef": "Dim_Date.week_start.Variation.Date Hierarchy.Year",
-              "nativeQueryRef": "week_start Year",
-              "active": true
-            },
-            {
-              "field": {
-                "HierarchyLevel": {
-                  "Expression": {
-                    "Hierarchy": {
-                      "Expression": {
-                        "PropertyVariationSource": {
-                          "Expression": {
-                            "SourceRef": {
-                              "Entity": "Dim_Date"
-                            }
-                          },
-                          "Name": "Variation",
-                          "Property": "week_start"
-                        }
-                      },
-                      "Hierarchy": "Date Hierarchy"
-                    }
-                  },
-                  "Level": "Quarter"
-                }
-              },
-              "queryRef": "Dim_Date.week_start.Variation.Date Hierarchy.Quarter",
-              "nativeQueryRef": "week_start Quarter",
-              "active": true
-            },
-            {
-              "field": {
-                "HierarchyLevel": {
-                  "Expression": {
-                    "Hierarchy": {
-                      "Expression": {
-                        "PropertyVariationSource": {
-                          "Expression": {
-                            "SourceRef": {
-                              "Entity": "Dim_Date"
-                            }
-                          },
-                          "Name": "Variation",
-                          "Property": "week_start"
-                        }
-                      },
-                      "Hierarchy": "Date Hierarchy"
-                    }
-                  },
-                  "Level": "Month"
-                }
-              },
-              "queryRef": "Dim_Date.week_start.Variation.Date Hierarchy.Month",
-              "nativeQueryRef": "week_start Month",
-              "active": false
-            },
-            {
-              "field": {
-                "HierarchyLevel": {
-                  "Expression": {
-                    "Hierarchy": {
-                      "Expression": {
-                        "PropertyVariationSource": {
-                          "Expression": {
-                            "SourceRef": {
-                              "Entity": "Dim_Date"
-                            }
-                          },
-                          "Name": "Variation",
-                          "Property": "week_start"
-                        }
-                      },
-                      "Hierarchy": "Date Hierarchy"
-                    }
-                  },
-                  "Level": "Day"
-                }
-              },
-              "queryRef": "Dim_Date.week_start.Variation.Date Hierarchy.Day",
-              "nativeQueryRef": "week_start Day",
-              "active": false
+              "nativeQueryRef": "Week",
+              "active": true,
+              "displayName": "Week"
             }
           ]
         },
@@ -158,6 +71,23 @@
             }
           ]
         }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "Dim_Date"
+                  }
+                },
+                "Property": "week_start"
+              }
+            },
+            "direction": "Descending"
+          }
+        ]
       }
     },
     "expansionStates": [
@@ -184,25 +114,6 @@
               }
             ],
             "isPinned": true
-          },
-          {
-            "queryRefs": [
-              "Dim_Date.week_start.Variation.Date Hierarchy.Quarter"
-            ],
-            "isCollapsed": true,
-            "isPinned": true
-          },
-          {
-            "queryRefs": [
-              "Dim_Date.week_start.Variation.Date Hierarchy.Month"
-            ],
-            "isCollapsed": true
-          },
-          {
-            "queryRefs": [
-              "Dim_Date.week_start.Variation.Date Hierarchy.Day"
-            ],
-            "isCollapsed": true
           }
         ],
         "root": {
@@ -261,32 +172,25 @@
                         }
                       },
                       "FillRule": {
-                        "linearGradient3": {
+                        "linearGradient2": {
                           "min": {
                             "color": {
                               "Literal": {
-                                "Value": "'#F43D3D'"
-                              }
-                            }
-                          },
-                          "mid": {
-                            "color": {
-                              "Literal": {
-                                "Value": "'#e1c233'"
+                                "Value": "'#FFFFFF'"
                               }
                             }
                           },
                           "max": {
                             "color": {
                               "Literal": {
-                                "Value": "'#20DA29'"
+                                "Value": "'#D9B300'"
                               }
                             }
                           },
                           "nullColoringStrategy": {
                             "strategy": {
                               "Literal": {
-                                "Value": "'asZero'"
+                                "Value": "'noColor'"
                               }
                             }
                           }
@@ -322,6 +226,40 @@
             }
           }
         }
+      ],
+      "columnWidth": [
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "152.50257466529354D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Dim_Date.week_start.Variation.Date Hierarchy.Year"
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {
+            "layout": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Tabular'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnTotal": [
+        {
+          "properties": {}
+        }
       ]
     },
     "visualContainerObjects": {
@@ -346,6 +284,19 @@
               "expr": {
                 "Literal": {
                   "Value": "'center'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "stylePreset": [
+        {
+          "properties": {
+            "name": {
+              "expr": {
+                "Literal": {
+                  "Value": "'AlternatingRowsNew'"
                 }
               }
             }

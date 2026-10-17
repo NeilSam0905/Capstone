@@ -3,7 +3,7 @@
   "name": "28977aa6269297116481",
   "position": {
     "x": 0,
-    "y": 64.130879345603276,
+    "y": 104.70347648261759,
     "z": 1000,
     "height": 299.71370143149284,
     "width": 609.89775051124741,
@@ -17,107 +17,36 @@
           "projections": [
             {
               "field": {
-                "HierarchyLevel": {
+                "Column": {
                   "Expression": {
-                    "Hierarchy": {
-                      "Expression": {
-                        "PropertyVariationSource": {
-                          "Expression": {
-                            "SourceRef": {
-                              "Entity": "Dim_Date"
-                            }
-                          },
-                          "Name": "Variation",
-                          "Property": "Month"
-                        }
-                      },
-                      "Hierarchy": "Date Hierarchy"
+                    "SourceRef": {
+                      "Entity": "Dim_Date"
                     }
                   },
-                  "Level": "Year"
+                  "Property": "Month"
                 }
               },
               "queryRef": "Dim_Date.Month.Variation.Date Hierarchy.Year",
               "nativeQueryRef": "Month Year",
               "active": true
-            },
+            }
+          ]
+        },
+        "Tooltips": {
+          "projections": [
             {
               "field": {
-                "HierarchyLevel": {
+                "Measure": {
                   "Expression": {
-                    "Hierarchy": {
-                      "Expression": {
-                        "PropertyVariationSource": {
-                          "Expression": {
-                            "SourceRef": {
-                              "Entity": "Dim_Date"
-                            }
-                          },
-                          "Name": "Variation",
-                          "Property": "Month"
-                        }
-                      },
-                      "Hierarchy": "Date Hierarchy"
+                    "SourceRef": {
+                      "Entity": "Fact_Sales"
                     }
                   },
-                  "Level": "Quarter"
+                  "Property": "Untallied Days"
                 }
               },
-              "queryRef": "Dim_Date.Month.Variation.Date Hierarchy.Quarter",
-              "nativeQueryRef": "Month Quarter",
-              "active": true
-            },
-            {
-              "field": {
-                "HierarchyLevel": {
-                  "Expression": {
-                    "Hierarchy": {
-                      "Expression": {
-                        "PropertyVariationSource": {
-                          "Expression": {
-                            "SourceRef": {
-                              "Entity": "Dim_Date"
-                            }
-                          },
-                          "Name": "Variation",
-                          "Property": "Month"
-                        }
-                      },
-                      "Hierarchy": "Date Hierarchy"
-                    }
-                  },
-                  "Level": "Month"
-                }
-              },
-              "queryRef": "Dim_Date.Month.Variation.Date Hierarchy.Month",
-              "nativeQueryRef": "Month Month",
-              "active": true
-            },
-            {
-              "field": {
-                "HierarchyLevel": {
-                  "Expression": {
-                    "Hierarchy": {
-                      "Expression": {
-                        "PropertyVariationSource": {
-                          "Expression": {
-                            "SourceRef": {
-                              "Entity": "Dim_Date"
-                            }
-                          },
-                          "Name": "Variation",
-                          "Property": "Month"
-                        }
-                      },
-                      "Hierarchy": "Date Hierarchy"
-                    }
-                  },
-                  "Level": "Day"
-                }
-              },
-              "queryRef": "Dim_Date.Month.Variation.Date Hierarchy.Day",
-              "nativeQueryRef": "Month Day",
-              "active": true
+              "queryRef": "Fact_Sales.Untallied Days",
+              "nativeQueryRef": "Untallied Days"
             }
           ]
         },
@@ -131,15 +60,56 @@
                       "Entity": "Fact_Sales"
                     }
                   },
-                  "Property": "Units Sold"
+                  "Property": "Avg Daily Units"
                 }
               },
-              "queryRef": "Fact_Sales.Units Sold",
-              "nativeQueryRef": "Units Sold"
+              "queryRef": "Fact_Sales.Avg Daily Units",
+              "nativeQueryRef": "Avg Daily Units"
             }
           ]
         }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "Dim_Date"
+                  }
+                },
+                "Property": "Month"
+              }
+            },
+            "direction": "Ascending"
+          }
+        ],
+        "isDefaultSort": true
       }
+    },
+    "objects": {
+      "dataPoint": [
+        {
+          "properties": {
+            "fill": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "ThemeDataColor": {
+                      "ColorId": 1,
+                      "Percent": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Fact_Sales.Avg Daily Units"
+          }
+        }
+      ]
     },
     "visualContainerObjects": {
       "title": [
@@ -148,7 +118,7 @@
             "text": {
               "expr": {
                 "Literal": {
-                  "Value": "'Yearly Demand Trend'"
+                  "Value": "'Average Daily Units by Month'"
                 }
               }
             },

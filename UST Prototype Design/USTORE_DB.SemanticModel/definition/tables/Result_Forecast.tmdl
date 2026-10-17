@@ -22,12 +22,15 @@ table Result_Forecast
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	column forecast_date
-		dataType: string
+		dataType: dateTime
+		formatString: Long Date
 		lineageTag: 11ce12a8-188b-4c0f-b124-7083c7540382
 		summarizeBy: none
 		sourceColumn: forecast_date
 
 		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
 
 	column yhat
 		dataType: double
@@ -85,12 +88,71 @@ table Result_Forecast
 
 		annotation SummarizationSetBy = Automatic
 
+	column horizon_days
+		dataType: double
+		lineageTag: 0bb8c0ab-8b68-467d-9a9e-560ff6c13277
+		summarizeBy: sum
+		sourceColumn: horizon_days
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column buffer_units
+		dataType: double
+		lineageTag: 61d3f6e6-9544-415e-b3be-a8414f427b36
+		summarizeBy: sum
+		sourceColumn: buffer_units
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column rate_source
+		dataType: string
+		lineageTag: 7154b532-b3a8-44d0-a633-9f0b1d0e4af7
+		summarizeBy: none
+		sourceColumn: rate_source
+
+		annotation SummarizationSetBy = Automatic
+
+	column service_tier
+		dataType: string
+		lineageTag: 265f3d1f-a343-4f4f-9491-8245d4b437db
+		summarizeBy: none
+		sourceColumn: service_tier
+
+		annotation SummarizationSetBy = Automatic
+
+	column buffer_quantile
+		dataType: double
+		lineageTag: eba96f24-819b-400e-a626-e8cdd1868909
+		summarizeBy: sum
+		sourceColumn: buffer_quantile
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column buffer_source
+		dataType: string
+		lineageTag: 2765ee09-3fb2-485c-81b3-4acaa3ce858d
+		summarizeBy: none
+		sourceColumn: buffer_source
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Result_Forecast = m
 		mode: import
 		source =
 				let
 				    Source = Odbc.DataSource("DRIVER={SQLite3 ODBC Driver};Database=" & UstoreDbPath, [HierarchicalNavigation=true]),
-				    Result_Forecast_Table = Source{[Name="Result_Forecast",Kind="Table"]}[Data]
+				    Result_Forecast_Table = Source{[Name="Result_Forecast",Kind="Table"]}[Data],
+				    #"Changed Type" = Table.TransformColumnTypes(Result_Forecast_Table,{{"forecast_date", type date}})
 				in
-				    Result_Forecast_Table
+				    #"Changed Type"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
 

@@ -13,6 +13,10 @@ table Dim_Date
 		formatString: 0
 		lineageTag: 6f85acc5-e9d5-4273-9075-7c343f022067
 
+	measure 'Stock By' = MIN(Dim_Date[calendar_date]) - 18
+		formatString: Short Date
+		lineageTag: 0739ff23-6738-4383-8498-5fcb97bb614e
+
 	column date_id
 		dataType: double
 		lineageTag: e1731681-26a2-4597-8caa-082785fc81d3
@@ -25,15 +29,10 @@ table Dim_Date
 
 	column calendar_date
 		dataType: dateTime
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: 02b3862d-6e9e-4ae2-98b8-51c54ebdc43a
 		summarizeBy: none
 		sourceColumn: calendar_date
-
-		variation Variation
-			isDefault
-			relationship: 903d540b-3952-45e2-b4ca-364c100c3966
-			defaultHierarchy: LocalDateTable_f291a074-5e56-45f8-acf0-f71edc8586b4.'Date Hierarchy'
 
 		annotation SummarizationSetBy = Automatic
 
@@ -134,11 +133,6 @@ table Dim_Date
 		summarizeBy: none
 		sourceColumn: Month
 
-		variation Variation
-			isDefault
-			relationship: 73e058d5-3f22-48ca-b798-057f9c51d3ed
-			defaultHierarchy: LocalDateTable_bf2e061e-dc97-4cfe-a1a8-f7f696d37da8.'Date Hierarchy'
-
 		annotation SummarizationSetBy = Automatic
 
 		annotation UnderlyingDateTimeDataType = Date
@@ -155,15 +149,10 @@ table Dim_Date
 
 	column week_start
 		dataType: dateTime
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: d7772f23-4d28-4562-8f11-78a31cabc088
 		summarizeBy: none
 		sourceColumn: week_start
-
-		variation Variation
-			isDefault
-			relationship: 9922b5f2-db4a-4515-9a12-9f62f2ac376a
-			defaultHierarchy: LocalDateTable_075a5013-a7dd-46b5-8673-efd6e9fd879a.'Date Hierarchy'
 
 		annotation SummarizationSetBy = Automatic
 
@@ -174,6 +163,9 @@ table Dim_Date
 		lineageTag: 8d13b453-2752-46d4-8cc2-4dc24bfe3f49
 		summarizeBy: none
 		sourceColumn: day_name
+		sortByColumn: day_num
+
+		changedProperty = SortByColumn
 
 		annotation SummarizationSetBy = Automatic
 

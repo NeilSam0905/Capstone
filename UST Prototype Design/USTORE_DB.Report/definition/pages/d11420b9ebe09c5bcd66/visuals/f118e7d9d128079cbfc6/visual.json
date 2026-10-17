@@ -3,7 +3,7 @@
   "name": "f118e7d9d128079cbfc6",
   "position": {
     "x": 858.08607594936711,
-    "y": 0,
+    "y": 23.331645569620253,
     "z": 3000,
     "height": 66.754430379746836,
     "width": 180.17215189873417,
@@ -23,11 +23,11 @@
                       "Entity": "Dim_Product"
                     }
                   },
-                  "Property": "category"
+                  "Property": "forecast_category"
                 }
               },
-              "queryRef": "Dim_Product.category",
-              "nativeQueryRef": "category",
+              "queryRef": "Dim_Product.forecast_category",
+              "nativeQueryRef": "forecast_category",
               "active": true
             }
           ]

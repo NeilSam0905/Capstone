@@ -1,24 +1,65 @@
 table Fact_Sales
 	lineageTag: 4f258b19-cfd8-4a58-a628-127098bd8aad
 
-	measure 'Units Sold' = SUM(Fact_Sales[quantity_sold])
+	measure 'Units Sold' = CALCULATE(SUM(Fact_Sales[quantity_sold]), Fact_Sales[transaction_type] = "sale")
 		formatString: 0
 		lineageTag: e7624129-8e36-44d4-8406-915c0f73f4a2
 
 		annotation PBI_FormatHint = {"isDecimal":true}
 
-	measure 'Line Total (ref)' =
-			
-			SUMX(Fact_Sales, Fact_Sales[quantity_sold] * RELATED(Dim_Product[unit_price_php]))
+	measure 'Line Total (ref)' = CALCULATE(SUMX(Fact_Sales, Fact_Sales[quantity_sold] * RELATED(Dim_Product[unit_price_php])), Fact_Sales[transaction_type] = "sale")
 		formatString: #,0.00\ "₱";-#,0.00\ "₱";#,0.00\ "₱"
 		lineageTag: 3f286580-88e5-40e8-963e-e5bd0e1e31ff
 
 		annotation PBI_FormatHint = {"currencyCulture":"es-PH"}
 
-	measure 'Avg Daily Units' =
-			
-			DIVIDE(SUM(Fact_Sales[quantity_sold]), DISTINCTCOUNT(Fact_Sales[date_id]))
+	measure 'Avg Daily Units' = DIVIDE([Units Sold], CALCULATE(DISTINCTCOUNT(Fact_Sales[date_id]), Fact_Sales[transaction_type] = "sale"))
 		lineageTag: 98953222-dcc5-4b76-85fb-c07d4eb3d181
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Latest Sale Date' = MAXX(FILTER(Fact_Sales, Fact_Sales[quantity_sold] > 0), RELATED(Dim_Date[calendar_date]))
+		formatString: Short Date
+		lineageTag: c57c624e-a752-4160-ac96-6256e44a1f99
+
+	measure 'Total Units (all)' = CALCULATE([Units Sold], REMOVEFILTERS())
+		lineageTag: 10796aaf-db49-4193-9978-9baeb2cc0279
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Unpriced Units' = CALCULATE([Units Sold], ISBLANK(Dim_Product[unit_price_php]))
+		formatString: 0
+		lineageTag: d477d413-7344-4e0d-88c2-b4949565db4f
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Untallied Days' = CALCULATE(COUNTROWS(Dim_Date), Dim_Date[is_tally_date] = 0)
+		formatString: 0
+		lineageTag: 1ea10e59-c313-45ac-8056-8172d5a588b5
+
+	measure 'Fast Unit Share' = DIVIDE(CALCULATE([Units Sold], Dim_Product[fsn_class] = "FAST"), [Units Sold])
+		formatString: 0.00%;-0.00%;0.00%
+		lineageTag: 85dddfc2-925e-47c2-af2e-df13dab18ba3
+
+	measure 'Cum % Units' = ```
+			
+			      VAR CurVal = [Units Sold]
+			      VAR RunningTotal = SUMX(FILTER(ALLSELECTED(Dim_Product[item_name]), [Units Sold] >= CurVal), [Units Sold])
+			      VAR GrandTotal = CALCULATE([Units Sold], ALLSELECTED(Dim_Product[item_name]))
+			      RETURN DIVIDE(RunningTotal, GrandTotal)
+			```
+		lineageTag: 27734aa8-fd6d-4307-b633-9a3b48d9b1c1
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Cum % Units (Supplier)' = ```
+			
+			      VAR CurVal = [Units Sold]
+			      VAR RunningTotal = SUMX(FILTER(ALLSELECTED(Dim_Product[supplier_name]), [Units Sold] >= CurVal), [Units Sold])
+			      VAR GrandTotal = CALCULATE([Units Sold], ALLSELECTED(Dim_Product[supplier_name]))
+			      RETURN DIVIDE(RunningTotal, GrandTotal)
+			```
+		lineageTag: 303b2043-ab32-4df4-93ee-04a7698d1ce0
 
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
@@ -128,6 +169,22 @@ table Fact_Sales
 		lineageTag: 5f94502d-bdfc-42a8-8227-7dedbe571ba4
 		summarizeBy: none
 		sourceColumn: transaction_type
+
+		annotation SummarizationSetBy = Automatic
+
+	column order_type
+		dataType: string
+		lineageTag: 793f63c7-0544-4a64-8bc1-183d619e8d8b
+		summarizeBy: none
+		sourceColumn: order_type
+
+		annotation SummarizationSetBy = Automatic
+
+	column entered_by
+		dataType: string
+		lineageTag: cea20d39-2f95-4c13-b343-759a97ae2001
+		summarizeBy: none
+		sourceColumn: entered_by
 
 		annotation SummarizationSetBy = Automatic
 
