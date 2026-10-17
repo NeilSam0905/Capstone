@@ -9,6 +9,7 @@ import {
   getNamesToReview, settleName, renameProduct,
   getRestocks, addRestock, markRestockDelivered, deleteRestock,
   getUpcomingOrders, addUpcomingOrder, deleteUpcomingOrder,
+  editClosure, editEvent, deleteEvent,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
@@ -1473,9 +1474,18 @@ function ClosureAndEventCards({ onSaved, reloadKey }) {
   const [event, setEvent] = useState({ calendar_date: today(), event_name: '', event_description: '' });
   const [errors, setErrors] = useState({});
   const [note, setNote] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const closeEditor = useCallback(() => setEditing(false), []);
 
   const { data: closed } = useData(getClosedDates, [reloadKey], []);
   const { data: events } = useData(getEventLog, [reloadKey], []);
+
+  const editButton = (
+    <button type="button" className="btn btn--ghost btn--sm" onClick={() => setEditing(true)}
+            title="Change or remove a closure or an event, upcoming or previous">
+      <Icon name="cal" size={13} /> Edit dates
+    </button>
+  );
 
   async function toggleClosed(isClosed) {
     const result = await setStoreClosed(closureDate, isClosed, closureReason);
@@ -1504,6 +1514,7 @@ function ClosureAndEventCards({ onSaved, reloadKey }) {
             <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
               <Icon name="calOff" size={14} /> Store Closure / Suspension
             </span>
+            {editButton}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1574,6 +1585,7 @@ function ClosureAndEventCards({ onSaved, reloadKey }) {
             <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
               <Icon name="calPlus" size={14} /> Flag an Event
             </span>
+            {editButton}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1606,7 +1618,315 @@ function ClosureAndEventCards({ onSaved, reloadKey }) {
         </div>
       </div>
       {note && <div className="ok-text" style={{ fontSize: 12.5 }}><Icon name="check" size={14} />{note}</div>}
+      {editing && (
+        <EditCalendarModal onClose={closeEditor} closed={closed} events={events} onSaved={onSaved} />
+      )}
     </>
+  );
+}
+
+/* ------------------------------------------------ Edit upcoming dates */
+
+/** Today in the store's own time. today() above is UTC, which in Manila is
+ *  still yesterday until 8 a.m. - and this decides what counts as upcoming,
+ *  the same rule the backend applies with its local date. */
+function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** An upcoming date can only move forward of today; a previous one is a
+ *  correction to the record, so it stays on or before today. */
+function dateBounds(past) {
+  return past ? { max: localToday() } : { min: localToday() };
+}
+
+/** The store's closures and events, as the same compact list the Flagged
+ *  closed card shows, with each row editable in place: Edit opens the row
+ *  for a new date and reason (or label), Delete asks once and removes it.
+ *
+ *  Two tabs. Upcoming: what the school calendar may still shift, soonest
+ *  first. Previous: corrections to the record, newest first, with a month
+ *  filter - there are well over a hundred past closures. A closure read only
+ *  from the tally workbook is shown there but cannot be changed here: the
+ *  pipeline reads it back from the workbook on every run, so the workbook is
+ *  where it is fixed.
+ *
+ *  Each row saves on its own, so one bad date never blocks the others.
+ *  Mounted only while open, so every opening starts clean. */
+function EditCalendarModal({ onClose, closed, events, onSaved }) {
+  const [done, setDone] = useState(null);
+  const [tab, setTab] = useState('upcoming');          // upcoming | previous
+  const [month, setMonth] = useState('all');           // 'YYYY-MM' | all, Previous only
+
+  const now = localToday();
+  const past = tab === 'previous';
+  const inTab = d => (past ? d < now : d >= now);
+  const inMonth = d => !past || month === 'all' || d.startsWith(month);
+  const order = (a, b) => (past ? b.localeCompare(a) : a.localeCompare(b));
+
+  const count = {
+    upcoming: closed.filter(c => c.calendar_date >= now && c.source !== 'workbook').length
+      + events.filter(e => e.calendar_date >= now).length,
+    previous: closed.filter(c => c.calendar_date < now).length
+      + events.filter(e => e.calendar_date < now).length,
+  };
+  const months = [...new Set([...closed, ...events]
+    .map(x => x.calendar_date)
+    .filter(d => d < now)
+    .map(d => d.slice(0, 7)))].sort((a, b) => b.localeCompare(a));
+
+  const closures = closed
+    .filter(c => inTab(c.calendar_date) && inMonth(c.calendar_date) && (past || c.source !== 'workbook'))
+    .sort((a, b) => order(a.calendar_date, b.calendar_date));
+  const shownEvents = events
+    .filter(e => inTab(e.calendar_date) && inMonth(e.calendar_date))
+    .sort((a, b) => order(a.calendar_date, b.calendar_date));
+
+  function saved(message) {
+    setDone(message);
+    onSaved();
+  }
+
+  function switchTab(next) {
+    setTab(next);
+    setDone(null);
+  }
+
+  return (
+    <Modal open onClose={onClose} width={780} title="Edit Dates"
+           subtitle="Change or remove a store closure or an event - upcoming ones when the school calendar shifts, previous ones to correct the record.">
+      <div className="modal-grow">
+        <div className="edit-dates">
+          <div className="edit-dates__bar">
+            <div className="edit-dates__tabs" role="tablist" aria-label="Which dates">
+              {[['upcoming', 'Upcoming'], ['previous', 'Previous']].map(([key, label]) => (
+                <button key={key} type="button" role="tab" aria-selected={tab === key}
+                        className={'edit-dates__tab' + (tab === key ? ' is-active' : '')}
+                        onClick={() => switchTab(key)}>
+                  {label} <span className="edit-dates__count">{num(count[key])}</span>
+                </button>
+              ))}
+            </div>
+            {past && (
+              <label className="hint edit-dates__month">
+                Month
+                <select className="inline-select" value={month} onChange={e => setMonth(e.target.value)}>
+                  <option value="all">All months</option>
+                  {months.map(m => <option key={m} value={m}>{longMonth(m)}</option>)}
+                </select>
+              </label>
+            )}
+          </div>
+
+          {past && (
+            <div className="notice notice--info edit-dates__note">
+              A change to a past date changes the history the forecasts learn from. It takes effect at
+              the next pipeline run.
+            </div>
+          )}
+          {done && <div className="ok-text" style={{ fontSize: 12.5 }}><Icon name="check" size={14} />{done}</div>}
+
+          <div className="section-h edit-dates__h">
+            <Icon name="calOff" size={14} /> Store closures
+            <span className="hint">{closures.length} {past ? 'previous · newest first' : 'upcoming · soonest first'}</span>
+          </div>
+          {closures.length === 0
+            ? <div className="hint">{past ? 'No previous closures in this month.' : 'No upcoming closures.'}</div>
+            : (
+              <ul className="date-list date-list--closures date-list--edit">
+                {closures.map(c => <ClosureItem key={c.calendar_date} closure={c} past={past} onSaved={saved} />)}
+              </ul>
+            )}
+
+          <div className="section-h edit-dates__h">
+            <Icon name="calPlus" size={14} /> Events
+            <span className="hint">{shownEvents.length} {past ? 'previous · newest first' : 'upcoming · soonest first'}</span>
+          </div>
+          {shownEvents.length === 0
+            ? <div className="hint">{past ? 'No previous events in this month.' : 'No upcoming events.'}</div>
+            : (
+              <ul className="date-list date-list--closures date-list--edit">
+                {shownEvents.map(e => <EventItem key={e.event_id} event={e} past={past} onSaved={saved} />)}
+              </ul>
+            )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Edit / Delete, or the two buttons that confirm a delete. */
+function RowActions({ mode, setMode, onDelete, busy, deleteLabel }) {
+  if (mode === 'confirm') {
+    return (
+      <span className="edit-dates__actions">
+        <span className="edit-dates__ask">{deleteLabel}</span>
+        <button type="button" className="btn btn--crit btn--sm" disabled={busy} onClick={onDelete}>
+          {busy ? 'Deleting…' : 'Delete'}
+        </button>
+        <button type="button" className="btn btn--ghost btn--sm" onClick={() => setMode('view')}>Keep</button>
+      </span>
+    );
+  }
+  return (
+    <span className="edit-dates__actions">
+      <button type="button" className="linkish" onClick={() => setMode('edit')}>Edit</button>
+      <button type="button" className="linkish linkish--crit" onClick={() => setMode('confirm')}>Delete</button>
+    </span>
+  );
+}
+
+function ClosureItem({ closure, past, onSaved }) {
+  const [mode, setMode] = useState('view');          // view | edit | confirm
+  const [day, setDay] = useState(closure.calendar_date);
+  const [reason, setReason] = useState(closure.reason || '');
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const changed = day !== closure.calendar_date || reason.trim() !== (closure.reason || '');
+
+  function cancel() {
+    setMode('view');
+    setDay(closure.calendar_date);
+    setReason(closure.reason || '');
+    setError(null);
+  }
+
+  async function save() {
+    setBusy(true);
+    const r = await editClosure(closure.calendar_date, { calendar_date: day, reason });
+    setBusy(false);
+    if (!r.ok) { setError(r.errors?.calendar_date || r.error || 'Could not save.'); return; }
+    setError(null);
+    setMode('view');
+    onSaved(day === closure.calendar_date
+      ? `Closure on ${usDate(day)} updated.`
+      : `Closure moved from ${usDate(closure.calendar_date)} to ${usDate(day)}.`);
+  }
+
+  // A closure is a day marked shut, not a row of its own: removing it marks
+  // the day open again (Closure_Log replays that over the published calendar).
+  async function remove() {
+    setBusy(true);
+    const r = await setStoreClosed(closure.calendar_date, false, 'Closure removed');
+    setBusy(false);
+    if (!r.ok) { setError(r.errors?.calendar_date || r.error || 'Could not delete.'); setMode('view'); return; }
+    onSaved(`Closure on ${usDate(closure.calendar_date)} removed - the store is open that day.`);
+  }
+
+  if (mode === 'edit') {
+    return (
+      <li className="is-editing">
+        <input type="date" value={day} aria-label="Closure date" {...dateBounds(past)}
+               onChange={e => { setDay(e.target.value); setError(null); }} />
+        <input type="text" value={reason} placeholder="Reason (optional)" aria-label="Reason"
+               onChange={e => setReason(e.target.value)} />
+        <span className="edit-dates__actions">
+          <button type="button" className="btn btn--ink btn--sm" disabled={!changed || busy} onClick={save}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={cancel}>Cancel</button>
+        </span>
+        {error && <span className="field__err edit-dates__err">{error}</span>}
+      </li>
+    );
+  }
+
+  const fromWorkbookOnly = closure.source === 'workbook';
+  return (
+    <li>
+      <span className="closure__date">{usDate(closure.calendar_date)}</span>
+      <span className="closure__reason">{closure.reason || 'No reason given'}</span>
+      <span className={`closure__src closure__src--${closure.source}`}
+            title={fromWorkbookOnly ? 'Read from the tally workbook - change it there; the pipeline reads it back every run'
+              : closure.source === 'both' ? 'In the calendar and the tally workbook - a change here updates the calendar record'
+                : 'From the academic calendar or flagged here'}>
+        {closure.source}
+      </span>
+      {fromWorkbookOnly
+        ? <span className="edit-dates__actions hint">Change in the workbook</span>
+        : <RowActions mode={mode} setMode={setMode} onDelete={remove} busy={busy}
+                      deleteLabel="Open the store this day?" />}
+      {error && <span className="field__err edit-dates__err">{error}</span>}
+    </li>
+  );
+}
+
+function EventItem({ event, past, onSaved }) {
+  const blank = {
+    calendar_date: event.calendar_date,
+    event_name: event.event_name || '',
+    event_description: event.event_description || '',
+  };
+  const [mode, setMode] = useState('view');          // view | edit | confirm
+  const [form, setForm] = useState(blank);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const changed = form.calendar_date !== event.calendar_date
+    || form.event_name.trim() !== (event.event_name || '')
+    || form.event_description.trim() !== (event.event_description || '');
+  const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setError(null); };
+
+  function cancel() {
+    setMode('view');
+    setForm(blank);
+    setError(null);
+  }
+
+  async function save() {
+    setBusy(true);
+    const r = await editEvent(event.event_id, form);
+    setBusy(false);
+    if (!r.ok) {
+      setError(r.errors?.calendar_date || r.errors?.event_name || r.error || 'Could not save.');
+      return;
+    }
+    setError(null);
+    setMode('view');
+    onSaved(form.calendar_date === event.calendar_date
+      ? `“${form.event_name.trim()}” updated.`
+      : `“${form.event_name.trim()}” moved from ${usDate(event.calendar_date)} to ${usDate(form.calendar_date)}.`);
+  }
+
+  async function remove() {
+    setBusy(true);
+    const r = await deleteEvent(event.event_id);
+    setBusy(false);
+    if (!r.ok) { setError(r.error || 'Could not delete.'); setMode('view'); return; }
+    onSaved(`“${event.event_name}” on ${usDate(event.calendar_date)} deleted.`);
+  }
+
+  if (mode === 'edit') {
+    return (
+      <li className="is-editing">
+        <input type="date" value={form.calendar_date} aria-label="Event date" {...dateBounds(past)}
+               onChange={e => set('calendar_date', e.target.value)} />
+        <input type="text" value={form.event_name} placeholder="Label" aria-label="Label"
+               onChange={e => set('event_name', e.target.value)} />
+        <input type="text" value={form.event_description} placeholder="Description (optional)"
+               aria-label="Description" onChange={e => set('event_description', e.target.value)} />
+        <span className="edit-dates__actions">
+          <button type="button" className="btn btn--ink btn--sm" disabled={!changed || busy} onClick={save}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={cancel}>Cancel</button>
+        </span>
+        {error && <span className="field__err edit-dates__err">{error}</span>}
+      </li>
+    );
+  }
+
+  return (
+    <li>
+      <span className="closure__date">{usDate(event.calendar_date)}</span>
+      <span className="closure__reason">
+        <b className="edit-dates__label">{event.event_name}</b>
+        {event.event_description && <> · {event.event_description}</>}
+      </span>
+      <RowActions mode={mode} setMode={setMode} onDelete={remove} busy={busy}
+                  deleteLabel="Delete this event?" />
+      {error && <span className="field__err edit-dates__err">{error}</span>}
+    </li>
   );
 }
 

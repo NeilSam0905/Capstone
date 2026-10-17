@@ -252,6 +252,17 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
   const typicalPct = overall?.mae != null && overall.mean_actual_30d > 0
     ? Math.round(100 * overall.mae / overall.mean_actual_30d) : null;
 
+  // The likely range, as a range rather than one number: the guidance block's
+  // low/high (backend _forecast_guidance), which for the category model is the
+  // 30-day total plus or minus its walk-forward RMSE - step4c spreads that
+  // RMSE across the days in proportion to each day's share, so the summed
+  // daily bounds are exactly total +/- RMSE. Shown for the category model
+  // only: the sum-of-items fallback adds up item bands built from one day's
+  // spread, which overstates a 30-day range many times over.
+  const expected = fd.guidance?.expected;
+  const ranged = wholeCategory && expected && expected.high > expected.low;
+  const halfWidth = ranged ? Math.round((expected.high - expected.low) / 2) : null;
+
   // Bars are scaled to the largest contributor, not to the total: at 30 items
   // every bar would be a stub against the sum, and the column is here to rank
   // the items against each other.
@@ -265,10 +276,23 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
       </div>
 
       <div className="ftotal">
-        <div className="ftotal__figure">
-          <div className="ftotal__val">{num(Math.round(fd.total_30d))}</div>
-          <div className="ftotal__unit">units forecast</div>
-        </div>
+        {ranged ? (
+          <div className="ftotal__figure ftotal__figure--range">
+            <div className="ftotal__val">
+              {num(Math.round(expected.low))}
+              <span className="ftotal__dash">–</span>
+              {num(Math.round(expected.high))}
+            </div>
+            <div className="ftotal__unit">
+              units likely · best estimate <b>{num(Math.round(fd.total_30d))}</b>
+            </div>
+          </div>
+        ) : (
+          <div className="ftotal__figure">
+            <div className="ftotal__val">{num(Math.round(fd.total_30d))}</div>
+            <div className="ftotal__unit">units forecast</div>
+          </div>
+        )}
 
         {wholeCategory ? (
           <div className="ftotal__coverage">
@@ -283,6 +307,11 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
                 <> Checked against {overall.n_obs} past 30-day period{overall.n_obs === 1 ? '' : 's'},
                   it was typically off by about <b>{num(typicalOff)} units</b>
                   {typicalPct != null && <> (roughly {typicalPct}% of a typical month)</>}.</>
+              )}
+              {ranged && (
+                <> The range is the best estimate plus or minus <b>{num(halfWidth)} units</b>, the
+                  size of its usual miss in those checks (RMSE), so roughly two months in three
+                  should land inside it.</>
               )}
             </p>
           </div>
@@ -340,11 +369,15 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
 
       {fd.contributors.length > 0 && (
       <div className="tbl__scroll">
-        <table className="tbl" style={{ minWidth: 560 }}>
+        <table className="tbl" style={{ minWidth: 680 }}>
           <thead>
             <tr>
               <th>Item</th>
               <th>Supplier</th>
+              <th className="num"
+                  title="Best estimate plus or minus the item's usual miss (RMSE) over its past 30-day checks">
+                Likely range
+              </th>
               <th className="num" colSpan={2}>30-day forecast</th>
             </tr>
           </thead>
@@ -370,6 +403,18 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
                     )}
                   </td>
                   <td>{r.supplier_name}</td>
+                  {/* The item's own likely range - the best estimate plus or
+                      minus its walk-forward RMSE (backend _range_30d), the
+                      same rule as the category figure above and the same
+                      range the item's own page quotes. A dash when the item
+                      has no checks to size it from. */}
+                  <td className="num frange">
+                    {r.range_30d
+                      ? <span title={`${num(units)} plus or minus ${num(Math.round(r.range_30d.rmse))} units, the item's usual miss over its past 30-day checks`}>
+                          {num(Math.round(r.range_30d.low))}<span className="frange__dash">–</span>{num(Math.round(r.range_30d.high))}
+                        </span>
+                      : <span className="nodata">—</span>}
+                  </td>
                   {/* The bar ranks the row against the biggest contributor.
                       One hue for every row: these are the same kind of thing,
                       and colour by rank would say they are not. It sits to the

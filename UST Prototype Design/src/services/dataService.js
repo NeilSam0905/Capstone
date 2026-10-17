@@ -416,6 +416,22 @@ export async function addEvent({ calendar_date, event_name, event_description })
 
 export const getEventLog = () => get('/events');
 
+/** Move an upcoming closure, or change its reason: the old day is reopened
+ *  and the new one closed (backend edit_closure). Upcoming dates only. */
+export const editClosure = (isoDate, { calendar_date, reason }) =>
+  put(`/calendar/closures/${isoDate}`, { calendar_date, reason: (reason || '').trim() });
+
+/** Remove a cancelled upcoming event (backend delete_event). */
+export const deleteEvent = eventId => del(`/events/${eventId}`);
+
+/** Change an upcoming event's date, label or description (backend edit_event). */
+export const editEvent = (eventId, { calendar_date, event_name, event_description }) =>
+  put(`/events/${eventId}`, {
+    calendar_date,
+    event_name: (event_name || '').trim(),
+    event_description: (event_description || '').trim(),
+  });
+
 export const getClosedDates = () => get('/calendar/closed');
 
 /** No-op now that persistence is server-side; kept so anything still

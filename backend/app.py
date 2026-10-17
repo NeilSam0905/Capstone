@@ -1460,8 +1460,10 @@ def get_closed_dates():
     # rather than the legend category the workbook filed it under.
     reasons = {}
     if "Closure_Log" in _table_names(c):
+        # Oldest first, so a later entry's reason (an edit) overwrites an
+        # earlier one for the same day.
         for r in dbmod.rows(c, "SELECT closure_date, reason FROM Closure_Log "
-                               "WHERE is_closed = 1 AND reason IS NOT NULL"):
+                               "WHERE is_closed = 1 AND reason IS NOT NULL ORDER BY closure_id"):
             if r["reason"]:
                 reasons[r["closure_date"]] = r["reason"]
 
@@ -1513,6 +1515,46 @@ def set_closure(iso_date):
     c.execute("UPDATE Dim_Date SET is_store_closed = ? WHERE calendar_date = ?", (closed, iso_date))
     c.commit()
     return jsonify({"ok": True})
+
+
+@app.put("/api/calendar/closures/<iso_date>")
+def edit_closure(iso_date):
+    """Move a closure to another day, or change its reason - upcoming ones
+    when the school calendar shifts, past ones to correct the record:
+    {calendar_date, reason?}. A closure is a date in Dim_Date, not a row of
+    its own, so a move is logged as the two toggles it amounts to - the old
+    day reopened, the new day closed - in Closure_Log, which every
+    populate_dim_date.py rebuild replays (latest entry per day wins). That
+    works for a closure from the published calendar as well as one flagged
+    here: the log overrides the calendar file without editing it. A past
+    change reaches the forecasts at the next pipeline run (the Tally page's
+    staleness banner says so)."""
+    payload = request.get_json(silent=True) or {}
+    new_date = str(payload.get("calendar_date") or "").strip()
+    reason = (payload.get("reason") or "").strip() or None
+
+    if not validation.is_iso_date(iso_date) or not validation.is_iso_date(new_date):
+        return jsonify({"ok": False, "errors": {"calendar_date": "Date must be YYYY-MM-DD."}}), 400
+
+    c = con()
+    _extend_calendar(c)
+    gap = _calendar_gap(c, new_date)
+    if gap:
+        return jsonify({"ok": False, "errors": {"calendar_date": gap}}), 400
+    row = dbmod.one(c, "SELECT is_store_closed FROM Dim_Date WHERE calendar_date = ?", (iso_date,))
+    if not row or not row["is_store_closed"]:
+        return jsonify({"ok": False, "error": f"{iso_date} is not marked closed."}), 404
+
+    user, now = auth.current_user(), datetime.now().isoformat(timespec="seconds")
+    log = "INSERT INTO Closure_Log (closure_date, is_closed, reason, created_by, date_logged) VALUES (?, ?, ?, ?, ?)"
+    if new_date != iso_date:
+        c.execute(log, (iso_date, 0, f"Moved to {new_date}", user, now))
+        c.execute("UPDATE Dim_Date SET is_store_closed = 0 WHERE calendar_date = ?", (iso_date,))
+    c.execute(log, (new_date, 1, reason, user, now))
+    c.execute("UPDATE Dim_Date SET is_store_closed = 1 WHERE calendar_date = ?", (new_date,))
+    c.commit()
+    return jsonify({"ok": True, "closure": {"calendar_date": new_date, "reason": reason,
+                                            "previous_date": iso_date}})
 
 
 # ----------------------------------------------------------------- tally
@@ -1782,7 +1824,112 @@ def get_events():
     rows = dbmod.rows(con(), "SELECT * FROM Event_Log ORDER BY event_date DESC, event_id DESC")
     for r in rows:
         r["is_local"] = False
+        # The interface reads `calendar_date`, as POST's reply already names
+        # it; without this the Flag an Event list showed labels with no date.
+        r["calendar_date"] = r["event_date"]
     return jsonify(rows)
+
+
+def _calendar_gap(c, iso_date):
+    """Why `iso_date` cannot hold a closure or event, or None when it can.
+    Dim_Date is extended to the end of next year first (_extend_calendar), so
+    this is a date before the calendar starts or improbably far ahead - and a
+    flag on a day with no Dim_Date row would be silently lost."""
+    if dbmod.one(c, "SELECT 1 AS ok FROM Dim_Date WHERE calendar_date = ?", (iso_date,)):
+        return None
+    return validation.calendar_gap_message(c, iso_date)
+
+
+def _published_event_days():
+    """Days calendar_ranges.csv itself marks is_event_day (Paskuhan and the
+    like). Read-only - the file is protected (CLAUDE.md). Needed when an event
+    moves off a day: that day keeps its flag if the published calendar has
+    one there too, exactly as populate_dim_date.py would rebuild it."""
+    days = set()
+    try:
+        with open(DATA_DIR / "calendar_ranges.csv", newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                if (row.get("flag") or "").strip() != "is_event_day":
+                    continue
+                start = date.fromisoformat(row["start_date"].strip())
+                end = date.fromisoformat(row["end_date"].strip())
+                while start <= end:
+                    days.add(start.isoformat())
+                    start += timedelta(days=1)
+    except (OSError, ValueError, KeyError):
+        pass
+    return days
+
+
+@app.put("/api/events/<int:event_id>")
+def edit_event(event_id):
+    """Change an event's date, label or description - an upcoming one when the
+    calendar shifts, a past one to correct the record (it reaches the
+    forecasts at the next pipeline run). {calendar_date, event_name,
+    event_description?}.
+
+    Dim_Date follows at once: the new day is flagged, and the old day loses
+    its flag unless another logged event or the published calendar still
+    puts one there (the same rule populate_dim_date.py rebuilds by)."""
+    payload = request.get_json(silent=True) or {}
+    new_date = str(payload.get("calendar_date") or "").strip()
+    name = (payload.get("event_name") or "").strip()
+    description = (payload.get("event_description") or "").strip()
+
+    c = con()
+    row = dbmod.one(c, "SELECT * FROM Event_Log WHERE event_id = ?", (event_id,))
+    if row is None:
+        return jsonify({"ok": False, "error": "That event no longer exists."}), 404
+
+    errors = {}
+    if not validation.is_iso_date(new_date):
+        errors["calendar_date"] = "Date must be YYYY-MM-DD."
+    else:
+        _extend_calendar(c)
+        gap = _calendar_gap(c, new_date)
+        if gap:
+            errors["calendar_date"] = gap
+    if not name:
+        errors["event_name"] = "Give the event a label."
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+
+    old_date = row["event_date"]
+    c.execute("UPDATE Event_Log SET event_date = ?, event_name = ?, event_description = ? "
+              "WHERE event_id = ?", (new_date, name, description, event_id))
+    c.execute("UPDATE Dim_Date SET is_event_day = 1 WHERE calendar_date = ?", (new_date,))
+    if old_date != new_date:
+        _refresh_event_flag(c, old_date)
+    c.commit()
+    return jsonify({"ok": True, "event": {
+        "event_id": event_id, "event_date": new_date, "calendar_date": new_date,
+        "event_name": name, "event_description": description, "previous_date": old_date,
+    }})
+
+
+def _refresh_event_flag(c, iso_date):
+    """Dim_Date.is_event_day for one day, from what is still there: another
+    logged event, or the published calendar (populate_dim_date.py's rule)."""
+    still = c.execute("SELECT 1 FROM Event_Log WHERE event_date = ? LIMIT 1",
+                      (iso_date,)).fetchone() or iso_date in _published_event_days()
+    c.execute("UPDATE Dim_Date SET is_event_day = ? WHERE calendar_date = ?",
+              (1 if still else 0, iso_date))
+
+
+@app.delete("/api/events/<int:event_id>")
+def delete_event(event_id):
+    """Remove an event - an upcoming one that was cancelled, or a past one
+    that was logged by mistake. A past removal reaches the forecasts at the
+    next pipeline run."""
+    c = con()
+    row = dbmod.one(c, "SELECT event_date, event_name FROM Event_Log WHERE event_id = ?", (event_id,))
+    if row is None:
+        return jsonify({"ok": False, "error": "That event no longer exists."}), 404
+    c.execute("DELETE FROM Event_Log WHERE event_id = ?", (event_id,))
+    _refresh_event_flag(c, row["event_date"])
+    c.commit()
+    return jsonify({"ok": True, "deleted": {"event_id": event_id, "calendar_date": row["event_date"],
+                                            "event_name": row["event_name"]}})
 
 
 @app.post("/api/events")
@@ -2074,7 +2221,7 @@ def _category_stock_advice(product_ids, stats, reorder, total):
     return out, "covered"
 
 
-def _forecast_guidance(c, forecast, history, product_ids, single_item):
+def _forecast_guidance(c, forecast, history, product_ids, single_item, rmse=None):
     """The forecast chart, read out in plain terms for whoever orders stock:
     how much to expect, against what has been selling, when the busy days
     are, what the calendar holds, and what to do about stock.
@@ -2090,6 +2237,14 @@ def _forecast_guidance(c, forecast, history, product_ids, single_item):
     total = sum(r["yhat"] for r in rows)
     low = sum(r["yhat"] if r.get("yhat_lower") is None else r["yhat_lower"] for r in rows)
     high = sum(r["yhat"] if r.get("yhat_upper") is None else r["yhat_upper"] for r in rows)
+    # An item's daily band is one day's spread repeated on every day (step4),
+    # so its 30-day sum overstates the range several times over. With the
+    # item's own 30-day RMSE the range is total +/- RMSE instead - the rule
+    # the category band follows, and the range the Expected Demand table shows
+    # for the same item (_range_30d), so the two pages cannot disagree.
+    band = _range_30d(total, rmse)
+    if band:
+        low, high = band["low"], band["high"]
     rate = total / n
     today = date.today()
     start, end = rows[0]["forecast_date"][:10], rows[-1]["forecast_date"][:10]
@@ -2192,6 +2347,9 @@ def get_forecast(product_id):
     last_sale_date = _last_sale_date(c, product_id)
     days_since_last_sale, likely_discontinued = _discontinued_flags(last_sale_date, snapshot_date)
     history = _monthly_history(c, [product_id])
+    overall = next((m for m in metrics if m["period_scope"] == "overall"), None)
+    rmse = overall["rmse"] if overall else None
+    total = sum(r["yhat"] or 0 for r in forecast_rows)
 
     return jsonify({
         "available": True,
@@ -2210,7 +2368,9 @@ def get_forecast(product_id):
             "forecast": forecast_rows,
             "history": history,
             "metrics": metrics,
-            "guidance": _forecast_guidance(c, forecast_rows, history, [product_id], single_item=True),
+            "range_30d": _range_30d(total, rmse),
+            "guidance": _forecast_guidance(c, forecast_rows, history, [product_id],
+                                           single_item=True, rmse=rmse),
         },
     })
 
@@ -2218,6 +2378,41 @@ def get_forecast(product_id):
 def _table_names(c):
     return {r[0] for r in c.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+def _range_30d(total, rmse):
+    """The likely 30-day range: the forecast plus or minus its usual miss
+    (RMSE) over its own walk-forward 30-day checks, never below zero - the
+    same rule the category model's band follows (step4c spreads its RMSE
+    across the days, so the summed daily bounds are total +/- RMSE). None
+    when the forecast has no checks to size it from."""
+    if total is None or rmse is None:
+        return None
+    return {"low": round(max(total - rmse, 0.0), 1), "high": round(total + rmse, 1),
+            "rmse": round(rmse, 1)}
+
+
+def _item_rmse(c, product_ids):
+    """product_id -> overall 30-day RMSE from Result_Forecast_Metrics.
+
+    Not the item's daily band in Result_Forecast: step4 sets that to one
+    day's standard deviation on EVERY day, so 30 of them summed is a range
+    several times wider than the item's real 30-day miss."""
+    if not product_ids or "Result_Forecast_Metrics" not in _table_names(c):
+        return {}
+    marks = ",".join("?" * len(product_ids))
+    return {r["product_id"]: r["rmse"] for r in dbmod.rows(c, f"""
+        SELECT product_id, rmse FROM Result_Forecast_Metrics
+         WHERE period_scope = 'overall' AND rmse IS NOT NULL AND product_id IN ({marks})
+    """, tuple(product_ids))}
+
+
+def _attach_ranges(c, contributors):
+    """Give each contributor its likely 30-day range (see _range_30d)."""
+    rmse = _item_rmse(c, [r["product_id"] for r in contributors])
+    for r in contributors:
+        r["range_30d"] = _range_30d(r.get("yhat_30d"), rmse.get(r["product_id"]))
+    return contributors
 
 
 def _category_contributors(c, category):
@@ -2332,6 +2527,7 @@ def get_forecast_category(category):
         """, (category,))
     contributors = _category_contributors(c, category) if _has_forecast_table(c) else []
     _flag_discontinued(contributors, head["history_end"])
+    _attach_ranges(c, contributors)
     meta = _category_counts(c, category)
     # History for the chart covers the same items the category model was
     # trained on: every product whose forecast_category this is, with a blank
@@ -2417,6 +2613,7 @@ def _category_forecast_from_items(c, category):
         WHERE p.category = ? AND f.model_type IS NOT 'policy_rate'
     """, (category,))
     _flag_discontinued(contributors, head["snapshot_date"] if head else None)
+    _attach_ranges(c, contributors)
 
     total = round(sum(r["yhat_30d"] or 0 for r in contributors), 3)
     ids = [r["product_id"] for r in contributors]

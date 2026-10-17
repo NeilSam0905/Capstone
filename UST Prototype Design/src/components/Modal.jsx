@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import Icon from './Icon';
 
 /**
@@ -42,7 +43,11 @@ export default function Modal({
 
   if (!open) return null;
 
-  return (
+  // Rendered into <body>, not where the dialog is declared: a page's own
+  // layout must never reach the scrim. The Tally page caps every direct child
+  // of .tally-body at 880px, so a dialog declared there darkened only that
+  // middle column instead of the whole window.
+  return createPortal(
     <div className="modal-scrim" onMouseDown={e => { if (e.target === e.currentTarget) onClose?.(); }}>
       <div
         className="modal-panel"
@@ -64,6 +69,7 @@ export default function Modal({
         </div>
         <div className={`modal-body${overflowVisible ? ' modal-body--overflow' : ''}`}>{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

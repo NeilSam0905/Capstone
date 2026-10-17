@@ -249,7 +249,7 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
 
 /* "Don't show this again": set apart by a hairline, quieter than the action. */
 .advisories-jump__close {
-  width: 26px; height: 26px; border-radius: 999px; flex-shrink: 0;
+  width: 26px; height: 26px; flex-shrink: 0;
   display: inline-grid; place-items: center;
   border: 0; border-left: 1px solid rgba(255, 255, 255, .14);
   border-radius: 0 999px 999px 0; padding-left: 2px;
@@ -474,6 +474,70 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   color: var(--ink); font-variant-numeric: tabular-nums;
 }
 .ftotal__unit { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+/* The range variant: low–high on one line, the best estimate beneath it. */
+.ftotal__figure--range { flex-direction: column; align-items: flex-start; gap: 6px; }
+.ftotal__dash { margin: 0 .12em; color: var(--muted); font-weight: 600; }
+.ftotal__unit b { color: var(--text-2); font-weight: 800; font-variant-numeric: tabular-nums; }
+/* The item rows' likely range: the estimate's column stays the bold figure,
+   so the range reads as its spread, in the quieter weight. */
+.frange { width: 130px; white-space: nowrap; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.frange__dash { margin: 0 .2em; color: var(--muted); }
+
+/* Edit Upcoming Dates (Tally Interface): the Flagged closed list's own rows
+   (.date-list--closures), each with Edit / Delete at its end. Edit turns the
+   row into inputs in place; Delete asks once, in the row. The dialog is
+   what scrolls, so the list drops the card list's fixed height. */
+.edit-dates { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
+.edit-dates__h { display: flex; align-items: center; gap: 7px; margin-top: 8px; }
+
+/* Upcoming / Previous: a two-segment switch, with the month filter beside it
+   on the Previous side. */
+.edit-dates__bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.edit-dates__tabs {
+  display: inline-flex; padding: 3px; gap: 2px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 999px;
+}
+.edit-dates__tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 14px; border: 0; border-radius: 999px; background: none; cursor: pointer;
+  font: inherit; font-size: 12.5px; font-weight: 700; color: var(--muted);
+  transition: background .12s, color .12s;
+}
+.edit-dates__tab:hover { color: var(--text-2); }
+.edit-dates__tab.is-active { background: var(--ink); color: #fff; }
+.edit-dates__tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.edit-dates__count {
+  min-width: 20px; padding: 0 6px; border-radius: 999px; font-size: 11px;
+  background: rgba(0, 0, 0, .07); font-variant-numeric: tabular-nums;
+}
+.edit-dates__tab.is-active .edit-dates__count { background: var(--accent); color: var(--ink); }
+.edit-dates__month { display: inline-flex; align-items: center; gap: 7px; }
+.edit-dates__note { margin: 0; font-size: 12px; }
+.edit-dates__h .hint { margin-left: auto; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.edit-dates .date-list--edit { max-height: none; overflow: visible; padding: 2px 0; }
+.edit-dates .date-list--edit li { flex-wrap: wrap; align-items: center; padding: 7px 12px; min-height: 40px; }
+.edit-dates .date-list--edit li .closure__src { margin-left: 0; }
+.edit-dates .date-list--edit .closure__reason { font-size: 12px; }
+.edit-dates__label { color: var(--text-2); font-weight: 700; }
+.edit-dates__actions { margin-left: auto; display: inline-flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+.edit-dates__actions .btn { padding: 5px 11px; font-size: 11.5px; }
+.edit-dates__ask { font-size: 12px; font-weight: 700; color: var(--crit); }
+.edit-dates__err { flex-basis: 100%; }
+.linkish--crit:hover { color: var(--crit); }
+
+/* A row being edited: its inputs take the row, the buttons stay at the end. */
+.edit-dates .date-list--edit li.is-editing { background: var(--card); gap: 8px; }
+.edit-dates .date-list--edit li.is-editing input {
+  font: inherit; font-size: 12.5px; height: 32px; padding: 0 9px;
+  border: 1px solid var(--line); border-radius: var(--r-xs); background: var(--card); color: var(--text);
+}
+.edit-dates .date-list--edit li.is-editing input[type="date"] { flex: 0 0 150px; }
+.edit-dates .date-list--edit li.is-editing input[type="text"] { flex: 1 1 160px; min-width: 0; }
+.edit-dates .date-list--edit li.is-editing input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
+@media (max-width: 620px) {
+  .edit-dates .date-list--edit li.is-editing input[type="date"],
+  .edit-dates .date-list--edit li.is-editing input[type="text"] { flex: 1 1 100%; }
+}
 
 .ftotal__coverage { flex: 1 1 280px; min-width: 240px; display: flex; flex-direction: column; gap: 7px; }
 .ftotal__coverage-head {

@@ -98,3 +98,27 @@ def test_category_names_the_items_at_their_reorder_point():
 
     assert backend._category_stock_advice([3], stats, reorder, total=100)[1] == "covered"
     assert backend._category_stock_advice([4], stats, reorder, total=100)[1] == "count_stock"
+
+
+# ------------------------------------------------- the likely 30-day range
+
+def test_range_is_the_forecast_plus_or_minus_its_rmse_never_below_zero():
+    assert backend._range_30d(564.5, 169.3) == {"low": 395.2, "high": 733.8, "rmse": 169.3}
+    assert backend._range_30d(41.0, 44.3)["low"] == 0.0        # floored, not negative
+    assert backend._range_30d(41.0, None) is None              # no checks, no range
+
+
+def test_an_item_page_quotes_the_rmse_range_not_its_summed_daily_bands(monkeypatch):
+    # A one-day spread of 10 on every day sums to 300 either side over 30 days;
+    # the item's real 30-day miss (RMSE) is 40, and that is what is quoted.
+    rows = [{"forecast_date": f"2026-11-{d:02d}", "yhat": 2.0, "yhat_lower": 0.0, "yhat_upper": 12.0}
+            for d in range(1, 31)]
+    # Stock, reorder figures and the calendar are not what this checks.
+    monkeypatch.setattr(backend.catalog, "compute_stats", lambda c, *a, **k: ({}, {}))
+    monkeypatch.setattr(backend, "_reorder_items", lambda c: [])
+    monkeypatch.setattr(backend, "_calendar_window", lambda c, start, end: {})
+    g = backend._forecast_guidance(None, rows, [], [7], single_item=True, rmse=40.0)
+    assert (g["expected"]["low"], g["expected"]["high"]) == (20.0, 100.0)
+    # Without checks to size it from, the daily bands are all there is.
+    g = backend._forecast_guidance(None, rows, [], [7], single_item=True)
+    assert (g["expected"]["low"], g["expected"]["high"]) == (0.0, 360.0)
