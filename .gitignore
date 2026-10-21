@@ -56,3 +56,6 @@ docs/**/*.csv
 
 # daily ustore.db copies (backend/backup.py) - plain store data, machine-local like ustore.db
 backups/
+
+# Microsoft Office lock files ("~$name.docx"), written while a document is open
+~$*

@@ -89,7 +89,9 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(backend, "RAWDATA_DIR", tmp_path / "rawdata")
     monkeypatch.setattr(dbmod, "_initialised", False)    # migrate this database, not the last one
     client = backend.app.test_client()
-    assert client.post("/api/auth/login", json={"username": "staff", "password": "staff123"}).status_code == 200
+    # Signed in as the admin: renaming an item edits a saved record, which for
+    # anyone else needs the admin's password (test_admin_confirm.py covers that).
+    assert client.post("/api/auth/login", json={"username": "admin", "password": "admin123"}).status_code == 200
     client.vocab, client.inventory, client.db, client.tmp = vocab, inventory, db_path, tmp_path
     return client
 

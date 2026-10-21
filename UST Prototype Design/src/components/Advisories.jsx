@@ -5,6 +5,7 @@ import { Loading } from './Pending';
 import Modal from './Modal';
 import Icon from './Icon';
 import { num, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { jumpKey, readJumpPref, writeJumpPref } from '../lib/advisoriesJump';
 
 /**
  * The advisories: calendar signals and the FSN decision rules, from
@@ -240,7 +241,8 @@ function useAdvisoryCount() {
 export function AdvisoriesButton({ onClick }) {
   const { count, title } = useAdvisoryCount();
   return (
-    <button type="button" className="btn btn--ghost btn--sm topbar__advisories" onClick={onClick} title={title}>
+    <button type="button" className="btn btn--ghost btn--sm topbar__advisories" onClick={onClick} title={title}
+            aria-label={`Advisories - ${title}`}>
       <Icon name="bell" size={14} />
       <span>Advisories</span>
       {count > 0 && <span className="topbar__badge">{num(count)}</span>}
@@ -258,34 +260,38 @@ export function AdvisoriesButton({ onClick }) {
  *  Absolutely positioned against .main, which does not scroll (.scroll inside
  *  it does), so it stays put while the page moves under it.
  *
- *  It retires for good, per staff member (`user`), once they have either
- *  pressed its X or used it JUMP_RETIRE_AFTER times - by then they know where
- *  the advisories are, and the topbar's Advisories button is still there.
- *  The choice is kept in this browser (localStorage): a preference, nothing
- *  any report depends on, so a cleared browser just shows it again. */
+ *  It retires, per staff member (`user`), once they have either pressed its X
+ *  or used it JUMP_RETIRE_AFTER times - by then they know where the
+ *  advisories are, and the topbar's Advisories button is still there. But it
+ *  retires only for the advisories they had already seen: the set on screen
+ *  at that moment is remembered, and when a NEW advisory appears (a new
+ *  calendar window, an event, a rule that newly applies) the pill comes back,
+ *  counting afresh. Retiring for good hid new advice behind a click someone
+ *  made weeks earlier about different advice.
+ *  All of it lasts one login: App.jsx clears it at every sign-in and
+ *  sign-out (lib/advisoriesJump.js), so the pill is back each shift. */
 const JUMP_RETIRE_AFTER = 3;
-const jumpKey = user => `ustore.advisoriesJump.${user || 'anonymous'}`;
 
-function readJumpPref(key) {
-  try {
-    return JSON.parse(window.localStorage.getItem(key)) || {};
-  } catch {
-    return {};
-  }
-}
-
-function writeJumpPref(key, pref) {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(pref));
-  } catch { /* storage blocked: the pill simply comes back next visit */ }
-}
+/** One advisory's identity across reloads: what it is about, and when. */
+const adviceKey = a => `${a.type}|${a.title}|${a.date_range?.[0] ?? ''}`;
 
 export function AdvisoriesJump({ target, user }) {
   const { count, title } = useAdvisoryCount();
+  const { data } = useData(getAdvisories, []);
   const [inView, setInView] = useState(false);
   const key = jumpKey(user);
   const [pref, setPref] = useState(() => readJumpPref(key));
-  const retired = pref.dismissed || (pref.uses ?? 0) >= JUMP_RETIRE_AFTER;
+
+  // The advisories on screen now, and whether any is one the staff member
+  // has not seen since they last retired the pill. A preference saved before
+  // `seen` existed has none recorded, so everything counts as new once.
+  const current = actionable(data?.advisories).map(adviceKey);
+  const seen = new Set(pref.seen ?? []);
+  const hasNew = current.some(k => !seen.has(k));
+  const wasRetired = pref.dismissed || (pref.uses ?? 0) >= JUMP_RETIRE_AFTER;
+  // New advice re-arms it: X and the use count start over for that set.
+  const uses = wasRetired && hasNew ? 0 : (pref.uses ?? 0);
+  const retired = wasRetired && !hasNew;
 
   useEffect(() => {
     const el = target.current;
@@ -299,12 +305,18 @@ export function AdvisoriesJump({ target, user }) {
 
   if (count === 0 || retired) return null;
 
-  const save = next => { setPref(next); writeJumpPref(key, next); };
+  // Every save records the advisories on screen, so retiring covers exactly
+  // the set the staff member has seen.
+  const save = next => {
+    const full = { ...next, seen: current };
+    setPref(full);
+    writeJumpPref(key, full);
+  };
   const jump = () => {
     target.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    save({ ...pref, uses: (pref.uses ?? 0) + 1 });
+    save({ dismissed: false, uses: uses + 1 });
   };
-  const usesLeft = JUMP_RETIRE_AFTER - (pref.uses ?? 0);
+  const usesLeft = JUMP_RETIRE_AFTER - uses;
 
   return (
     <div className={'advisories-jump' + (inView ? ' is-hidden' : '')} aria-hidden={inView}>
@@ -316,8 +328,8 @@ export function AdvisoriesJump({ target, user }) {
           <span>Event Advisories</span>
         </button>
         <button type="button" className="advisories-jump__close"
-                onClick={() => save({ ...pref, dismissed: true })}
-                title="Don't show this again - the Advisories button at the top stays"
+                onClick={() => save({ dismissed: true, uses })}
+                title="Hide this until there is a new advisory - the Advisories button at the top stays"
                 aria-label="Don't show this again" tabIndex={inView ? -1 : 0}>
           <Icon name="close" size={13} stroke={2.4} />
         </button>

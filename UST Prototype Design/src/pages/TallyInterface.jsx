@@ -29,11 +29,11 @@ const TYPE_TONE = { SALE: 'ok', DAMAGED: 'crit', PROMO: 'info', TRANSFER: 'hvl' 
  *  which predict everyday walk-in sales (scripts/order_types.py). Folded into
  *  this one list, as "TYPE:order", so the form keeps its layout. */
 const ENTRY_KINDS = [
-  { value: 'SALE',           label: 'SALE — walk-in',
+  { value: 'SALE',           label: 'Sale (Walk In)',
     hint: 'Units sold to a customer at the counter.' },
-  { value: 'SALE:bulk',      label: 'SALE — bulk or organisation order',
+  { value: 'SALE:bulk',      label: 'Sale (Bulk/Organization)',
     hint: 'One large order (an organisation, an office). Kept out of the forecasts, which predict everyday sales.' },
-  { value: 'SALE:pre_order', label: 'SALE — pre-order',
+  { value: 'SALE:pre_order', label: 'Sale (Pre-Order)',
     hint: 'Collected against an order placed earlier. Kept out of the forecasts, which predict everyday sales.' },
   { value: 'DAMAGED',  label: 'DAMAGED',  hint: 'Units removed as damaged or unsellable.' },
   { value: 'PROMO',    label: 'PROMO',    hint: 'Units released for a promotion or giveaway.' },
@@ -610,7 +610,7 @@ function SalesInventoryTally({ products, onSaved, recent, recentLoading }) {
  *
  *  The forecasts predict everyday (walk-in) sales; an order like this is added
  *  on top, on the day it is expected, at the next pipeline run. When it is
- *  collected, tally it as "SALE — bulk" or "SALE — pre-order" so it is not
+ *  collected, tally it as "Sale (Bulk/Organization)" or "Sale (Pre-Order)" so it is not
  *  read as everyday demand. Collapsed by default: most days there is none. */
 function UpcomingOrders({ products, reloadKey }) {
   const [own, setOwn] = useState(0);
@@ -656,7 +656,7 @@ function UpcomingOrders({ products, reloadKey }) {
 
       <div className="hint" style={{ margin: '10px 0 12px' }}>
         An organisation order or pre-order you already know about. The forecasts add it on its date, on top of
-        everyday sales. When it is collected, tally it as <b>SALE — bulk</b> or <b>SALE — pre-order</b>.
+        everyday sales. When it is collected, tally it as <b>Sale (Bulk/Organization)</b> or <b>Sale (Pre-Order)</b>.
       </div>
 
       <div className="form-grid">
@@ -765,7 +765,7 @@ function MonthlyInventoryCount({ products, onSaved }) {
 
   async function submit() {
     const result = await saveInventoryCount({ ...form, count_month: month });
-    if (!result.ok) { setErrors(result.errors || {}); setSaved(null); return; }
+    if (!result.ok) { setErrors(result.errors || { quantity: result.error }); setSaved(null); return; }
     setErrors({});
     setSaved(result);
     setForm({ product_id: '', quantity: '', note: '' });
@@ -1161,7 +1161,7 @@ function CurrentStockModal({ open, onClose, onChanged }) {
     });
     setBusyId(null);
     if (!result.ok) {
-      setMessage({ ok: false, text: Object.values(result.errors || {})[0] || 'Could not save that figure.' });
+      setMessage({ ok: false, text: Object.values(result.errors || {})[0] || result.error || 'Could not save that figure.' });
       return;
     }
     setEditing(null);
@@ -1489,7 +1489,7 @@ function ClosureAndEventCards({ onSaved, reloadKey }) {
 
   async function toggleClosed(isClosed) {
     const result = await setStoreClosed(closureDate, isClosed, closureReason);
-    if (!result.ok) { setErrors(result.errors); return; }
+    if (!result.ok) { setErrors(result.errors || { calendar_date: result.error }); return; }
     setErrors({});
     setNote(`${closureDate} marked ${isClosed ? 'CLOSED' : 'open'}`
       + (closureReason.trim() ? ` — ${closureReason.trim()}` : '.'));

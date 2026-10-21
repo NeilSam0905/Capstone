@@ -141,7 +141,7 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(backend, "RAWDATA_DIR", tmp_path / "rawdata")
     client = backend.app.test_client()
     with client.session_transaction() as s:              # signed in (backend/auth.py)
-        s["user"] = "staff"
+        s["user"] = "admin"     # removing an order is an edit: see test_admin_confirm.py
     client.db = db_path
     return client
 

@@ -148,11 +148,11 @@ export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', 
 // Round to 1dp below 1% so a tiny-but-real category is not shown as 0%.
 const sharePct = frac => (frac >= 0.01 ? Math.round(frac * 100) : Math.round(frac * 1000) / 10);
 
-/** `groupBelow` (a fraction, e.g. 0.1) folds every slice smaller than that
- *  share into one grey "Others" slice, drawn last; hovering it lists the
- *  categories inside with their own share of the total. A lone small slice
- *  is left as itself - an "Others" of one only hides its name. */
-export function Donut({ data, size = 180, groupBelow = 0 }) {
+/** `foldAtOrBelow` (a fraction, e.g. 0.05) folds every slice whose share is
+ *  that or less into one grey "Others" slice, drawn last; hovering it lists
+ *  the categories inside with their own share. A lone small slice is left as
+ *  itself - an "Others" of one only hides its name. */
+export function Donut({ data, size = 180, foldAtOrBelow = 0 }) {
   // One hover index drives both the ring and the legend, so pointing at either
   // highlights the other - the legend is the label for the slice, and reading
   // a donut means pairing them.
@@ -162,15 +162,16 @@ export function Donut({ data, size = 180, groupBelow = 0 }) {
 
   const total = data.reduce((s, d) => s + d.value, 0);
   if (!total) return <div className="empty">No data.</div>;
-  const small = groupBelow > 0 ? data.filter(d => d.value / total < groupBelow) : [];
+  const small = foldAtOrBelow > 0 ? data.filter(d => d.value / total <= foldAtOrBelow) : [];
+  const folded = small.reduce((s, d) => s + d.value, 0);
   let slices = data;
   if (small.length > 1) {
     const members = [...small]
       .sort((a, b) => b.value - a.value)
       .map(d => ({ name: d.name, value: d.value, pct: sharePct(d.value / total) }));
     slices = [
-      ...data.filter(d => d.value / total >= groupBelow),
-      { name: 'Others', value: members.reduce((s, m) => s + m.value, 0), members },
+      ...data.filter(d => !small.includes(d)),
+      { name: 'Others', value: folded, members },
     ];
   }
   const R = size / 2, r = R * 0.6, cx = R, cy = R;
@@ -262,7 +263,7 @@ export function Donut({ data, size = 180, groupBelow = 0 }) {
             onMouseEnter={() => setHover(i)}
             onMouseLeave={() => setHover(null)}
             style={{
-              display: 'flex', alignItems: 'center', gap: 8, fontSize: 12,
+              display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, lineHeight: 1.35,
               cursor: 'pointer', borderRadius: 4,
               background: hover === i ? 'var(--bg)' : 'transparent',
               opacity: hover == null || hover === i ? 1 : 0.5,

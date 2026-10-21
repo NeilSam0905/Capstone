@@ -62,7 +62,7 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(backend, "_published_event_days", lambda: set())
     client = backend.app.test_client()
     with client.session_transaction() as s:
-        s["user"] = "staff"
+        s["user"] = "admin"     # these are edits; the staff path is test_admin_confirm.py
     client.db = path
     return client
 

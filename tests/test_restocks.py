@@ -66,7 +66,7 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(dbmod, "DB_PATH", db_path)
     client = backend.app.test_client()
     with client.session_transaction() as s:
-        s["user"] = "staff"
+        s["user"] = "admin"     # removing a restock is an edit: see test_admin_confirm.py
     return client
 
 

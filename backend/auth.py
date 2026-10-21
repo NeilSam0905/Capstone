@@ -37,9 +37,16 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import db as dbmod
 
-# The account the store starts with. Created only when App_User is empty, so
-# changing or removing it later is not undone by a restart.
-DEFAULT_USERS = (("staff", "staff123"),)
+# The accounts the store starts with. Both are created when App_User is empty;
+# the admin is also added to an existing table that lacks it (one built before
+# the admin existed), because every staff edit is confirmed with its password.
+# Change both passwords before the app goes on the store's network.
+ADMIN_USERNAME = "admin"
+DEFAULT_USERS = (("staff", "staff123"), (ADMIN_USERNAME, "admin123"))
+
+# Sent with a write that changes or removes an existing record, when the
+# signed-in user is not the admin (backend/app.py _needs_admin).
+ADMIN_PASSWORD_HEADER = "X-Admin-Password"
 
 SESSION_LIFETIME = timedelta(hours=12)      # one working day, then sign in again
 
@@ -123,13 +130,38 @@ def current_user():
 
 def _ensure_users(c):
     c.execute(dbmod.APP_USER_DDL)
+    now = datetime.now().isoformat(timespec="seconds")
+    insert = "INSERT INTO App_User (username, password_hash, created_at) VALUES (?, ?, ?)"
     if c.execute("SELECT COUNT(*) FROM App_User").fetchone()[0] == 0:
-        now = datetime.now().isoformat(timespec="seconds")
-        c.executemany(
-            "INSERT INTO App_User (username, password_hash, created_at) VALUES (?, ?, ?)",
-            [(u, generate_password_hash(p), now) for u, p in DEFAULT_USERS],
-        )
+        c.executemany(insert, [(u, generate_password_hash(p), now) for u, p in DEFAULT_USERS])
         c.commit()
+    elif not c.execute("SELECT 1 FROM App_User WHERE LOWER(username) = ?",
+                       (ADMIN_USERNAME,)).fetchone():
+        admin_password = dict(DEFAULT_USERS)[ADMIN_USERNAME]
+        c.execute(insert, (ADMIN_USERNAME, generate_password_hash(admin_password), now))
+        c.commit()
+
+
+def is_admin(username):
+    return bool(username) and str(username).strip().lower() == ADMIN_USERNAME
+
+
+def check_admin_password(c, password, addr):
+    """Whether `password` is the admin's. Wrong guesses count against the
+    caller's address on their own counter ("admin:<addr>"), with the same
+    MAX_FAILURES / LOCKOUT_SECONDS as the login, so the confirmation dialog
+    cannot be used to guess the admin password either."""
+    _ensure_users(c)
+    key = f"admin:{addr}"
+    row = dbmod.one(c, "SELECT password_hash FROM App_User WHERE LOWER(username) = ?",
+                    (ADMIN_USERNAME,))
+    ok = check_password_hash(row["password_hash"] if row else _DUMMY_HASH, str(password or ""))
+    if not (row and ok):
+        _record_failure(key)
+        return False
+    with _failures_lock:
+        _failures.pop(key, None)
+    return True
 
 
 def locked_for(addr):

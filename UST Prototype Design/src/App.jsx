@@ -13,6 +13,8 @@ import Icon from './components/Icon';
 import ErrorBanner from './components/ErrorBanner';
 import { AdvisoriesButton, AdvisoriesModal } from './components/Advisories';
 import { ADVISORIES_ANCHOR } from './config';
+import { resetAdvisoriesJump } from './lib/advisoriesJump';
+import AdminConfirm from './components/AdminConfirm';
 import useData from './hooks/useData';
 import {
   getMeta, getMonths, CUSTOM_RANGE, getSession, logout, onAuthExpired, clearApiCache,
@@ -113,13 +115,18 @@ export default function App() {
     stopPrefetch();
     try { await logout(); } catch { /* signed out locally either way */ }
     clearApiCache();
+    // The Overview's floating advisories pill comes back for whoever signs
+    // in next, whatever this login did with it (lib/advisoriesJump.js).
+    resetAdvisoriesJump();
     setExpired(false);
     setUser(null);
   }, []);
 
   if (user === undefined) return null;
   if (!user) {
-    return <Login expired={expired} onLogin={u => { setExpired(false); setUser(u); }} />;
+    // Every sign-in starts with the floating advisories pill showing - even
+    // when the last login ended by its session expiring, not by Sign out.
+    return <Login expired={expired} onLogin={u => { setExpired(false); resetAdvisoriesJump(); setUser(u); }} />;
   }
   // Keyed on the user so signing in again starts from a fresh screen.
   return <Shell key={user} user={user} signOut={signOut} />;
@@ -133,14 +140,29 @@ function Shell({ user, signOut }) {
   // the first visit to each paints at once (services/prefetch.js). Only once
   // signed in: before that every request would be refused.
   useEffect(() => { startPrefetch(); }, []);
-  if (view === 'tally') return <TallyInterface setView={setView} user={user} signOut={signOut} />;
+
+  // AdminConfirm sits beside whichever view is showing: an edit to a saved
+  // record by anyone but the admin waits on it, from either side of the app.
+  if (view === 'tally') {
+    return (
+      <>
+        <TallyInterface setView={setView} user={user} signOut={signOut} />
+        <AdminConfirm />
+      </>
+    );
+  }
 
   // Dashboard-shell connectivity probe. If the backend is down, this is
   // what tells the user why every widget below is stuck loading — without
   // it, a failed fetch just leaves every screen spinning with no reason
   // given (dataService.js's request() throws a specific message for this).
-  return <Dashboard page={page} setPage={setPage} filters={filters} setFilters={setFilters}
-                    setView={setView} user={user} signOut={signOut} />;
+  return (
+    <>
+      <Dashboard page={page} setPage={setPage} filters={filters} setFilters={setFilters}
+                 setView={setView} user={user} signOut={signOut} />
+      <AdminConfirm />
+    </>
+  );
 }
 
 function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut }) {

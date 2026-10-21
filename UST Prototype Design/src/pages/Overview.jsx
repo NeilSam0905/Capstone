@@ -61,7 +61,10 @@ export default function Overview({ filters, setPage, user }) {
   const catData = useMemo(() => {
     const map = {};
     products.forEach(p => { map[p.category] = (map[p.category] || 0) + p.total_units; });
+    // A category that sold nothing in the window is not a slice of sales; left
+    // in, it showed up inside "Others" as "Uncategorised 0%".
     return Object.entries(map)
+      .filter(([, value]) => value > 0)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
   }, [products]);
@@ -124,7 +127,8 @@ export default function Overview({ filters, setPage, user }) {
         </div>
         <div className="card card__pad">
           <div className="card-h"><span className="section-h">Units by Category</span></div>
-          <Donut data={catData} groupBelow={0.1} />
+          {/* Every category at 5% of units or less goes into "Others". */}
+          <Donut data={catData} foldAtOrBelow={0.05} />
         </div>
       </div>
 

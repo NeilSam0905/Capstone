@@ -116,13 +116,17 @@ function sessionEnded(status, body) {
   return true;
 }
 
-async function doFetch(method, path, body) {
+async function doFetch(method, path, body, extraHeaders) {
   let res;
+  const headers = {
+    ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    ...extraHeaders,
+  };
   try {
     res = await fetch(`${API_BASE}${path}`, {
       method,
       credentials: 'same-origin',
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers: Object.keys(headers).length ? headers : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
@@ -150,9 +154,41 @@ async function doFetch(method, path, body) {
   return out;
 }
 
+/* ----------------------------------------------------- admin confirmation
+ *
+ * Changing or removing an existing record needs the admin (backend app.py
+ * _needs_admin). For anyone else the server answers 403 with
+ * `admin_required`; the write is then held while the admin's password is
+ * asked for (components/AdminConfirm.jsx registers the dialog here) and sent
+ * again with it. A wrong password comes back the same way and the dialog
+ * asks again, showing why; cancelling resolves the write as not saved. */
+const ADMIN_HEADER = 'X-Admin-Password';
+let adminPrompt = null;
+
+/** Register the dialog that asks for the admin password: a function
+ *  ({ action, error }) => Promise<password | null>. Returns an unregister. */
+export function setAdminPrompt(fn) {
+  adminPrompt = fn;
+  return () => { if (adminPrompt === fn) adminPrompt = null; };
+}
+
+async function writeWithAdmin(method, path, body) {
+  let out = await doFetch(method, path, body);
+  let wrong = null;
+  while (out?.admin_required && adminPrompt) {
+    const password = await adminPrompt({ action: out.action, error: wrong });
+    if (!password) {
+      return { ok: false, cancelled: true, error: 'Not saved - the admin did not confirm this change.' };
+    }
+    out = await doFetch(method, path, body, { [ADMIN_HEADER]: password });
+    wrong = out?.admin_required ? out.error : null;
+  }
+  return out;
+}
+
 async function request(method, path, body) {
   if (method !== 'GET') {
-    const out = await doFetch(method, path, body);
+    const out = await writeWithAdmin(method, path, body);
     clearApiCache();
     return out;
   }

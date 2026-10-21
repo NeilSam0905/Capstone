@@ -6,7 +6,7 @@ import {
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
 import { LineChart, ScrollForecastChart } from '../components/charts';
-import { num, shortMonth, longMonth, monthName, usDate, isCalendarAdjusted, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, shortMonth, longMonth, monthName, usDate, isCalendarAdjusted, roundNice, FSN_TONE, FSN_LABEL } from '../lib/format';
 import SearchSelect from '../components/SearchSelect';
 import Icon from '../components/Icon';
 import { ALL_SUPPLIERS } from '../services/dataService';
@@ -211,7 +211,7 @@ function CategoryForecastPanel({ category, onPickItem, setPage }) {
 
   return (
     <>
-      <ForecastCard key={category} title={category} fd={fd} onPickItem={onPickItem} setPage={setPage}
+      <ForecastCard key={category} title={category} fd={fd} setPage={setPage}
                     tags={wholeCategory && <ReliabilityTag metrics={fd.metrics} isHeuristic={fd.is_heuristic} />}
                     scope={!wholeCategory && fd.n_forecast < fd.n_products
                       ? `the ${fd.n_forecast} forecast item${fd.n_forecast === 1 ? '' : 's'} only`
@@ -245,13 +245,6 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
   const partial = fd.n_forecast < fd.n_products;
   const covered = fd.n_products ? fd.n_forecast / fd.n_products : 0;
 
-  // How far off the category forecast has typically been, from its own
-  // walk-forward check. Stated in units because that is what an order is in.
-  const overall = fd.metrics?.find(m => m.period_scope === 'overall') ?? fd.metrics?.[0];
-  const typicalOff = overall?.mae != null ? Math.round(overall.mae) : null;
-  const typicalPct = overall?.mae != null && overall.mean_actual_30d > 0
-    ? Math.round(100 * overall.mae / overall.mean_actual_30d) : null;
-
   // The likely range, as a range rather than one number: the guidance block's
   // low/high (backend _forecast_guidance), which for the category model is the
   // 30-day total plus or minus its walk-forward RMSE - step4c spreads that
@@ -276,20 +269,22 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
       </div>
 
       <div className="ftotal">
+        {/* Rounded to how precisely a 30-day forecast is really known
+            (roundNice): 1,898 reads as 1,900, the best estimate included. */}
         {ranged ? (
           <div className="ftotal__figure ftotal__figure--range">
             <div className="ftotal__val">
-              {num(Math.round(expected.low))}
+              {num(roundNice(expected.low))}
               <span className="ftotal__dash">–</span>
-              {num(Math.round(expected.high))}
+              {num(roundNice(expected.high))}
             </div>
             <div className="ftotal__unit">
-              units likely · best estimate <b>{num(Math.round(fd.total_30d))}</b>
+              units likely · best estimate <b>{num(roundNice(fd.total_30d))}</b>
             </div>
           </div>
         ) : (
           <div className="ftotal__figure">
-            <div className="ftotal__val">{num(Math.round(fd.total_30d))}</div>
+            <div className="ftotal__val">{num(roundNice(fd.total_30d))}</div>
             <div className="ftotal__unit">units forecast</div>
           </div>
         )}
@@ -300,20 +295,11 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
               <span className="ftotal__coverage-lbl">Covers</span>
               <b>all {num(fd.n_products)} <span>items in</span> {category}</b>
             </div>
-            <p className="ftotal__note">
-              Forecast from all of this category&rsquo;s sales taken together,
-              so it includes slow and non-moving items too.
-              {typicalOff != null && (
-                <> Checked against {overall.n_obs} past 30-day period{overall.n_obs === 1 ? '' : 's'},
-                  it was typically off by about <b>{num(typicalOff)} units</b>
-                  {typicalPct != null && <> (roughly {typicalPct}% of a typical month)</>}.</>
-              )}
-              {ranged && (
-                <> The range is the best estimate plus or minus <b>{num(halfWidth)} units</b>, the
-                  size of its usual miss in those checks (RMSE), so roughly two months in three
-                  should land inside it.</>
-              )}
-            </p>
+            {ranged && (
+              <p className="ftotal__note">
+                Best estimate ± <b>{num(roundNice(halfWidth))} units</b>, its usual miss in past months.
+              </p>
+            )}
           </div>
         ) : (
           <div className="ftotal__coverage">
@@ -326,53 +312,21 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
               <div className="meter__fill" style={{ width: `${Math.max(covered * 100, 1.5)}%` }} />
             </div>
             <p className="ftotal__note">
-              {partial ? (
-                <>Only Fast-moving items are forecast, so this total covers the{' '}
-                  <b>{fd.n_forecast} item{fd.n_forecast === 1 ? '' : 's'}</b> listed below —
-                  not all {num(fd.n_products)} in {category}.</>
-              ) : (
-                <>Every item in {category} is forecast, so this total covers the whole category.</>
-              )}
+              {partial
+                ? <>Only the {fd.n_forecast} Fast-moving item{fd.n_forecast === 1 ? '' : 's'} below are included.</>
+                : <>Every item in {category} is included.</>}
             </p>
           </div>
         )}
       </div>
 
-      {/* The items are a breakdown, not the parts of the total: say so, with
-          both numbers, rather than leave a reader to add the column up and
-          conclude one of them is wrong.
-          Three cases, not two: contributors can be empty either because the
-          category has no Fast item (n_fast === 0) or because it does but the
-          per-item forecast step hasn't run (n_fast > 0) - step4c runs on its
-          own and does not wait for step4, so that second case is a real,
-          reachable state, not a hypothetical. Saying "none is Fast-moving"
-          in that case would be false. */}
-      {wholeCategory && (
-        <div className="notice notice--info" style={{ marginTop: 14, marginBottom: 14 }}>
-          {fd.contributors.length > 0 ? (
-            <>The {num(fd.n_forecast)} Fast-moving item{fd.n_forecast === 1 ? '' : 's'} below
-              {' '}{fd.n_forecast === 1 ? 'is' : 'are'} each forecast on {fd.n_forecast === 1 ? 'its' : 'their'} own,
-              so {fd.n_forecast === 1 ? 'it adds' : 'they add'} up to{' '}
-              <b>{num(Math.round(fd.contributors_total_30d))} units</b>, not the{' '}
-              {num(Math.round(fd.total_30d))} above. Use the category figure to plan the
-              category as a whole; use the items to see which ones drive it.</>
-          ) : fd.n_fast > 0 ? (
-            <>{category}&rsquo;s Fast-moving items don&rsquo;t have their own forecast yet —
-              run the pipeline's item forecast step to see them listed here. The figure
-              above is still the forecast to use for this category.</>
-          ) : (
-            <>None of the items in {category} is Fast-moving, so none has a forecast of its
-              own. The figure above is the forecast to use for this category.</>
-          )}
-        </div>
-      )}
-
       {fd.contributors.length > 0 && (
       <div className="tbl__scroll">
-        <table className="tbl" style={{ minWidth: 680 }}>
+        <table className="tbl" style={{ minWidth: 820 }}>
           <thead>
             <tr>
               <th>Item</th>
+              <th>Category</th>
               <th>Supplier</th>
               <th className="num"
                   title="Best estimate plus or minus the item's usual miss (RMSE) over its past 30-day checks">
@@ -383,7 +337,7 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
           </thead>
           <tbody>
             {fd.contributors.map(r => {
-              const units = Math.round(r.yhat_30d || 0);
+              const units = roundNice(r.yhat_30d || 0);
               return (
                 <tr key={r.product_id}
                     onClick={() => onPickItem(r.product_id)}
@@ -402,6 +356,9 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
                       </span>
                     )}
                   </td>
+                  {/* Every row here is from the category picked above; named
+                      on each row so a copied-out table still says which. */}
+                  <td>{r.category ?? category}</td>
                   <td>{r.supplier_name}</td>
                   {/* The item's own likely range - the best estimate plus or
                       minus its walk-forward RMSE (backend _range_30d), the
@@ -410,8 +367,8 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
                       has no checks to size it from. */}
                   <td className="num frange">
                     {r.range_30d
-                      ? <span title={`${num(units)} plus or minus ${num(Math.round(r.range_30d.rmse))} units, the item's usual miss over its past 30-day checks`}>
-                          {num(Math.round(r.range_30d.low))}<span className="frange__dash">–</span>{num(Math.round(r.range_30d.high))}
+                      ? <span title={`${num(units)} ± ${num(roundNice(r.range_30d.rmse))} units, the item's usual miss in past months`}>
+                          {num(roundNice(r.range_30d.low))}<span className="frange__dash">–</span>{num(roundNice(r.range_30d.high))}
                         </span>
                       : <span className="nodata">—</span>}
                   </td>
@@ -475,7 +432,6 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage }) {
 
   // Forecast data is available — render it
   const fd = forecast.data;
-  const total30 = fd.forecast.reduce((a, r) => a + (r.yhat || 0), 0);
   const shaped = /_shape$/.test(fd.model_type ?? '');
 
   return (
@@ -505,12 +461,7 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage }) {
             longer be stocked. There is no "discontinued" flag in the data yet — this is a guess
             from a year of no sales — so check with the store before ordering off this forecast.
           </div>
-        ) : total30 < 0.5 && (
-          <div className="notice notice--info" style={{ marginTop: 12 }}>
-            This item hasn&rsquo;t sold recently, so the forecast is close to zero. It will
-            rise again if sales pick up.
-          </div>
-        )}
+        ) : null}
 
         {fd.is_heuristic && (
           <div className="notice notice--warn" style={{ marginTop: 12 }}>
@@ -537,7 +488,7 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage }) {
  * Callers key this on the item/category, so switching either reopens the
  * chart on the forecast instead of wherever the last one was scrolled to.
  */
-function ForecastCard({ title, fd, scope, tags, children, onPickItem, setPage }) {
+function ForecastCard({ title, fd, scope, tags, children, setPage }) {
   return (
     <div className="card card__pad">
       <div className="card-h">
@@ -562,260 +513,80 @@ function ForecastCard({ title, fd, scope, tags, children, onPickItem, setPage })
 
       {children}
 
-      <ForecastGuidance g={fd.guidance} title={title} onPickItem={onPickItem} setPage={setPage} />
+      <ForecastGuidance g={fd.guidance} title={title} setPage={setPage} />
     </div>
   );
 }
 
 /* ------------------------------------------------------------ guidance */
 
-/** '2026-04' (a count month) or '2026-04-30' -> how a person says it. */
-const asOf = v => (/^\d{4}-\d{2}$/.test(v ?? '') ? longMonth(v) : usDate(v));
-
-const perDay = n => (n < 10 ? n.toFixed(1) : num(n));
-
 const span = r => (r.start === r.end ? usDate(r.start) : `${usDate(r.start)} – ${usDate(r.end)}`);
 
-const plural = (n, word) => `${num(n)} ${word}${n === 1 ? '' : 's'}`;
-
-/** The action box's tone, by what it asks of the reader. */
-const ACTION_TONE = {
-  reorder_now: 'crit', reorder_items: 'crit', short: 'crit',
-  order_by: 'warn', watch: 'warn', count_stock: 'info',
-  covered: 'ok', no_demand: 'ok',
-};
+/** The one calendar fact worth a sentence in the next 30 days, busiest kind
+ *  first: enrollment is a rush, exams and the break are quiet, an event is
+ *  worth a look. None of them -> nothing to say. */
+function calendarSentence(cal) {
+  if (!cal) return null;
+  if (cal.enrollment?.length) return <> Enrollment runs <b>{span(cal.enrollment[0])}</b>, so expect a rush.</>;
+  if (cal.exams?.length) return <> Exams run <b>{span(cal.exams[0])}</b>, so expect fewer shoppers.</>;
+  if (cal.sem_break?.length) return <> The semester break runs <b>{span(cal.sem_break[0])}</b>, so expect a quiet stretch.</>;
+  if (cal.events?.length) return <> <b>{cal.events[0].name}</b> is on {usDate(cal.events[0].date)}.</>;
+  return null;
+}
 
 /**
- * The chart, read out for whoever orders stock: how much to expect, against
- * what has been selling, when the busy days are, what the calendar holds —
- * and then the one thing to do about it.
+ * The chart, read out in a few plain sentences: how much to expect over the
+ * next 30 days and how that compares with last month, the busy week and the
+ * one calendar fact that matters, then what to do - check the expected
+ * demand, and restock and reorder from Reorder Alerts.
  *
  * Every number comes from the API's `guidance` block (backend/app.py
- * _forecast_guidance), which derives it from the forecast, Result_Prescriptive
- * and the stock counts. Nothing is calculated here but the wording, so this
- * page and Reorder Alerts cannot suggest different quantities for an item.
+ * _forecast_guidance); nothing is calculated here but the wording. Figures
+ * are rounded as the Expected Demand card rounds them (roundNice).
  */
-function ForecastGuidance({ g, title, onPickItem, setPage }) {
+function ForecastGuidance({ g, title, setPage }) {
   if (!g) return null;
   const e = g.expected;
   const change = g.change_pct;
+  const item = g.scope === 'item';
+  const compared = g.recent && change != null
+    ? (Math.abs(change) < 10
+      ? <>, about the same as {longMonth(g.recent.month)}</>
+      : <>, <b>{Math.abs(change)}% {change > 0 ? 'more' : 'less'}</b> than {longMonth(g.recent.month)}</>)
+    : null;
 
   return (
     <div className="fguide">
       <div className="fguide__h">
         <span className="section-h">What this means</span>
-        <span className="hint">{g.scope === 'item' ? 'for this item' : `for ${title}`}</span>
       </div>
 
       {g.window.passed && (
         <div className="notice notice--warn" style={{ marginBottom: 12 }}>
-          This forecast is for {usDate(g.window.start)} – {usDate(g.window.end)}, which has already
-          passed: the latest tally on record is the day before it starts. Add the newest tally sheets
-          and run the pipeline for an up-to-date forecast. Until then, the advice below applies the
-          forecast&rsquo;s daily rate to today&rsquo;s stock.
+          These 30 days have already passed. Add the newest tally sheets and run the pipeline for a
+          current forecast.
         </div>
       )}
 
-      <ul className="fguide__list">
-        <li>
-          <span className="fguide__icon"><Icon name="trend" size={15} /></span>
-          <span>
-            Expect about <b>{num(e.total)} units</b> over {g.window.days} days — most likely
-            between {num(e.low)} and {num(e.high)}. That is about {perDay(e.per_day)} a day
-            {g.recent && change != null && (
-              Math.abs(change) < 10
-                ? <>, about the same as {longMonth(g.recent.month)} ({perDay(g.recent.per_day)} a day).</>
-                : <>, <b>{Math.abs(change)}% {change > 0 ? 'more' : 'less'}</b> than{' '}
-                    {longMonth(g.recent.month)} ({perDay(g.recent.per_day)} a day).</>
-            )}
-            {!(g.recent && change != null) && '.'}
-          </span>
-        </li>
-
-        {g.busiest_week && (
-          <li>
-            <span className="fguide__icon"><Icon name="zap" size={15} /></span>
-            {/* A week in a window that has passed is history, not something to
-                stock up for. */}
-            <span>
-              {g.window.passed ? 'In this forecast the busiest week was' : 'The busiest week is'}{' '}
-              <b>{span(g.busiest_week)}</b>, with about {num(g.busiest_week.units)} units
-              ({Math.round(g.busiest_week.share * 100)}% of the period).
-              {!g.window.passed && ' Have stock on the shelf before it starts.'}
-            </span>
-          </li>
-        )}
-
-        <li>
-          <span className="fguide__icon"><Icon name="cal" size={15} /></span>
-          <CalendarNote cal={g.calendar} />
-        </li>
-      </ul>
-
-      <div className={`notice notice--${ACTION_TONE[g.action] ?? 'info'} fguide__action`}>
-        <div className="fguide__action-h">What to do</div>
-        {g.scope === 'item'
-          ? <ItemAction g={g} />
-          : <CategoryAction g={g} title={title} onPickItem={onPickItem} />}
-        {setPage && ['reorder_now', 'reorder_items', 'short', 'order_by'].includes(g.action) && (
-          <div className="btn-row" style={{ marginTop: 10 }}>
-            <button className="btn btn--ghost btn--sm" onClick={() => setPage('reorder')}>
-              Open Reorder Alerts <Icon name="arrow" size={12} />
-            </button>
-          </div>
-        )}
-      </div>
+      <p className="fguide__text">
+        {item ? 'This item' : title} should sell about <b>{num(roundNice(e.total))} units</b> over
+        the next {g.window.days} days (likely {num(roundNice(e.low))}–{num(roundNice(e.high))})
+        {compared}.
+        {g.busiest_week && !g.window.passed && <> The busiest week is <b>{span(g.busiest_week)}</b>.</>}
+        {calendarSentence(g.calendar)}
+      </p>
+      <p className="fguide__text">
+        <b>What to do:</b> check the expected demand for the items to restock, and reorder them.
+      </p>
+      {setPage && (
+        <div className="btn-row">
+          <button className="btn btn--ink btn--sm" onClick={() => setPage('reorder')}>
+            Open Reorder Alerts <Icon name="arrow" size={12} />
+          </button>
+        </div>
+      )}
     </div>
   );
-}
-
-/** The next 30 days of the school calendar, as what each part means for sales. */
-function CalendarNote({ cal }) {
-  const parts = [
-    ...cal.enrollment.map(r => <>Enrollment <b>{span(r)}</b> — the busiest sales window; stock Fast-moving items before it starts.</>),
-    ...cal.exams.map(r => <>Exams <b>{span(r)}</b> — fewer shoppers; non-urgent restocking can wait until after.</>),
-    ...cal.sem_break.map(r => <>Semester break <b>{span(r)}</b> — campus is quiet, expect low sales.</>),
-    ...cal.events.map(ev => <><b>{ev.name}</b> on {usDate(ev.date)} — check stock of the items it draws on.</>),
-  ];
-  if (cal.closed_days > 0) parts.push(<>The store is closed on {plural(cal.closed_days, 'day')}.</>);
-
-  const when = `${usDate(cal.start)} – ${usDate(cal.end)}`;
-  if (parts.length === 0) {
-    return <span>No enrollment, exams, semester break or logged events between {when}.</span>;
-  }
-  return (
-    <span>
-      Between {when}:
-      <ul className="fguide__sub">
-        {parts.map((p, i) => <li key={i}>{p}</li>)}
-      </ul>
-    </span>
-  );
-}
-
-function ItemAction({ g }) {
-  const s = g.stock;
-  const e = g.expected;
-  const counted = s.stock_as_of ? <> (last counted {asOf(s.stock_as_of)})</> : null;
-  const onHand = <><b>{num(s.current_stock ?? 0)}</b> on hand{counted}</>;
-
-  switch (g.action) {
-    case 'reorder_now':
-      return (
-        <p>
-          <b>Reorder now.</b> {onHand} is at or below the reorder point of{' '}
-          {num(Math.round(s.reorder_point))}
-          {s.current_stock > 0 && s.days_cover != null && <>, enough for only about {perDay(s.days_cover)} days</>}.
-          Order about <b>{num(s.suggested_order_qty)} units</b> — enough to cover the supplier&rsquo;s
-          lead time plus the next 30 days.
-        </p>
-      );
-    case 'order_by':
-      return (
-        <p>
-          <b>Place the next order by {usDate(s.order_by)}.</b> {onHand} lasts about{' '}
-          {perDay(s.days_cover)} days at the forecast rate (until around {usDate(s.runs_out_on)}).
-          Ordering when it reaches {num(Math.round(s.reorder_point))} leaves enough to sell while the
-          order arrives.
-        </p>
-      );
-    case 'short':
-      return (
-        <p>
-          <b>Stock won&rsquo;t last the period.</b> {onHand} runs out around{' '}
-          {usDate(s.runs_out_on)} at the forecast rate. Order about <b>{num(s.to_cover_30d)} units</b>{' '}
-          to cover the next 30 days ({num(s.to_cover_30d_high)} if it turns out busy).
-        </p>
-      );
-    case 'watch':
-      return (
-        <p>
-          <b>Enough for now — keep an eye on it.</b> {onHand} covers the expected{' '}
-          {num(e.total)} units, but a busy month could need up to {num(e.high)}: about{' '}
-          {num(s.to_cover_30d_high)} more.
-        </p>
-      );
-    case 'covered':
-      return (
-        <p>
-          <b>No order needed.</b> {onHand} covers the next 30 days even at the high end
-          ({num(e.high)} units).
-        </p>
-      );
-    case 'count_stock':
-      return (
-        <p>
-          <b>Count this item first.</b> It has no stock count, so there is no way to tell whether it
-          needs ordering. To cover the next 30 days the shelf needs about <b>{num(e.total)} units</b>{' '}
-          ({num(e.high)} for a busy month) — record a count in the Tally Interface to get a
-          recommendation.
-        </p>
-      );
-    default:
-      return <p><b>No order needed.</b> This item is forecast to sell almost nothing in the next 30 days.</p>;
-  }
-}
-
-function CategoryAction({ g, title, onPickItem }) {
-  const s = g.stock;
-  const uncounted = s.items_total - s.items_counted;
-  const coverage = (
-    <span className="hint fguide__coverage">
-      Stock is counted for {num(s.items_counted)} of {plural(s.items_total, 'item')} in {title}
-      {uncounted > 0 && '; the rest cannot be checked until they are counted'}.
-    </span>
-  );
-
-  if (g.action === 'reorder_items') {
-    const more = s.reorder_now_total - s.reorder_now.length;
-    return (
-      <>
-        <p>
-          <b>Reorder {plural(s.reorder_now_total, 'item')} in {title}</b> — about{' '}
-          <b>{num(s.reorder_units_total)} units</b> in total. {s.reorder_now_total === 1 ? 'It is' : 'They are'} at
-          or below the reorder point:
-        </p>
-        <div className="tbl__scroll" style={{ marginTop: 8 }}>
-          <table className="tbl fguide__tbl">
-            <thead>
-              <tr><th>Item</th><th>Supplier</th><th className="num">On hand</th><th className="num">Order</th></tr>
-            </thead>
-            <tbody>
-              {s.reorder_now.map(r => (
-                <tr key={r.product_id} className={onPickItem ? 'is-clickable' : undefined}
-                    onClick={onPickItem ? () => onPickItem(r.product_id) : undefined}
-                    title={onPickItem ? 'Show this item on its own' : undefined}>
-                  <td className="strong"><span className="cell-trunc" style={{ '--trunc': '260px' }}>{r.item_name}</span></td>
-                  <td>{r.supplier_name ?? '—'}</td>
-                  <td className="num">{num(r.current_stock)}</td>
-                  <td className="num"><b>{num(r.suggested_order_qty)}</b></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {more > 0 && <div className="hint" style={{ marginTop: 6 }}>…and {plural(more, 'more item')} in Reorder Alerts.</div>}
-        {coverage}
-      </>
-    );
-  }
-  if (g.action === 'count_stock') {
-    return (
-      <p>
-        <b>Count the stock first.</b> No item in {title} has a stock count, so this forecast cannot be
-        checked against what is on the shelf. Start with the Fast-moving items.
-      </p>
-    );
-  }
-  if (g.action === 'covered') {
-    return (
-      <>
-        <p><b>No order needed right now.</b> None of the counted items in {title} is at its reorder point.</p>
-        {coverage}
-      </>
-    );
-  }
-  return <p><b>No order needed.</b> {title} is forecast to sell almost nothing in the next 30 days.</p>;
 }
 
 /**

@@ -9,7 +9,12 @@ export const num = n => Math.round(n).toLocaleString();
 export const displayUser = u =>
   String(u ?? '').replace(/(^|[\s._-])(\p{L})/gu, (_, sep, c) => sep + c.toUpperCase());
 
-export const DONUT_COLORS = ['var(--gold)', '#16140F', '#2C5E8A', '#2E7D55', '#C1452F', '#B5791A'];
+// Ten, so a category donut never repeats a colour - two categories in one
+// colour read as one.
+export const DONUT_COLORS = [
+  'var(--gold)', '#16140F', '#2C5E8A', '#2E7D55', '#C1452F',
+  '#B5791A', '#6B4C9A', '#2A9D8F', '#8D6E63', '#C2547E',
+];
 
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -52,6 +57,20 @@ export const usDateTime = d => {
   const m = d.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
   return m ? `${m[2]}/${m[3]}/${m[1]} ${m[4]}:${m[5]}` : usDate(d);
 };
+
+/** A forecast figure rounded to how precisely it is really known, up or down
+ *  to whichever is nearer: exact under 20, to the nearest 5 under 100, to the
+ *  nearest 10 from there. 1,898 reads as 1,900; 734 as 730; 41 as 40. One
+ *  step for everything above 100 keeps a range and its centre consistent:
+ *  1,130 +/- 770 is 360-1,900, where a coarser step for the thousands made
+ *  the estimate 1,150 and the arithmetic no longer added up. */
+export function roundNice(n) {
+  if (n == null || Number.isNaN(n)) return n;
+  let step = 10;
+  if (n < 20) step = 1;
+  else if (n < 100) step = 5;
+  return Math.round(n / step) * step;
+}
 
 /** FSN presentation: tone maps onto the design system's status colours. */
 export const FSN_TONE = { F: 'ok', S: 'warn', N: 'crit' };

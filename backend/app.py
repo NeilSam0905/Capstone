@@ -302,6 +302,34 @@ def logout():
     return jsonify({"ok": True})
 
 
+def _needs_admin(what):
+    """None when this edit may go ahead; otherwise the response refusing it.
+
+    Changing or removing a record that already exists - a stock count, a
+    closure, an event, a restock, an upcoming order, an item's name or status -
+    needs the admin. The admin signed in does it directly; anyone else sends
+    the admin's password in the X-Admin-Password header, which the interface
+    asks for in a confirmation dialog when a write comes back `admin_required`
+    (services/dataService.js). Adding a new record (a tally, a first count, a
+    new closure or event) does not. Checked here, on the server, so the rule
+    holds however the request is made. Wrong passwords lock the address out
+    like wrong logins do (auth.check_admin_password)."""
+    if auth.is_admin(auth.current_user()):
+        return None
+    addr = request.remote_addr or "?"
+    wait = auth.locked_for(f"admin:{addr}")
+    if wait:
+        return jsonify({"ok": False, "error": f"Too many wrong admin passwords. Try again in {wait} seconds."}), 429
+    password = request.headers.get(auth.ADMIN_PASSWORD_HEADER)
+    if not password:
+        return jsonify({"ok": False, "admin_required": True, "action": what,
+                        "error": f"{what} needs the admin's password."}), 403
+    if not auth.check_admin_password(con(), password, addr):
+        return jsonify({"ok": False, "admin_required": True, "action": what,
+                        "error": "That is not the admin password."}), 403
+    return None
+
+
 def _bool_flag(v):
     return request.args.get(v) in ("1", "true", "True")
 
@@ -527,6 +555,9 @@ def rename_product(product_id):
     Adds the new name to the vocabulary as another name for the item, so the
     next pipeline run reads rows under it as this item: history kept, name on
     the dashboard unchanged (see names.rename)."""
+    gate = _needs_admin("Renaming an item")
+    if gate:
+        return gate
     payload = request.get_json(silent=True) or {}
     try:
         result = names.rename(con(), VOCAB_CSV, product_id, payload.get("new_name"))
@@ -576,6 +607,9 @@ def set_product_status(product_id):
     Stored in Product_Status by item name (see backend/db.py for why), so it
     survives a pipeline run. A discontinued item leaves the tally item
     pickers; its history, counts and stock figures are untouched."""
+    gate = _needs_admin("Changing an item's status")
+    if gate:
+        return gate
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload.get("discontinued"), bool):
         return jsonify({"ok": False, "error": "Send discontinued: true or false."}), 400
@@ -1244,6 +1278,11 @@ def add_inventory_count():
     previous = dbmod.one(c, """
         SELECT quantity FROM Inventory_Count WHERE product_id = ? AND count_month = ?
     """, (product_id, count_month))
+    # A first count is a new record; replacing a different figure is an edit.
+    if previous and previous["quantity"] != quantity:
+        gate = _needs_admin("Changing a recorded stock count")
+        if gate:
+            return gate
 
     c.execute("""
         INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged)
@@ -1273,6 +1312,9 @@ def add_inventory_count():
 
 @app.delete("/api/inventory/<int:count_id>")
 def delete_inventory_count(count_id):
+    gate = _needs_admin("Removing a stock count")
+    if gate:
+        return gate
     c = con()
     if not dbmod.one(c, "SELECT 1 FROM Inventory_Count WHERE count_id = ?", (count_id,)):
         return jsonify({"ok": False, "error": "No such inventory count."}), 404
@@ -1369,10 +1411,15 @@ def mark_restock_delivered(restock_id):
     """Set (or correct) the day a restock arrived: {delivered_on}."""
     payload = request.get_json(silent=True) or {}
     c = con()
-    row = dbmod.one(c, "SELECT ordered_on FROM Restock_Log WHERE restock_id = ?", (restock_id,)) \
-        if "Restock_Log" in _table_names(c) else None
+    row = dbmod.one(c, "SELECT ordered_on, delivered_on FROM Restock_Log WHERE restock_id = ?",
+                    (restock_id,)) if "Restock_Log" in _table_names(c) else None
     if row is None:
         return jsonify({"ok": False, "error": "No such restock."}), 404
+    # Marking an order delivered is a new fact; changing the date is an edit.
+    if row["delivered_on"]:
+        gate = _needs_admin("Changing a delivery date")
+        if gate:
+            return gate
     _o, delivered, errors = _restock_dates({**payload, "ordered_on": row["ordered_on"]})
     if delivered is None:
         errors["delivered_on"] = "Pick the date it arrived."
@@ -1385,6 +1432,9 @@ def mark_restock_delivered(restock_id):
 
 @app.delete("/api/restocks/<int:restock_id>")
 def delete_restock(restock_id):
+    gate = _needs_admin("Removing a restock")
+    if gate:
+        return gate
     c = con()
     if "Restock_Log" not in _table_names(c) or not dbmod.one(
             c, "SELECT 1 FROM Restock_Log WHERE restock_id = ?", (restock_id,)):
@@ -1504,6 +1554,13 @@ def set_closure(iso_date):
     # calendar is still logged, and populate_dim_date.py applies it once the
     # calendar reaches it.
     _extend_calendar(c)
+    # Marking a day closed adds a closure; reopening a closed day removes one.
+    if not closed:
+        was = dbmod.one(c, "SELECT is_store_closed FROM Dim_Date WHERE calendar_date = ?", (iso_date,))
+        if was and was["is_store_closed"]:
+            gate = _needs_admin("Reopening a closed day")
+            if gate:
+                return gate
     # Remediation D3. Log the toggle in Closure_Log (durable across a
     # populate_dim_date.py rebuild, which reads it back - see that
     # script) AND update Dim_Date directly (so the change is visible
@@ -1529,6 +1586,9 @@ def edit_closure(iso_date):
     here: the log overrides the calendar file without editing it. A past
     change reaches the forecasts at the next pipeline run (the Tally page's
     staleness banner says so)."""
+    gate = _needs_admin("Changing a closure")
+    if gate:
+        return gate
     payload = request.get_json(silent=True) or {}
     new_date = str(payload.get("calendar_date") or "").strip()
     reason = (payload.get("reason") or "").strip() or None
@@ -1623,6 +1683,9 @@ def add_upcoming_order():
 
 @app.delete("/api/orders/upcoming/<int:order_id>")
 def delete_upcoming_order(order_id):
+    gate = _needs_admin("Removing an upcoming order")
+    if gate:
+        return gate
     c = con()
     if "Upcoming_Order" not in _table_names(c) or not dbmod.one(
             c, "SELECT 1 FROM Upcoming_Order WHERE order_id = ?", (order_id,)):
@@ -1871,6 +1934,9 @@ def edit_event(event_id):
     Dim_Date follows at once: the new day is flagged, and the old day loses
     its flag unless another logged event or the published calendar still
     puts one there (the same rule populate_dim_date.py rebuilds by)."""
+    gate = _needs_admin("Changing an event")
+    if gate:
+        return gate
     payload = request.get_json(silent=True) or {}
     new_date = str(payload.get("calendar_date") or "").strip()
     name = (payload.get("event_name") or "").strip()
@@ -1921,6 +1987,9 @@ def delete_event(event_id):
     """Remove an event - an upcoming one that was cancelled, or a past one
     that was logged by mistake. A past removal reaches the forecasts at the
     next pipeline run."""
+    gate = _needs_admin("Removing an event")
+    if gate:
+        return gate
     c = con()
     row = dbmod.one(c, "SELECT event_date, event_name FROM Event_Log WHERE event_id = ?", (event_id,))
     if row is None:

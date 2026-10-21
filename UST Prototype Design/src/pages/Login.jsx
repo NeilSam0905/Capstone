@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { login } from '../services/dataService';
 import Icon from '../components/Icon';
+import PasswordInput from '../components/PasswordInput';
 import brandMark from '../assets/ustore-mark.png';
 
 /** The sign-in screen, shown until the backend has a session for this browser
@@ -74,9 +75,10 @@ export default function Login({ onLogin, expired = false }) {
           </div>
           <div className="field" style={{ marginBottom: 20 }}>
             <label htmlFor="login-pass">Password</label>
-            <input id="login-pass" type="password" autoComplete="current-password"
-                   value={password} onChange={e => setPassword(e.target.value)}
-                   className={error && !password ? 'is-err' : undefined} />
+            {/* The eye button shows what was typed, to check it before signing in. */}
+            <PasswordInput id="login-pass" autoComplete="current-password"
+                           value={password} onChange={e => setPassword(e.target.value)}
+                           className={error && !password ? 'is-err' : undefined} />
           </div>
 
           <button type="submit" className="btn btn--gold login__submit" disabled={busy}>

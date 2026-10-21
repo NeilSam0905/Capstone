@@ -435,6 +435,20 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* Inline field errors on the tally form */
 .field__err { font-size: 11.5px; color: var(--crit); font-weight: 600; }
 .field__hint { font-size: 11.5px; color: var(--muted); }
+/* Password with a show / hide eye at its right end (components/PasswordInput). */
+.pw-field { position: relative; display: flex; }
+.pw-field input { flex: 1; width: 100%; padding-right: 42px; }
+.pw-field__toggle {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 34px; height: 30px; border: 0; border-radius: var(--r-xs);
+  display: grid; place-items: center; background: none; cursor: pointer; color: var(--muted);
+  transition: color .12s, background .12s;
+}
+.pw-field__toggle:hover { color: var(--text-2); background: var(--bg); }
+.pw-field__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Admin confirmation dialog (components/AdminConfirm). */
+.admin-confirm__text { display: flex; gap: 9px; align-items: flex-start; margin: 0 0 14px; font-size: 13.5px; line-height: 1.55; color: var(--text-2); }
+.admin-confirm__text > svg { flex-shrink: 0; margin-top: 2px; color: var(--warn); }
 .field input.is-err, .field select.is-err { border-color: var(--crit); }
 .field input.is-err:focus, .field select.is-err:focus { outline-color: var(--crit); }
 
@@ -524,6 +538,16 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .edit-dates__ask { font-size: 12px; font-weight: 700; color: var(--crit); }
 .edit-dates__err { flex-basis: 100%; }
 .linkish--crit:hover { color: var(--crit); }
+/* Edit / Delete on each row: coloured by what they do rather than the muted
+   grey of a header link, so they read as the row's actions at a glance and
+   never as part of the grey source tag beside them. */
+.edit-dates__actions .linkish {
+  color: var(--accent-deep); padding: 3px 8px; border-radius: var(--r-xs);
+  transition: color .12s, background .12s;
+}
+.edit-dates__actions .linkish:hover { color: var(--accent-deep); background: var(--accent-wash); }
+.edit-dates__actions .linkish--crit { color: var(--crit); }
+.edit-dates__actions .linkish--crit:hover { color: var(--crit); background: var(--crit-bg); }
 
 /* A row being edited: its inputs take the row, the buttons stay at the end. */
 .edit-dates .date-list--edit li.is-editing { background: var(--card); gap: 8px; }
@@ -596,7 +620,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* Report (batch sales) */
 .report-head { padding: 3px 0 0; }
 .report-supplier { padding: 10px 14px; background: var(--ink); border-radius: var(--r) var(--r) 0 0; }
-.report-supplier span { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #fff; font-weight: 800; }
+.report-supplier span { font-size: 14px; letter-spacing: .08em; text-transform: uppercase; color: #fff; font-weight: 800; }
 .report-total { background: var(--ink); border-radius: var(--r); padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; }
 .report-total__label { font-size: 12.5px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.75); font-weight: 800; }
 .report-total__val { font-size: 20px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
@@ -633,19 +657,30 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .tally-body::-webkit-scrollbar { width: 9px; }
 .tally-body::-webkit-scrollbar-thumb { background: #D8D4C9; border-radius: 6px; border: 2px solid var(--bg); }
 
-/* Topbar wraps instead of letting the filters ride over the title.
-   Title block and filter block are both flex items with their own basis, so
-   they either sit side by side or stack cleanly - never overlap. */
+/* Topbar: ONE row - title on the left, filters on the right - at every width
+   down to a phone. As the window narrows the filters shrink (the supplier
+   one most, it has the most room to give) and long values ellipsise; the
+   title keeps its own width and ellipsises last. Only below 640px, where four
+   controls physically cannot sit beside a title, does the row wrap. */
 .topbar {
-  height: auto; min-height: 64px; flex-wrap: wrap;
+  height: auto; min-height: 64px; flex-wrap: nowrap;
   padding: 10px 26px; row-gap: 10px; align-items: center;
 }
-.topbar > div:first-child { flex: 1 1 240px; min-width: 0; }
+.topbar > div:first-child { flex: 0 0 auto; min-width: 0; }
 .topbar__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar__crumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.topbar__right { flex: 0 1 auto; flex-wrap: nowrap; justify-content: flex-end; min-width: 0; }
-.topbar__right .filter-field { min-width: 0; }
-.topbar__right .filter select { min-width: 0; width: 100%; }
+.topbar__right { flex: 1 1 auto; flex-wrap: nowrap; justify-content: flex-end; min-width: 0; }
+/* The supplier filter gives up width first (shrink 4); date and category keep
+   enough to read "All Time" / "All Categories" until the very narrowest. */
+.topbar__right .filter-field { min-width: 104px; flex: 0 1 170px; }
+.topbar__right .filter-field--wide { min-width: 110px; flex: 1 4 280px; max-width: 520px; }
+.topbar__right .filter select { min-width: 0; width: 100%; text-overflow: ellipsis; }
+/* Narrower windows: the Advisories button keeps its bell and red count but
+   drops the word, and the filter glyph goes - the room goes to the selects. */
+@media (max-width: 1080px) {
+  .topbar__advisories > span:not(.topbar__badge) { display: none; }
+  .topbar__filter-icon { display: none; }
+}
 
 /* Truncating cell — long supplier names must not push later columns out of
    view. The full value stays available via the title attribute. */
@@ -671,11 +706,14 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .pager__btn.active { background: var(--accent); border-color: var(--accent); color: var(--ink); }
 .pager__gap { color: var(--muted); padding: 0 2px; }
 
-/* Batch report subtotal — same bar treatment as .report-supplier, in gold */
+/* Batch report subtotal — same bar treatment as .report-supplier, in a darker,
+   muted gold. The brand gold at full strength (#F4B400), repeated as a bar
+   under every supplier, was hard on the eyes down a long report; this one
+   still reads as gold and keeps the ink text at 6.6:1 contrast. */
 .report-subtotal {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; flex-wrap: wrap;
-  padding: 10px 14px; background: var(--gold); border-radius: 0 0 var(--r) var(--r);
+  padding: 10px 14px; background: #BE962A; border-radius: 0 0 var(--r) var(--r);
 }
 .report-subtotal__label {
   font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
@@ -690,7 +728,6 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 /* ---- Responsive ---- */
 @media (max-width: 1024px) {
   .topbar { padding: 10px 16px; }
-  .topbar__right { width: 100%; justify-content: flex-start; }
   .scroll { padding: 16px 16px 32px; }
   .tally-body { padding: 20px 16px 40px; }
   .tally-head { padding: 14px 16px; }
@@ -699,8 +736,6 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
   .form-grid { grid-template-columns: 1fr; }
   .filter select { min-width: 0; }
   .topbar__right { gap: 8px; }
-  .topbar__right .filter-field { flex: 1 1 130px; }
-  .topbar__right .filter select { width: 100%; }
 }
 @media (max-width: 720px) {
   /* icon-only sidebar so the content keeps its width */
@@ -723,14 +758,13 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 /* the cell itself clips now, so the inner span must not add its own cap */
 .tbl--fixed .cell-trunc { max-width: 100%; }
 
-/* Topbar: filters take their own full-width row before they get squeezed */
-@media (max-width: 1180px) {
-  .topbar__right { flex: 1 1 100%; justify-content: flex-start; }
-  .topbar__right .filter-field { flex: 1 1 0; }
-}
-@media (max-width: 560px) {
-  .topbar__right { flex-wrap: wrap; }
-  .topbar__right .filter-field { flex: 1 1 140px; }
+/* Topbar on a phone: the one place the filters drop to their own row. */
+@media (max-width: 640px) {
+  .topbar { flex-wrap: wrap; }
+  .topbar > div:first-child { flex: 1 1 100%; }
+  .topbar__right { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-start; }
+  .topbar__right .filter-field,
+  .topbar__right .filter-field--wide { flex: 1 1 140px; max-width: none; }
 }
 
 /* Batch report: each supplier's item table scrolls past 10 rows rather than
@@ -1139,9 +1173,11 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
    twelve categories makes the legend scroll rather than make the card - and
    with it the chart sharing its grid row - grow to fit every last one. */
 .donut__legend {
-  display: flex; flex-direction: column; gap: 9px;
+  /* Rows tight enough that ten - nine categories and "Others", the most the
+     Overview shows with Others held to 5% - fit without scrolling. */
+  display: flex; flex-direction: column; gap: 3px;
   flex: 1 1 130px; min-width: 130px;
-  max-height: 208px; overflow-y: auto; overscroll-behavior: contain;
+  max-height: 236px; overflow-y: auto; overscroll-behavior: contain;
   padding-right: 6px;
 }
 .donut__legend::-webkit-scrollbar { width: 7px; }
@@ -1523,22 +1559,11 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .nav__signout:hover { color: var(--nav-text-strong); }
 /* ------------------------------------------------- forecast: what this means */
 /* Under the Demand Forecast chart (Forecast.jsx ForecastGuidance): the chart
-   read out in sentences, then one action box toned by what it asks for. */
+   read out in a short paragraph, what to do, and the way to Reorder Alerts. */
 .fguide { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
-.fguide__h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
-.fguide__list { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.fguide__list > li { display: flex; gap: 10px; font-size: 13.5px; line-height: 1.55; color: var(--text-2); }
-.fguide__list b { color: var(--text); }
-.fguide__icon {
-  flex-shrink: 0; width: 26px; height: 26px; border-radius: var(--r-xs); margin-top: 1px;
-  display: grid; place-items: center; background: var(--accent-wash); color: var(--accent-deep);
-}
-.fguide__sub { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
-.fguide__action { font-size: 13.5px; }
-.fguide__action p { margin: 0; }
-.fguide__action-h { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; font-weight: 800; margin-bottom: 4px; }
-.fguide__tbl { background: var(--card); border-radius: var(--r-xs); font-size: 12.5px; }
-.fguide__coverage { display: block; margin-top: 8px; }
+.fguide__h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.fguide__text { margin: 0 0 10px; font-size: 13.5px; line-height: 1.6; color: var(--text-2); max-width: 760px; }
+.fguide__text b { color: var(--text); }
 /* ------------------------------------------------------ restock deliveries */
 .restock-open { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .restock-open__act { display: inline-flex; align-items: center; gap: 6px; }

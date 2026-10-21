@@ -6,6 +6,9 @@ import Icon from '../components/Icon';
 import Pending, { Loading, PendingValue } from '../components/Pending';
 import { num, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
 
+/** Fast, Slow, then Non-Moving: the order the recommendations table opens in. */
+const CLASS_ORDER = { F: 0, S: 1, N: 2 };
+
 export default function Reorder({ filters }) {
   const { data: stock, loading } = useData(() => getStockPosition(filters), [filters], null,
     { key: `reorder:stock:${filters.supplier}|${filters.category}` });
@@ -22,6 +25,11 @@ export default function Reorder({ filters }) {
   // /api/reorder itself (it joins catalog stats server-side), so this screen
   // no longer re-derives them from /api/stock.
   const alertItems = alerts?.available ? alerts.data.items : [];
+  // The recommendations table opens on the Fast items - the ones a stockout
+  // costs most - then Slow, then the rest; within a class the API's name
+  // order stands (Array.sort is stable). A column heading still re-sorts.
+  const byClass = [...alertItems].sort(
+    (a, b) => (CLASS_ORDER[a.fsn_class] ?? 9) - (CLASS_ORDER[b.fsn_class] ?? 9));
   const summary = alerts?.available ? alerts.data.summary : null;
 
   const columns = [
@@ -43,7 +51,7 @@ export default function Reorder({ filters }) {
   ];
 
   const alertColumns = [
-    { key: 'item_name', label: 'Product Name', strong: true, truncate: true, width: '16%' },
+    { key: 'item_name', label: 'Product Name', strong: true, truncate: true, width: '25%' },
     {
       key: 'fsn_class', label: 'Class', width: '10%',
       render: v => v
@@ -77,12 +85,6 @@ export default function Reorder({ filters }) {
     {
       key: 'eoq_high', label: 'EOQ · high goods-value', num: true, width: '12%',
       render: (_v, row) => <Eoq scenario={row.scenarios.high_goods_value} />,
-    },
-    {
-      key: 'sigma_source', label: 'Demand Estimate', width: '9%',
-      render: v => v === 'cv_fallback'
-        ? <span className="tag tag--warn" title="Not enough sales history to measure variability directly - estimated from typical variation instead">Estimated</span>
-        : <span className="muted">Measured</span>,
     },
   ];
 
@@ -130,7 +132,7 @@ export default function Reorder({ filters }) {
           <div className="card-h">
             <span className="section-h">Reorder Recommendations</span>
           </div>
-          <DataTable columns={alertColumns} data={alertItems} minWidth={1180} />
+          <DataTable columns={alertColumns} data={byClass} minWidth={1080} />
         </div>
       )}
 

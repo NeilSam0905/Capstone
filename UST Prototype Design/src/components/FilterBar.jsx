@@ -95,7 +95,7 @@ export default function FilterBar({
                               onApply={applyRange} onClose={() => setRangeOpen(false)} />
           )}
           {show.includes('supplier') && (
-            <Filter label="Supplier" value={filters.supplier}
+            <Filter label="Supplier" value={filters.supplier} wide
                     onChange={v => update('supplier', v)} options={suppliers} />
           )}
           {show.includes('category') && (
@@ -153,7 +153,7 @@ function CustomRangeModal({ months, initialFrom, initialTo, onApply, onClose }) 
    a select shows its selected value, so "All" on its own never says all of
    WHAT. The <label> is bound to the select by id, so it is also what a
    screen reader announces. */
-function Filter({ value, onChange, options, icon, label, labels = {} }) {
+function Filter({ value, onChange, options, icon, label, labels = {}, wide = false }) {
   const id = useId();
 
   // A selected value the list does not carry — a supplier held over from a
@@ -162,7 +162,7 @@ function Filter({ value, onChange, options, icon, label, labels = {} }) {
   const opts = value != null && !options.includes(value) ? [value, ...options] : options;
 
   return (
-    <div className="filter-field">
+    <div className={'filter-field' + (wide ? ' filter-field--wide' : '')}>
       <label className="filter-field__label" htmlFor={id}>{label}</label>
       <div className="filter">
         {icon && (
