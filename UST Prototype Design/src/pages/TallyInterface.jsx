@@ -190,6 +190,11 @@ export default function TallyInterface({ setView, user, signOut }) {
   // exactly what makes the analytics stale, and a finished pipeline run is
   // what clears it. Both already call bump().
   const { data: staleness } = useData(getPipelineStaleness, [reloadKey]);
+  const [tab, setTab] = useState(savedTab);
+  const goTo = useCallback(next => {
+    setTab(next);
+    try { sessionStorage.setItem(TAB_KEY, next); } catch { /* remembered for this visit only */ }
+  }, []);
 
   return (
     <div className="tally-wrap">
@@ -212,20 +217,98 @@ export default function TallyInterface({ setView, user, signOut }) {
 
       <div className="tally-body">
         {connectionError && <ErrorBanner error={connectionError} />}
-        <CalendarEndBanner meta={meta} />
-        <StalenessBanner staleness={staleness} />
+        <CalendarEndBanner meta={meta} goTo={goTo} />
+        <StalenessBanner staleness={staleness} goTo={goTo} />
         <NamesToReview products={products} reloadKey={reloadKey} onChanged={bump} />
-        <SalesTally products={products} onSaved={bump}
-                             recent={recent} recentLoading={recentLoading} />
-        <UpcomingOrders products={products} reloadKey={reloadKey} />
-        <MonthlyInventoryCount products={products} onSaved={bump} />
-        <RestockDeliveries products={products} reloadKey={reloadKey} />
-        <ClosureAndEventCards onSaved={bump} reloadKey={reloadKey} />
-        <EntriesByDate reloadKey={reloadKey} />
-        <FullPipelineRun onChanged={bump} />
+
+        <TallyTabs active={tab} onChange={goTo} staleness={staleness} />
+
+        {/* Every section stays mounted and is only hidden, so switching tab
+            never loses a half-filled form. */}
+        <section className="tally-section tone-orange" hidden={tab !== 'sales'} aria-label="Sales">
+          <SalesTally products={products} onSaved={bump}
+                      recent={recent} recentLoading={recentLoading} />
+          <UpcomingOrders products={products} reloadKey={reloadKey} />
+          <EntriesByDate reloadKey={reloadKey} />
+        </section>
+        <section className="tally-section tone-ok" hidden={tab !== 'stock'} aria-label="Stock">
+          <MonthlyInventoryCount products={products} onSaved={bump} />
+          <RestockDeliveries products={products} reloadKey={reloadKey} />
+        </section>
+        <section className="tally-section tone-info" hidden={tab !== 'calendar'} aria-label="Calendar">
+          <ClosureAndEventCards onSaved={bump} reloadKey={reloadKey} />
+        </section>
+        <section className="tally-section tone-hvl" hidden={tab !== 'update'} aria-label="Update Analytics">
+          <FullPipelineRun onChanged={bump} />
+        </section>
       </div>
     </div>
   );
+}
+
+/* ------------------------------------------------------------ sections */
+
+/** The tally screen's four sections, each with its own colour so a glance
+ *  says where you are: the card stripes and title badges inside a section
+ *  take its colour (.tone-* in redesign.css). */
+const SECTIONS = [
+  { id: 'sales',    label: 'Sales',            icon: 'trend', tone: 'orange', desc: 'Record sales' },
+  { id: 'stock',    label: 'Stock',            icon: 'box',   tone: 'ok',   desc: 'Counts and deliveries' },
+  { id: 'calendar', label: 'Calendar',         icon: 'cal',   tone: 'info', desc: 'Closures and busy days' },
+  { id: 'update',   label: 'Update Analytics', icon: 'zap',   tone: 'hvl',  desc: 'Run the pipeline' },
+];
+const TAB_KEY = 'tally.tab';
+
+/** The tab last open in this browser tab, so a reload lands where you were. */
+function savedTab() {
+  try {
+    const t = sessionStorage.getItem(TAB_KEY);
+    if (SECTIONS.some(s => s.id === t)) return t;
+  } catch { /* storage blocked: start on Sales */ }
+  return 'sales';
+}
+
+function TallyTabs({ active, onChange, staleness }) {
+  // Update Analytics carries a count while records are waiting for a run.
+  const waiting = staleness?.stale && !staleness.running
+    ? (staleness.interrupted ? '!' : staleness.total_pending || '!') : null;
+  return (
+    <nav className="tally-tabs" role="tablist" aria-label="Tally sections">
+      {SECTIONS.map(s => (
+        <button key={s.id} type="button" role="tab" aria-selected={active === s.id}
+                className={`tally-tab tone-${s.tone}${active === s.id ? ' is-active' : ''}`}
+                onClick={() => onChange(s.id)}>
+          <span className="tally-tab__icon"><Icon name={s.icon} size={18} /></span>
+          <span className="tally-tab__text">
+            <span className="tally-tab__label">
+              {s.label}
+              {s.id === 'update' && waiting != null && (
+                <span className="tally-tab__badge" title="Records waiting for the next pipeline run">
+                  {typeof waiting === 'number' ? num(waiting) : waiting}
+                </span>
+              )}
+            </span>
+            <span className="tally-tab__desc">{s.desc}</span>
+          </span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+/** A card's title with its icon in a badge tinted the section's colour. */
+function CardTitle({ icon, children }) {
+  return (
+    <span className="card-title">
+      <span className="card-title__icon"><Icon name={icon} size={20} /></span>
+      <span className="section-h">{children}</span>
+    </span>
+  );
+}
+
+/** A banner's mention of another section, as a link that opens it. */
+function TabLink({ to, goTo, children }) {
+  return <button type="button" className="linkish tab-link" onClick={() => goTo(to)}>{children}</button>;
 }
 
 /* ------------------------------------------------------- Names to review */
@@ -315,12 +398,12 @@ function NamesToReview({ products, reloadKey, onChanged }) {
   }
 
   return (
-    <div className="card card__pad card--names-review">
+    <div className="card card__pad card--names-review tone-warn">
       <div className="card-h">
-        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <Icon name="tag" size={14} /> Names to review
+        <CardTitle icon="tag">
+          Names to review
           {names.length > 0 && <span className="tag tag--warn">{num(names.length)}</span>}
-        </span>
+        </CardTitle>
         {strong.length > 1 && (
           <button className="btn btn--ghost btn--sm" disabled={busy != null} onClick={() => setConfirmAll(true)}>
             <Icon name="check" size={13} /> Review {num(strong.length)} strong suggestions
@@ -524,7 +607,7 @@ function SalesTally({ products, onSaved, recent, recentLoading }) {
   return (
     <div className="card card__pad card--sales-tally">
       <div className="card-h">
-        <span className="section-h">Sales Tally</span>
+        <CardTitle icon="trend">Sales Tally</CardTitle>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <button type="button" className="btn btn--ghost btn--sm" onClick={() => setEditing(true)}
                   title="Change or remove an entry already recorded">
@@ -654,9 +737,7 @@ function UpcomingOrders({ products, reloadKey }) {
   return (
     <details className="card card__pad card--upcoming collapse collapse--card">
       <summary>
-        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <Icon name="calPlus" size={14} /> Upcoming Bulk Orders
-        </span>
+        <CardTitle icon="calPlus">Upcoming Bulk Orders</CardTitle>
         <span className="hint">
           {upcoming.length === 0 ? 'none recorded'
             : `${num(upcoming.length)} coming · ${num(upcoming.reduce((s, o) => s + o.quantity, 0))} units`}
@@ -808,9 +889,7 @@ function MonthlyInventoryCount({ products, onSaved }) {
   return (
     <div className="card card__pad card--inventory-count">
       <div className="card-h">
-        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <Icon name="db" size={14} /> Monthly Inventory Count
-        </span>
+        <CardTitle icon="db">Monthly Inventory Count</CardTitle>
         {/* The three actions sit together on one row; their hints live on
             the line below, where a long import hint cannot push the Import
             button onto a row of its own. */}
@@ -920,7 +999,7 @@ function MonthlyInventoryCount({ products, onSaved }) {
             ? <Loading />
             : counts.length === 0
               ? <div className="empty">No stock counts recorded for {longMonth(month)}.</div>
-              : <DataTable columns={columns} data={rows} pageSize={10} minWidth={760} />}
+              : <DataTable columns={columns} data={rows} pageSize={10} minWidth={600} />}
         </div>
       </details>
 
@@ -1378,9 +1457,7 @@ function RestockDeliveries({ products, reloadKey }) {
   return (
     <div className="card card__pad card--restocks">
       <div className="card-h">
-        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <Icon name="box" size={14} /> Restock Deliveries
-        </span>
+        <CardTitle icon="box">Restock Deliveries</CardTitle>
       </div>
       <div className="hint" style={{ marginTop: -4, marginBottom: 12 }}>
         Record when each restock was ordered and when it arrived. After {minDeliveries} deliveries from a
@@ -1519,11 +1596,9 @@ function ClosureAndEventCards({ onSaved, reloadKey }) {
   return (
     <>
       <div className="grid-2">
-        <div className="card card__pad card--store-closure">
+        <div className="card card__pad card--store-closure tone-crit">
           <div className="card-h" style={{ marginBottom: 4 }}>
-            <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-              <Icon name="calOff" size={14} /> Store Closure / Suspension
-            </span>
+            <CardTitle icon="calOff">Store Closure / Suspension</CardTitle>
             {editButton}
           </div>
 
@@ -1592,9 +1667,7 @@ function ClosureAndEventCards({ onSaved, reloadKey }) {
 
         <div className="card card__pad card--flag-event">
           <div className="card-h" style={{ marginBottom: 4 }}>
-            <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-              <Icon name="calPlus" size={14} /> Flag an Event
-            </span>
+            <CardTitle icon="calPlus">Flag an Event</CardTitle>
             {editButton}
           </div>
 
@@ -2138,19 +2211,19 @@ function EntriesByDate({ reloadKey }) {
   return (
     <div className="card card__pad card--entries-by-date">
       <div className="card-h">
-        <span className="section-h">Entries by Date</span>
+        <CardTitle icon="cal">Entries by Date</CardTitle>
         <div className="field" style={{ flexDirection: 'row', alignItems: 'center' }}>
           <input type="date" value={date} onChange={e => setDate(e.target.value)} />
         </div>
       </div>
       {loading ? <Loading /> : entries.length === 0 ? (
-        <div className="empty">No entries recorded on {date}.</div>
+        <div className="empty">No entries recorded on {usDate(date)}.</div>
       ) : (
         <>
           <div className="hint" style={{ marginBottom: 8 }}>
             {entries.length} entr{entries.length === 1 ? 'y' : 'ies'} · {num(total)} units
           </div>
-          <DataTable columns={columns} data={rows} pageSize={10} minWidth={620} />
+          <DataTable columns={columns} data={rows} pageSize={10} minWidth={480} />
         </>
       )}
     </div>
@@ -2181,14 +2254,36 @@ function EntriesByDate({ reloadKey }) {
  *  staff to record those days themselves - which the cards below do. */
 const CALENDAR_WARN_DAYS = 120;
 
-function CalendarEndBanner({ meta }) {
+/** Closing the banner is remembered in this browser for this calendar end
+ *  date and this side of it: it comes back when a new calendar is loaded,
+ *  and once the date has passed, since "ended" is the more urgent message. */
+const CALENDAR_DISMISS_KEY = 'tally.calendarBannerClosed';
+
+function readDismissed() {
+  try { return localStorage.getItem(CALENDAR_DISMISS_KEY); } catch { return null; }
+}
+
+function CalendarEndBanner({ meta, goTo }) {
+  const [dismissed, setDismissed] = useState(readDismissed);
   const end = meta?.academic_calendar_end;
   if (!end) return null;
   const daysLeft = Math.round((new Date(`${end}T00:00:00`) - new Date(`${today()}T00:00:00`)) / 86400000);
   if (daysLeft > CALENDAR_WARN_DAYS) return null;
+  const key = `${end}:${daysLeft >= 0 ? 'ahead' : 'ended'}`;
+  if (dismissed === key) return null;
+
+  function close() {
+    setDismissed(key);
+    try { localStorage.setItem(CALENDAR_DISMISS_KEY, key); } catch { /* hidden until reload */ }
+  }
+
   return (
-    <div className="notice notice--info" style={{ display: 'flex', gap: 10 }}>
+    <div className="notice notice--info notice--closable" style={{ display: 'flex', gap: 10 }}>
       <Icon name="cal" size={16} />
+      <button type="button" className="notice__close" onClick={close} aria-label="Close this notice"
+              title="Close">
+        <Icon name="close" size={14} />
+      </button>
       <div>
         <b>
           {daysLeft >= 0
@@ -2198,15 +2293,16 @@ function CalendarEndBanner({ meta }) {
         <div style={{ marginTop: 4 }}>
           Tallies after that date still save. From then on the system does not know the school&apos;s
           holidays, breaks or exam weeks, so record them yourself: mark each closing day and holiday
-          in <b>Store Closure / Suspension</b>, flag busy days in <b>Flag an Event</b>, and keep doing
-          the <b>Monthly Inventory Count</b>.
+          in <TabLink to="calendar" goTo={goTo}>Store Closure / Suspension</TabLink>, flag busy days
+          in <TabLink to="calendar" goTo={goTo}>Flag an Event</TabLink>, and keep doing
+          the <TabLink to="stock" goTo={goTo}>Monthly Inventory Count</TabLink>.
         </div>
       </div>
     </div>
   );
 }
 
-function StalenessBanner({ staleness }) {
+function StalenessBanner({ staleness, goTo }) {
   if (!staleness || !staleness.stale) return null;
 
   const { pending = {}, never_run: neverRun, running, interrupted, last_run: lastRun } = staleness;
@@ -2236,8 +2332,8 @@ function StalenessBanner({ staleness }) {
           </b>
           <div style={{ marginTop: 4 }}>
             Some steps completed and some did not, so FSN classes, forecasts and reorder points may not
-            agree with each other or with the sales data. Run <b>Full Pipeline Run</b> at the bottom of
-            this page to bring them back into step.
+            agree with each other or with the sales data. Run the pipeline
+            in <TabLink to="update" goTo={goTo}>Update Analytics</TabLink> to bring them back into step.
             {parts.length > 0 && <> There {parts.length === 1 ? 'is' : 'are'} also {what} waiting to be
             folded in.</>}
           </div>
@@ -2252,7 +2348,7 @@ function StalenessBanner({ staleness }) {
       <div>
         <b>
           {running
-            ? 'Pipeline running — the analytics below are still the previous run’s.'
+            ? 'Pipeline running — the dashboard still shows the previous run’s analytics.'
             : 'Analytics are out of date — re-run the pipeline.'}
         </b>
         <div style={{ marginTop: 4 }}>
@@ -2272,7 +2368,7 @@ function StalenessBanner({ staleness }) {
         </div>
         {!running && (
           <div style={{ marginTop: 4 }}>
-            Run <b>Full Pipeline Run</b> at the bottom of this page to refresh them.
+            Run the pipeline in <TabLink to="update" goTo={goTo}>Update Analytics</TabLink> to refresh them.
           </div>
         )}
       </div>
@@ -2482,9 +2578,7 @@ function FullPipelineRun({ onChanged }) {
   return (
     <div className="card card__pad card--pipeline-run">
       <div className="card-h">
-        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <Icon name="zap" size={14} /> Full Pipeline Run
-        </span>
+        <CardTitle icon="zap">Full Pipeline Run</CardTitle>
         <AddWorkbookButton onResult={setWorkbookResult} />
       </div>
 
