@@ -9,7 +9,7 @@ import {
   getNamesToReview, settleName, renameProduct,
   getRestocks, addRestock, markRestockDelivered, deleteRestock,
   getUpcomingOrders, addUpcomingOrder, deleteUpcomingOrder,
-  editClosure, editEvent, deleteEvent,
+  editClosure, editEvent, deleteEvent, editEntry, deleteEntry,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
@@ -215,7 +215,7 @@ export default function TallyInterface({ setView, user, signOut }) {
         <CalendarEndBanner meta={meta} />
         <StalenessBanner staleness={staleness} />
         <NamesToReview products={products} reloadKey={reloadKey} onChanged={bump} />
-        <SalesInventoryTally products={products} onSaved={bump}
+        <SalesTally products={products} onSaved={bump}
                              recent={recent} recentLoading={recentLoading} />
         <UpcomingOrders products={products} reloadKey={reloadKey} />
         <MonthlyInventoryCount products={products} onSaved={bump} />
@@ -475,15 +475,17 @@ function outcome(r) {
     + (r.next_run ? ' The next pipeline run applies it to the sales history.' : '');
 }
 
-/* ------------------------------------------------- Sales Inventory Tally */
+/* ------------------------------------------------------------ Sales Tally */
 
-function SalesInventoryTally({ products, onSaved, recent, recentLoading }) {
+function SalesTally({ products, onSaved, recent, recentLoading }) {
   const [form, setForm] = useState({
     calendar_date: today(), transaction_type: 'SALE', product_id: '', quantity_sold: '',
   });
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [errors, setErrors] = useState({});
   const [saved, setSaved] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const closeEditor = useCallback(() => setEditing(false), []);
 
   const categories = categoriesOf(products);
   const visible = itemsInCategory(products, category);
@@ -522,10 +524,17 @@ function SalesInventoryTally({ products, onSaved, recent, recentLoading }) {
   return (
     <div className="card card__pad card--sales-tally">
       <div className="card-h">
-        <span className="section-h">Sales Inventory Tally</span>
-        <ImportButton onImport={importTallyEntries} onDone={onSaved}
-                      hint="Date · Item · Total Quantity · Order Type (optional)" />
+        <span className="section-h">Sales Tally</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => setEditing(true)}
+                  title="Change or remove an entry already recorded">
+            <Icon name="cal" size={13} /> Edit entries
+          </button>
+          <ImportButton onImport={importTallyEntries} onDone={onSaved}
+                        hint="Date · Item · Total Quantity · Order Type (optional)" />
+        </span>
       </div>
+      {editing && <EditTallyModal onClose={closeEditor} onSaved={onSaved} />}
 
       <div className="form-grid">
         <Field label="Date" error={errors.calendar_date}>
@@ -893,7 +902,7 @@ function MonthlyInventoryCount({ products, onSaved }) {
         )}
       </div>
 
-      {/* Collapsible, matching Recent Entries in Sales Inventory Tally: the
+      {/* Collapsible, matching Recent Entries in Sales Tally: the
           form is what the card is for, and the table under it pushed the rest
           of the page down. The summary keeps the counts so it stays useful
           shut. Re-keyed on `month` so switching month reopens it — a closed
@@ -1276,6 +1285,7 @@ function CurrentStockModal({ open, onClose, onChanged }) {
               </select>
               <label className={`check check--chip${stockOnly ? ' is-on' : ''}`}>
                 <input type="checkbox" checked={stockOnly} onChange={e => setStockOnly(e.target.checked)} />
+                <span className="switch" aria-hidden="true" />
                 In stock only
               </label>
             </div>
@@ -1930,6 +1940,160 @@ function EventItem({ event, past, onSaved }) {
   );
 }
 
+/* --------------------------------------------------- Edit tally entries */
+
+/** How many of the latest entries the editor lists before a day is picked. */
+const RECENT_EDITABLE = 50;
+
+/** The Transaction Type choice a saved entry was made with ("SALE:bulk"). */
+function kindOf(entry) {
+  const t = entry.transaction_type;
+  return t === 'SALE' && ORDER_LABEL[entry.order_type] ? `SALE:${entry.order_type}` : t;
+}
+
+/** The latest tally entries, or one day's, each editable in place the way
+ *  Edit Dates edits a closure: Edit opens the row for a new date, type and
+ *  quantity, Delete asks once. The item itself is not changed here - a wrong
+ *  item is removed and recorded again. Rows loaded from the tally workbook
+ *  are editable too: the backend keeps the change so the pipeline re-applies
+ *  it after reloading the workbook (scripts/tally_corrections.py). Mounted
+ *  only while open. */
+function EditTallyModal({ onClose, onSaved }) {
+  const [date, setDate] = useState('');               // '' = the most recent entries
+  const [own, setOwn] = useState(0);
+  const [done, setDone] = useState(null);
+  const { data: entries, loading } = useData(
+    () => (date ? getEntriesByDate(date) : getRecentEntries(RECENT_EDITABLE)), [date, own], []);
+  const total = entries.reduce((s, e) => s + e.quantity_sold, 0);
+
+  function saved(message) {
+    setDone(message);
+    setOwn(k => k + 1);
+    onSaved();
+  }
+
+  return (
+    <Modal open onClose={onClose} width={780} title="Edit Tally Entries"
+           subtitle="Correct the date, type or quantity of an entry, or remove one recorded by mistake.">
+      <div className="modal-grow">
+        <div className="edit-dates">
+          <div className="edit-dates__bar">
+            <label className="hint edit-dates__month">
+              {date ? 'Entries on' : 'Recent entries · or pick a day'}
+              <input type="date" className="edit-tally__date" value={date} max={today()}
+                     onChange={e => { setDate(e.target.value); setDone(null); }} />
+              {date && (
+                <button type="button" className="linkish" onClick={() => { setDate(''); setDone(null); }}>
+                  Show recent
+                </button>
+              )}
+            </label>
+            <span className="hint">
+              {date ? '' : 'Latest '}
+              {entries.length} entr{entries.length === 1 ? 'y' : 'ies'} · {num(total)} units
+            </span>
+          </div>
+
+          <div className="notice notice--info edit-dates__note">
+            A change reaches the forecasts at the next pipeline run.
+          </div>
+          {done && <div className="ok-text" style={{ fontSize: 12.5 }}><Icon name="check" size={14} />{done}</div>}
+
+          {loading ? <Loading /> : entries.length === 0
+            ? <div className="hint">{date ? `No entries recorded on ${usDate(date)}.` : 'No entries recorded yet.'}</div>
+            : (
+              <ul className="date-list date-list--closures date-list--edit">
+                {entries.map(e => <TallyItem key={entryKey(e)} entry={e} onSaved={saved} showDate={!date} />)}
+              </ul>
+            )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function TallyItem({ entry, onSaved, showDate }) {
+  const blank = {
+    calendar_date: entry.calendar_date,
+    kind: kindOf(entry),
+    quantity_sold: String(entry.quantity_sold),
+  };
+  const [mode, setMode] = useState('view');          // view | edit | confirm
+  const [form, setForm] = useState(blank);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const changed = form.calendar_date !== blank.calendar_date || form.kind !== blank.kind
+    || Number(form.quantity_sold) !== entry.quantity_sold;
+  const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setError(null); };
+
+  function cancel() {
+    setMode('view');
+    setForm(blank);
+    setError(null);
+  }
+
+  async function save() {
+    const [transaction_type, order_type] = form.kind.split(':');
+    setBusy(true);
+    const r = await editEntry(entry.sale_id, {
+      calendar_date: form.calendar_date, quantity_sold: form.quantity_sold, transaction_type, order_type,
+    });
+    setBusy(false);
+    if (!r.ok) {
+      const e = r.errors || {};
+      setError(e.calendar_date || e.quantity_sold || e.transaction_type || e.order_type || r.error || 'Could not save.');
+      return;
+    }
+    setError(null);
+    setMode('view');
+    onSaved(form.calendar_date === entry.calendar_date
+      ? `${entry.item_name} updated.`
+      : `${entry.item_name} moved from ${usDate(entry.calendar_date)} to ${usDate(form.calendar_date)}.`);
+  }
+
+  async function remove() {
+    setBusy(true);
+    const r = await deleteEntry(entry.sale_id);
+    setBusy(false);
+    if (!r.ok) { setError(r.error || 'Could not delete.'); setMode('view'); return; }
+    onSaved(`${num(entry.quantity_sold)} × ${entry.item_name} on ${usDate(entry.calendar_date)} deleted.`);
+  }
+
+  if (mode === 'edit') {
+    return (
+      <li className="is-editing">
+        <span className="edit-dates__label edit-tally__item" title={entry.item_name}>{entry.item_name}</span>
+        <input type="date" value={form.calendar_date} max={today()} aria-label="Date"
+               onChange={e => set('calendar_date', e.target.value)} />
+        <select value={form.kind} aria-label="Transaction type" onChange={e => set('kind', e.target.value)}>
+          {ENTRY_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+        </select>
+        <input type="number" min="1" step="1" value={form.quantity_sold} aria-label="Quantity"
+               className="edit-tally__qty" onChange={e => set('quantity_sold', e.target.value)} />
+        <span className="edit-dates__actions">
+          <button type="button" className="btn btn--ink btn--sm" disabled={!changed || busy} onClick={save}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={cancel}>Cancel</button>
+        </span>
+        {error && <span className="field__err edit-dates__err">{error}</span>}
+      </li>
+    );
+  }
+
+  const label = `${num(entry.quantity_sold)} × ${entry.item_name}`;
+  return (
+    <li className="edit-tally__row">
+      {showDate && <span className="closure__date">{usDate(entry.calendar_date)}</span>}
+      <b className="edit-dates__label edit-tally__name" title={label}>{label}</b>
+      {TYPE_CELL(entry.transaction_type, entry)}
+      <RowActions mode={mode} setMode={setMode} onDelete={remove} busy={busy}
+                  deleteLabel="Delete this entry?" />
+      {error && <span className="field__err edit-dates__err">{error}</span>}
+    </li>
+  );
+}
+
 /* ------------------------------------------------------- Entries by Date */
 
 function entryKey(e) {
@@ -1943,7 +2107,7 @@ const TYPE_CELL = (v, row) => (
   </span>
 );
 
-/** Shared by the Recent Entries block inside Sales Inventory Tally. Lifted to
+/** Shared by the Recent Entries block inside Sales Tally. Lifted to
  *  module scope when that block moved into the form card, so the table shape
  *  is defined once. */
 const RECENT_COLUMNS = [

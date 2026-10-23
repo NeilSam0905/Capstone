@@ -52,6 +52,22 @@ function ChartTip({ label, value, sub }) {
   );
 }
 
+/** [callback ref, width in px] for an element, kept current as it resizes.
+ *  0 until the element is laid out. A callback ref rather than an effect, so
+ *  it follows the element when it mounts after a "no data" render. */
+function useWidth() {
+  const [width, setWidth] = useState(0);
+  const observer = useRef(null);
+  const ref = useCallback(el => {
+    observer.current?.disconnect();
+    if (!el) return;
+    setWidth(el.clientWidth);
+    observer.current = new ResizeObserver(() => setWidth(el.clientWidth));
+    observer.current.observe(el);
+  }, []);
+  return [ref, width];
+}
+
 /* ---------- Line chart ---------- */
 export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', tickFmt = num }) {
   // Hover is tracked as an index, not a pixel: the pointer is mapped back
@@ -66,11 +82,15 @@ export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', 
   // filter narrows.
   const [hover, setHover] = useState(null);
   const svgRef = useRef(null);
+  // Drawn at the card's real width rather than a fixed 720-wide viewBox: that
+  // one was letterboxed with empty margins in a wide card (a zoomed-out
+  // window) and shrank to an unreadable strip in a narrow one (zoomed in).
+  const [wrapRef, measured] = useWidth();
 
   if (!data || data.length < 2) {
     return <div className="empty">Not enough data points to plot.</div>;
   }
-  const W = 720, H = height, padL = 58, padR = 16, padT = 16, padB = 28;
+  const W = Math.max(measured || 720, 260), H = height, padL = 58, padR = 16, padT = 16, padB = 28;
   const xs = data.map(d => d[xKey]);
   const ys = data.map(d => d[yKey]);
   const rawMax = Math.max(...ys), rawMin = Math.min(...ys);
@@ -87,8 +107,8 @@ export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', 
   const line = ys.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
   const area = `${line} L${x(data.length - 1)},${H - padB} L${x(0)},${H - padB} Z`;
   const ticks = Math.max(1, Math.round((max - min) / step));
-  // keep the x-axis readable when there are many periods
-  const labelEvery = Math.ceil(data.length / 14);
+  // keep the x-axis readable: about one label per 52px of plot, at most 14
+  const labelEvery = Math.ceil(data.length / Math.max(2, Math.min(14, Math.floor((W - padL - padR) / 52))));
 
   function onMove(e) {
     const local = svgPoint(svgRef.current, e.clientX, e.clientY);
@@ -100,7 +120,7 @@ export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', 
   }
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div ref={wrapRef} style={{ position: 'relative' }}>
     <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
          style={{ display: 'block' }}
          onMouseMove={onMove} onMouseLeave={() => setHover(null)}>

@@ -120,6 +120,9 @@ CREATE TABLE IF NOT EXISTS Fact_Sales (
     -- 'walk_in' | 'bulk' | 'pre_order'; NULL = walk-in. The forecasts train
     -- on walk-in sales only (scripts/order_types.py).
     order_type               TEXT,
+    -- workbook rows a staff member corrected: the Tally_Correction row that
+    -- step2 re-applies on every reload (scripts/tally_corrections.py)
+    correction_id            INTEGER,
     FOREIGN KEY (product_id) REFERENCES Dim_Product (product_id),
     FOREIGN KEY (date_id)    REFERENCES Dim_Date (date_id)
 );

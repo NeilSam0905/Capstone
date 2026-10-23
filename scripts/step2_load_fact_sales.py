@@ -80,6 +80,7 @@ from collections import defaultdict
 import pandas as pd
 
 import order_types
+import tally_corrections
 
 SALES_CSV = "data/USTore_sales_long_allocated.csv"
 INVENTORY_CSV = "data/USTore_inventory_excel_long_mapped.csv"
@@ -257,6 +258,7 @@ def main():
     con.execute("PRAGMA foreign_keys = ON;")
     create_exception_table(con)
     order_types.ensure_column(con)
+    tally_corrections.ensure(con)
 
     clear_historical_fact_sales(con)
     con.execute("DELETE FROM Exception_Log")
@@ -350,6 +352,12 @@ def main():
             }
         )
 
+    # Changes staff made to workbook rows in the Tally Interface, applied
+    # again now that the rows have been reloaded (scripts/tally_corrections.py).
+    # Before the derived fields, so those are computed on the corrected figures.
+    n_corrected, n_unmatched = tally_corrections.apply(
+        good_rows, tally_corrections.load(con), product_id_by_name, date_id_by_iso)
+
     # ---- derive the four ETL fields (rules in the module docstring) ----
     by_product = defaultdict(list)
     for r in good_rows:
@@ -412,8 +420,12 @@ def main():
             r["is_censored"],
             r["imputation_flag"],
             1,  # tally_date_flag: these are historical tally observations
-            "sale",
-            confirmed_orders.get((r["product_id"], r["iso_date"])),   # NULL = walk-in
+            r.get("transaction_type", "sale"),
+            # a staff correction says what kind of sale it was; otherwise the
+            # store's answers in bulk_day_candidates.csv. NULL = walk-in.
+            r["order_type"] if "correction_id" in r
+            else confirmed_orders.get((r["product_id"], r["iso_date"])),
+            r.get("correction_id"),
         )
         for rows in by_product.values()
         for r in rows
@@ -423,8 +435,8 @@ def main():
         """INSERT INTO Fact_Sales
            (product_id, date_id, quantity_sold, cumulative_monthly_units,
             daily_depletion_rate, days_of_supply, is_censored,
-            imputation_flag, tally_date_flag, transaction_type, order_type)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            imputation_flag, tally_date_flag, transaction_type, order_type, correction_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         fact_rows,
     )
     con.executemany(
@@ -458,9 +470,11 @@ def main():
     pct = 100 * flagged_or_isolated / total_input if total_input else 0
     print(f"Flagged or isolated: {flagged_or_isolated} / {total_input} = {pct:.2f}%")
     print(f"Dim_Product supplier filled from price-group rows : {n_supplier_filled} products")
-    n_marked = sum(1 for row in fact_rows if row[-1])
+    n_marked = sum(1 for row in fact_rows if row[-2])
     print(f"Item-days the store marked as bulk / pre-orders ({BULK_CANDIDATES_CSV}): "
           f"{len(confirmed_orders)} -> {n_marked} Fact_Sales rows (left out of the forecasts' training)")
+    print(f"Staff corrections to workbook rows (Tally_Correction) : {n_corrected} applied"
+          + (f", {n_unmatched} no longer match a workbook row" if n_unmatched else ""))
     for d, item, answer in unreadable_orders[:20]:
         print(f"  could not read the answer {answer!r} for {item} on {d} - left as a walk-in sale")
 

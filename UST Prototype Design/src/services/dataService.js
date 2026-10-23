@@ -426,6 +426,23 @@ export async function addEntry(entry) {
   });
 }
 
+/** Correct a tally entry's date, quantity or type (backend edit_entry). The
+ *  item stays; entries loaded from the tally workbook are changed there. */
+export async function editEntry(saleId, entry) {
+  // The item is not part of an edit, so it is never the field at fault.
+  const errors = validateEntry({ ...entry, product_id: saleId });
+  if (Object.keys(errors).length) return { ok: false, errors };
+  return put(`/tally/${saleId}`, {
+    quantity_sold: Number(entry.quantity_sold),
+    calendar_date: entry.calendar_date,
+    transaction_type: entry.transaction_type,
+    order_type: entry.order_type,
+  });
+}
+
+/** Remove a tally entry recorded by mistake (backend delete_entry). */
+export const deleteEntry = saleId => del(`/tally/${saleId}`);
+
 /** Mark a date closed or open. `reason` is free text and optional — it is
  *  stored on Closure_Log.reason, which has always existed in the schema but
  *  had no way in from the interface until now. Reopening a date carries a

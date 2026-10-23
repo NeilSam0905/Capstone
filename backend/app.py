@@ -45,6 +45,7 @@ import validation
 import names                  # after pipeline: it needs scripts/ on sys.path
 import order_types            # scripts/order_types.py
 import calendar_extent        # scripts/calendar_extent.py
+import tally_corrections       # scripts/tally_corrections.py
 
 app = Flask(__name__)
 auth.configure(app)
@@ -1701,7 +1702,7 @@ def get_recent_entries():
     rows = dbmod.rows(con(), """
         SELECT f.sale_id, f.product_id, d.calendar_date, f.quantity_sold,
                UPPER(f.transaction_type) AS transaction_type, f.imputation_flag, f.is_censored, f.entered_by,
-               f.order_type, p.item_name, COALESCE(p.supplier_name, ?) AS supplier_name
+               f.order_type, f.tally_date_flag, p.item_name, COALESCE(p.supplier_name, ?) AS supplier_name
         FROM Fact_Sales f
         JOIN Dim_Date d ON d.date_id = f.date_id
         JOIN Dim_Product p ON p.product_id = f.product_id
@@ -1722,7 +1723,7 @@ def get_entries_by_date():
     rows = dbmod.rows(con(), """
         SELECT f.sale_id, f.product_id, d.calendar_date, f.quantity_sold,
                UPPER(f.transaction_type) AS transaction_type, f.imputation_flag, f.is_censored, f.entered_by,
-               f.order_type, p.item_name, COALESCE(p.supplier_name, ?) AS supplier_name
+               f.order_type, f.tally_date_flag, p.item_name, COALESCE(p.supplier_name, ?) AS supplier_name
         FROM Fact_Sales f
         JOIN Dim_Date d ON d.date_id = f.date_id
         JOIN Dim_Product p ON p.product_id = f.product_id
@@ -1776,6 +1777,108 @@ def add_entry():
         "is_local": False,
     }
     return jsonify({"ok": True, "entry": entry})
+
+
+@app.put("/api/tally/<int:sale_id>")
+def edit_entry(sale_id):
+    """Correct a tally entry: its date, quantity or transaction type.
+    {calendar_date, quantity_sold, transaction_type, order_type?}. The item
+    stays - a wrong item is removed and recorded again.
+
+    An entry typed or imported here (tally_date_flag = 0) is simply changed.
+    One loaded from the tally workbook (tally_date_flag = 1) is changed too,
+    and the change is also kept in Tally_Correction: step2 deletes and reloads
+    every workbook row on each pipeline run, and re-applies it from there
+    (scripts/tally_corrections.py). The forecasts pick a change up at the
+    next pipeline run."""
+    gate = _needs_admin("Changing a tally entry")
+    if gate:
+        return gate
+    payload = request.get_json(silent=True) or {}
+    c = con()
+    tally_corrections.ensure(c)
+    row = _tally_row(c, sale_id)
+    if row is None:
+        return jsonify({"ok": False, "error": "That entry no longer exists."}), 404
+
+    _extend_calendar(c)
+    errors = validation.validate_entry(c, {**payload, "product_id": row["product_id"]})
+    transaction_type = str(payload.get("transaction_type") or "").upper()
+    order_type = _order_type(transaction_type, payload.get("order_type"))
+    if order_type is False:
+        errors["order_type"] = "Choose walk-in, bulk or pre-order."
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+
+    quantity_sold = int(float(payload["quantity_sold"]))
+    calendar_date = payload["calendar_date"]
+    date_row = dbmod.one(c, "SELECT date_id FROM Dim_Date WHERE calendar_date = ?", (calendar_date,))
+    correction_id = _record_correction(c, row, calendar_date=calendar_date, quantity=quantity_sold,
+                                       transaction_type=transaction_type.lower(), order_type=order_type)
+    c.execute("""
+        UPDATE Fact_Sales SET date_id = ?, quantity_sold = ?, transaction_type = ?, order_type = ?,
+                              correction_id = ?
+        WHERE sale_id = ?
+    """, (date_row["date_id"], quantity_sold, transaction_type.lower(), order_type, correction_id, sale_id))
+    c.commit()
+    return jsonify({"ok": True, "entry": {
+        "sale_id": sale_id, "calendar_date": calendar_date, "quantity_sold": quantity_sold,
+        "transaction_type": transaction_type, "order_type": order_type,
+    }})
+
+
+@app.delete("/api/tally/<int:sale_id>")
+def delete_entry(sale_id):
+    """Remove a tally entry recorded by mistake. A workbook row's removal is
+    kept in Tally_Correction, as edit_entry keeps a change."""
+    gate = _needs_admin("Removing a tally entry")
+    if gate:
+        return gate
+    c = con()
+    tally_corrections.ensure(c)
+    row = _tally_row(c, sale_id)
+    if row is None:
+        return jsonify({"ok": False, "error": "That entry no longer exists."}), 404
+    _record_correction(c, row, is_deleted=1)
+    c.execute("DELETE FROM Fact_Sales WHERE sale_id = ?", (sale_id,))
+    c.commit()
+    return jsonify({"ok": True, "deleted": {"sale_id": sale_id}})
+
+
+def _tally_row(c, sale_id):
+    return dbmod.one(c, """
+        SELECT f.sale_id, f.product_id, f.quantity_sold, f.imputation_flag, f.tally_date_flag,
+               f.correction_id, d.calendar_date, p.item_name
+        FROM Fact_Sales f
+        JOIN Dim_Date d ON d.date_id = f.date_id
+        JOIN Dim_Product p ON p.product_id = f.product_id
+        WHERE f.sale_id = ?
+    """, (sale_id,))
+
+
+def _record_correction(c, row, calendar_date=None, quantity=None, transaction_type=None,
+                       order_type=None, is_deleted=0):
+    """For a workbook row, the Tally_Correction step2 will re-apply: the one it
+    already has, updated, or a new one naming the row as the workbook has it.
+    None for an entry made here, which the pipeline never reloads."""
+    if not row["tally_date_flag"]:
+        return None
+    values = (calendar_date, quantity, transaction_type, order_type, is_deleted)
+    if row["correction_id"] and dbmod.one(c, "SELECT 1 AS ok FROM Tally_Correction WHERE correction_id = ?",
+                                          (row["correction_id"],)):
+        c.execute("""
+            UPDATE Tally_Correction SET calendar_date = ?, quantity = ?, transaction_type = ?,
+                   order_type = ?, is_deleted = ?, entered_by = ?, date_logged = ?
+            WHERE correction_id = ?
+        """, (*values, auth.current_user(), datetime.now().isoformat(timespec="seconds"), row["correction_id"]))
+        return row["correction_id"]
+    cur = c.execute("""
+        INSERT INTO Tally_Correction (item_name, original_date, original_quantity, imputation_flag,
+            calendar_date, quantity, transaction_type, order_type, is_deleted, entered_by, date_logged)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (row["item_name"], row["calendar_date"], row["quantity_sold"], row["imputation_flag"] or 0,
+          *values, auth.current_user(), datetime.now().isoformat(timespec="seconds")))
+    return cur.lastrowid
 
 
 @app.post("/api/tally/import")

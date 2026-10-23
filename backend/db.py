@@ -134,6 +134,8 @@ _COLUMNS = (
     # walk_in / bulk / pre_order (scripts/order_types.py); NULL = walk-in
     ("Fact_Sales", "order_type", "TEXT"),
     ("Pending_Import_Row", "order_type", "TEXT"),
+    # the Tally_Correction a corrected workbook row came from
+    ("Fact_Sales", "correction_id", "INTEGER"),
 )
 
 
