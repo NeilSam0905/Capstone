@@ -1769,3 +1769,111 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 @supports not selector(::-webkit-scrollbar) {
   * { scrollbar-color: var(--gold) transparent; }
 }
+
+/* Overview hero: the reorder decision the dashboard supports, readable in
+   one look - the count, the units, the categories that need restocking and
+   the suppliers it means calling. A gold rail and wash while there is
+   something to order, green when there is not. */
+.hero {
+  display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr); gap: 18px 28px;
+  padding: 22px 24px; border-left: 4px solid var(--accent);
+  background: linear-gradient(90deg, var(--accent-wash), var(--card) 65%);
+}
+.hero.is-clear { border-left-color: var(--ok); background: linear-gradient(90deg, var(--ok-bg), var(--card) 65%); }
+.hero__title { font-size: 34px; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; color: var(--ink); }
+.hero__title b { color: var(--crit); font-weight: 800; }
+.hero__sub { font-size: 14px; color: var(--text-2); margin-top: 8px; line-height: 1.5; }
+.hero__sub b { color: var(--text); }
+.hero__sub b.is-crit { color: var(--crit); }
+.hero__actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 16px; }
+.hero__side { align-self: center; }
+.hero__side-h { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.hero__list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.hero__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; font-size: 13px; }
+.hero__row-name { font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hero__row-qty { color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hero__row-bar { grid-column: 1 / -1; height: 5px; border-radius: 99px; background: var(--line-soft); overflow: hidden; }
+.hero__row-bar > span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+.hero__foot { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); border-top: 1px solid var(--line-soft); padding-top: 10px; }
+/* Narrower: the decision on its own row, the two lists side by side below. */
+@container (max-width: 1100px) {
+  .hero { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hero__main { grid-column: 1 / -1; }
+}
+@container (max-width: 600px) {
+  .hero { grid-template-columns: 1fr; }
+  .hero__title { font-size: 28px; }
+}
+
+/* Overview: the FSN groups as the actions they call for. Each row is a
+   button onto the Classification page. */
+.decisions { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.decision {
+  display: grid; grid-template-columns: 104px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  width: 100%; padding: 9px 12px; text-align: left; cursor: pointer;
+  font: inherit; color: inherit; background: var(--card);
+  border: 1px solid var(--line-soft); border-radius: var(--r-sm);
+}
+.decision:hover { background: var(--accent-wash); border-color: var(--accent-line); }
+.decision .tag { justify-self: start; }
+.decision__hint { font-size: 12px; color: var(--text-2); }
+.decision__count { font-size: 18px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
+.overview-order__item { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+/* Info tip (components/InfoTip.jsx): an (i) that opens an explanation on
+   click. The panel is portalled to <body> and placed by the component; it
+   starts hidden so it never flashes at the corner before it is placed. */
+.infotip__btn {
+  display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; flex-shrink: 0;
+  border: none; border-radius: 50%; background: none; color: var(--muted); cursor: pointer;
+  vertical-align: middle; transition: color .12s, background .12s;
+}
+.infotip__btn:hover, .infotip__btn.is-open { color: var(--accent-deep); background: var(--accent-wash); }
+.infotip__btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.infotip__pop {
+  position: fixed; left: 0; top: 0; z-index: 70; visibility: hidden;
+  padding: 12px 14px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-sm);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .14);
+  font-size: 13px; line-height: 1.55; color: var(--text-2);
+}
+.infotip__pop b { color: var(--text); }
+.infotip__pop p { margin: 0 0 8px; }
+.infotip__pop p:last-child { margin-bottom: 0; }
+.infotip__pop .explain__row p { margin: 0; font-size: 13px; }
+.infotip__h { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+/* A list inside a tip (the Forecast page's category contents): item, class
+   and a figure per row, scrolling once it is long. */
+.infotip__list-head, .infotip__list li {
+  display: grid; grid-template-columns: minmax(0, 1fr) 84px 64px; align-items: center; gap: 8px;
+}
+.infotip__list-head {
+  margin-top: 10px; padding: 0 2px 6px; border-bottom: 1px solid var(--line);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+}
+.infotip__list-head span:last-child, .infotip__list-num { text-align: right; font-variant-numeric: tabular-nums; }
+.infotip__list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+.infotip__list li { padding: 6px 2px; border-bottom: 1px solid var(--line-soft); font-size: 12.5px; }
+.infotip__list li:last-child { border-bottom: none; }
+.infotip__list-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.infotip__list .tag { justify-self: start; font-size: 9.5px; padding: 2px 6px; }
+/* With a label: a solid gold pill, like the brand buttons, so a tip that
+   stands in for a whole section is easy to spot. */
+.infotip__btn--text {
+  display: inline-flex; gap: 6px; width: auto; height: auto; padding: 6px 11px 6px 13px;
+  border: 1px solid var(--accent); border-radius: 100px; background: var(--accent);
+  font: inherit; font-size: 12.5px; font-weight: 800; color: var(--ink);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .10);
+}
+.infotip__btn--text:hover, .infotip__btn--text.is-open {
+  color: var(--ink); background: var(--accent); filter: brightness(.94);
+}
+
+/* What this means (Forecast): the label with its (i) on the left, the action
+   on the right. */
+.fguide__bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.fguide__label { display: inline-flex; align-items: center; gap: 4px; }
+
+/* At phone width the quantity matters more than the supplier, which the
+   hero already lists. */
+@container (max-width: 560px) {
+  .overview-order__supplier { display: none; }
+}

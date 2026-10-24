@@ -7,6 +7,7 @@ import { Loading } from '../components/Pending';
 import { HBars } from '../components/charts';
 import FsnBandModal from '../components/FsnBandModal';
 import Icon from '../components/Icon';
+import InfoTip from '../components/InfoTip';
 import { num, FSN_TONE, FSN_LABEL, RULE, RULE_ORDER } from '../lib/format';
 
 /**
@@ -200,57 +201,52 @@ export default function Classification({ filters }) {
           onClick={() => setBand('N')} linkLabel="See the Non-Moving items" />
       </div>
 
-      {/* Best sellers and the legend for them, side by side. The legend is
-          the key to the badges in both the chart and the table below, so it
-          belongs next to what it explains rather than folded away above it -
-          a reader who does not already know what Fast means is exactly the
-          reader who will not think to open a collapsed panel. */}
-      <div className="grid-2-1">
-        <div className="card card__pad">
-          <div className="card-h">
-            <span className="section-h">Best Sellers</span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span className="hint">
-                top 10 by units sold{bestBand !== 'All' ? ` · ${FSN_LABEL[bestBand]} only` : ''}
-              </span>
-              <select className="inline-select" value={bestBand}
-                      onChange={e => setBestBand(e.target.value)}
-                      aria-label="Filter best sellers by group">
-                <option value="All">All Groups</option>
-                <option value="F">{FSN_LABEL.F}</option>
-                <option value="S">{FSN_LABEL.S}</option>
-                <option value="N">{FSN_LABEL.N}</option>
-              </select>
+      {/* Best sellers, full width. The decision rules that sat beside them
+          are reference rather than a report, so they open from the item
+          list's "Decision rules (i)" button instead (see DecisionRules). */}
+      <div className="card card__pad">
+        <div className="card-h">
+          <span className="section-h">Best Sellers</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span className="hint">
+              top 10 by units sold{bestBand !== 'All' ? ` · ${FSN_LABEL[bestBand]} only` : ''}
             </span>
-          </div>
-          {topSellers.length === 0
-            ? <div className="empty">No {FSN_LABEL[bestBand]?.toLowerCase() ?? ''} product has recorded sales.</div>
-            : <HBars data={topSellers} color="var(--ink)" valueFmt={num} />}
+            <select className="inline-select" value={bestBand}
+                    onChange={e => setBestBand(e.target.value)}
+                    aria-label="Filter best sellers by group">
+              <option value="All">All Groups</option>
+              <option value="F">{FSN_LABEL.F}</option>
+              <option value="S">{FSN_LABEL.S}</option>
+              <option value="N">{FSN_LABEL.N}</option>
+            </select>
+          </span>
         </div>
-
-        {/* The manuscript's "decision rule card" (Sec. 3.3.1): the prescribed
-            action for each group, beside the best sellers and above the item
-            list that carries the same action per row. It also serves as the
-            key to the badges, which is what the plain legend it replaced did. */}
-        <DecisionRules
-          rules={rules}
-          counts={ruleCounts}
-          hvlCount={hvlCount}
-          onShow={showRule}
-          threshold={threshold}
-          setThreshold={setThreshold}
-        />
+        {topSellers.length === 0
+          ? <div className="empty">No {FSN_LABEL[bestBand]?.toLowerCase() ?? ''} product has recorded sales.</div>
+          : <HBars data={topSellers} color="var(--ink)" valueFmt={num} />}
       </div>
 
       <div className="card card__pad" ref={listRef} style={{ scrollMarginTop: 12 }}>
         <div className="card-h">
           <span className="section-h">FSN Classification Item List</span>
-          {/* A count, as a figure rather than a sentence - it is the one
-              number on this header and it changes with every filter, so it
-              should be readable at a glance from across the card. */}
-          <span className="count-pill">
-            <b>{num(shown.length)}</b>
-            {filtered ? <> of {num(products.length)} products</> : <> products</>}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {/* The manuscript's decision rule card (Sec. 3.3.1), as a help
+                panel: the key to the Action column below. */}
+            <DecisionRules
+              rules={rules}
+              counts={ruleCounts}
+              hvlCount={hvlCount}
+              onShow={showRule}
+              threshold={threshold}
+              setThreshold={setThreshold}
+            />
+            {/* A count, as a figure rather than a sentence - it is the one
+                number on this header and it changes with every filter, so it
+                should be readable at a glance from across the card. */}
+            <span className="count-pill">
+              <b>{num(shown.length)}</b>
+              {filtered ? <> of {num(products.length)} products</> : <> products</>}
+            </span>
           </span>
         </div>
 
@@ -318,9 +314,14 @@ export default function Classification({ filters }) {
 /** What to do with each group (manuscript Sec. 3.3.1), with how many of the
  *  products on screen it applies to and a link that lists them.
  *
+ *  It is reference, not a report: the Action column already says what to do
+ *  with each item, so the rules open from a "Decision rules (i)" button on the
+ *  item list instead of taking a card on the page. A "Show N items" link
+ *  filters the list, which scrolls it into view and so closes the panel.
+ *
  *  `counts` are over the products the topbar filters leave, so they agree with
- *  the item list below. The Review row carries the threshold control because
- *  that is the one rule with a number in it the store may want to move. */
+ *  the item list. The Review row carries the threshold control because that is
+ *  the one rule with a number in it the store may want to move. */
 function DecisionRules({ rules, counts, hvlCount, onShow, threshold, setThreshold }) {
   const semesters = rules?.semesters ?? [];
   const judgedOn = semesters.length
@@ -335,18 +336,21 @@ function DecisionRules({ rules, counts, hvlCount, onShow, threshold, setThreshol
   const rows = [
     {
       key: 'keep_stocked',
-      text: <><b>Fast-moving.</b> Sells regularly. Forecast every 30 days and reorder at the reorder
-        point &mdash; running out costs the most sales.</>,
+      name: 'Fast-moving',
+      text: <>Sells regularly. Forecast every 30 days and reorder at the reorder point &mdash; running
+        out costs the most sales.</>,
     },
     {
       key: 'promote',
-      text: <><b>Slow-moving.</b> Sells now and then. Stock smaller quantities, and move it with bundled
-        pricing, better shelf placement, or targeted marketing during enrollment and campus events.</>,
+      name: 'Slow-moving',
+      text: <>Sells now and then. Stock smaller quantities, and move it with bundled pricing, better
+        shelf placement, or targeted marketing during enrollment and campus events.</>,
     },
     {
       key: 'review_discontinuation',
-      text: <><b>Slow for two semesters.</b> Sold under {rules ? rules.threshold : '…'} units per selling
-        day in both {judgedOn}. Decide whether to keep carrying it.</>,
+      name: 'Slow for two semesters',
+      text: <>Sold under {rules ? rules.threshold : '…'} units per selling day in both {judgedOn}.
+        Decide whether to keep carrying it.</>,
       control: (
         <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           Threshold
@@ -365,26 +369,28 @@ function DecisionRules({ rules, counts, hvlCount, onShow, threshold, setThreshol
     },
     {
       key: 'clear_out',
-      text: <><b>Non-moving.</b> No recorded sales, so it is never reordered. Return it to the supplier,
-        mark it down for clearance, or discontinue it.</>,
+      name: 'Non-moving',
+      text: <>No recorded sales, so it is never reordered. Return it to the supplier, mark it down for
+        clearance, or discontinue it.</>,
     },
   ];
   if (counts.discontinued > 0) {
-    rows.push({ key: 'discontinued', text: <>Marked discontinued by the store; no rule applies.</> });
+    rows.push({
+      key: 'discontinued',
+      name: 'Discontinued',
+      text: <>Marked discontinued by the store; no rule applies.</>,
+    });
   }
 
   return (
-    <div className="card card__pad">
-      <div className="card-h">
-        <span className="section-h">Decision Rules</span>
-        <span className="hint">what to do with each group</span>
-      </div>
+    <InfoTip text="Decision rules" label="Decision rules" width={460}>
+      <div className="infotip__h">What to do with each group</div>
       <div className="explain">
         {rows.map(r => (
           <div className="explain__row" key={r.key}>
             <span className={`tag tag--${RULE[r.key].tone}`}>{RULE[r.key].label}</span>
             <div>
-              <p>{r.text}</p>
+              <p><b>{r.name}.</b> {r.text}</p>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
                 {rules && (counts[r.key] > 0
                   ? (
@@ -409,6 +415,6 @@ function DecisionRules({ rules, counts, hvlCount, onShow, threshold, setThreshol
           </div>
         )}
       </div>
-    </div>
+    </InfoTip>
   );
 }

@@ -9,6 +9,7 @@ import { LineChart, ScrollForecastChart } from '../components/charts';
 import { num, shortMonth, longMonth, monthName, usDate, isCalendarAdjusted, roundNice, FSN_TONE, FSN_LABEL } from '../lib/format';
 import SearchSelect from '../components/SearchSelect';
 import Icon from '../components/Icon';
+import InfoTip from '../components/InfoTip';
 import { ALL_SUPPLIERS } from '../services/dataService';
 
 const ALL_ITEMS = '__all__';
@@ -128,18 +129,21 @@ export default function Forecast({ filters, setPage }) {
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <div className="filter-field">
               <label className="filter-field__label" htmlFor="fc-category">Category</label>
-              <div className="filter">
-                <select
-                  id="fc-category"
-                  value={activeCategory}
-                  onChange={e => { setCategory(e.target.value); setSelectedId(ALL_ITEMS); }}
-                  style={{ minWidth: 210 }}
-                >
-                  {categories.map(c => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-                <span className="filter__chev">▾</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <div className="filter">
+                  <select
+                    id="fc-category"
+                    value={activeCategory}
+                    onChange={e => { setCategory(e.target.value); setSelectedId(ALL_ITEMS); }}
+                    style={{ minWidth: 210 }}
+                  >
+                    {categories.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                  <span className="filter__chev">▾</span>
+                </div>
+                <CategoryContents category={activeCategory} products={products} supplier={filters.supplier} />
               </div>
             </div>
             <div className="filter-field">
@@ -180,6 +184,50 @@ export default function Forecast({ filters, setPage }) {
                          forecastMeta={forecastMeta} setPage={setPage} />
         : <CategoryForecastPanel category={activeCategory} onPickItem={setSelectedId} setPage={setPage} />}
     </div>
+  );
+}
+
+/**
+ * What a category holds, behind the (i) beside the Category select: how many
+ * items in each FSN group, and the items themselves, best sellers first.
+ *
+ * The category forecast is built from the combined sales of every item in it,
+ * so this is the answer to "what does this number include". With a supplier
+ * picked in the topbar only that supplier's items are listed, while the
+ * forecast still covers every supplier - the panel says so.
+ */
+function CategoryContents({ category, products, supplier }) {
+  const items = products
+    .filter(p => (p.category || 'Uncategorised') === category)
+    .sort((a, b) => (b.total_units || 0) - (a.total_units || 0));
+  const counts = { F: 0, S: 0, N: 0 };
+  items.forEach(p => { if (counts[p.fsn_class] !== undefined) counts[p.fsn_class]++; });
+
+  return (
+    <InfoTip label={`What is included in ${category}`} width={430}>
+      <div className="infotip__h">What&rsquo;s in {category}</div>
+      <p>
+        <b>{num(items.length)} {items.length === 1 ? 'item' : 'items'}</b>: {num(counts.F)} fast-moving,{' '}
+        {num(counts.S)} slow-moving and {num(counts.N)} non-moving. The category forecast is built from the
+        combined sales of all of them, so slow-moving items count too; non-moving items have no sales, so
+        they add nothing.
+      </p>
+      {supplier !== ALL_SUPPLIERS && (
+        <p className="hint">Only {supplier}&rsquo;s items are listed; the forecast covers every supplier.</p>
+      )}
+      <div className="infotip__list-head">
+        <span>Item</span><span>Class</span><span>Units</span>
+      </div>
+      <ul className="infotip__list">
+        {items.map(p => (
+          <li key={p.product_id}>
+            <span className="infotip__list-name" title={p.item_name}>{p.item_name}</span>
+            <span className={`tag tag--${FSN_TONE[p.fsn_class] || 'info'}`}>{FSN_LABEL[p.fsn_class] || '—'}</span>
+            <span className="infotip__list-num">{num(p.total_units || 0)}</span>
+          </li>
+        ))}
+      </ul>
+    </InfoTip>
   );
 }
 
@@ -540,6 +588,11 @@ function calendarSentence(cal) {
  * one calendar fact that matters, then what to do - check the expected
  * demand, and restock and reorder from Reorder Alerts.
  *
+ * The sentences sit behind the (i) beside "What this means", so the page
+ * shows the chart and the action and a reader opens the reading only when
+ * they want it. The passed-window warning stays in view: it changes how
+ * every figure on the page should be read.
+ *
  * Every number comes from the API's `guidance` block (backend/app.py
  * _forecast_guidance); nothing is calculated here but the wording. Figures
  * are rounded as the Expected Demand card rounds them (roundNice).
@@ -557,10 +610,6 @@ function ForecastGuidance({ g, title, setPage }) {
 
   return (
     <div className="fguide">
-      <div className="fguide__h">
-        <span className="section-h">What this means</span>
-      </div>
-
       {g.window.passed && (
         <div className="notice notice--warn" style={{ marginBottom: 12 }}>
           These 30 days have already passed. Add the newest tally sheets and run the pipeline for a
@@ -568,23 +617,28 @@ function ForecastGuidance({ g, title, setPage }) {
         </div>
       )}
 
-      <p className="fguide__text">
-        {item ? 'This item' : title} should sell about <b>{num(roundNice(e.total))} units</b> over
-        the next {g.window.days} days (likely {num(roundNice(e.low))}–{num(roundNice(e.high))})
-        {compared}.
-        {g.busiest_week && !g.window.passed && <> The busiest week is <b>{span(g.busiest_week)}</b>.</>}
-        {calendarSentence(g.calendar)}
-      </p>
-      <p className="fguide__text">
-        <b>What to do:</b> check the expected demand for the items to restock, and reorder them.
-      </p>
-      {setPage && (
-        <div className="btn-row">
+      <div className="fguide__bar">
+        <span className="fguide__label">
+          <span className="section-h">What this means</span>
+          <InfoTip label="What this forecast means" width={400}>
+            <p>
+              {item ? 'This item' : title} should sell about <b>{num(roundNice(e.total))} units</b> over
+              the next {g.window.days} days (likely {num(roundNice(e.low))}–{num(roundNice(e.high))})
+              {compared}.
+              {g.busiest_week && !g.window.passed && <> The busiest week is <b>{span(g.busiest_week)}</b>.</>}
+              {calendarSentence(g.calendar)}
+            </p>
+            <p>
+              <b>What to do:</b> check the expected demand for the items to restock, and reorder them.
+            </p>
+          </InfoTip>
+        </span>
+        {setPage && (
           <button className="btn btn--ink btn--sm" onClick={() => setPage('reorder')}>
             Open Reorder Alerts <Icon name="arrow" size={12} />
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
