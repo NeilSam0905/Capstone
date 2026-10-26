@@ -26,6 +26,14 @@ auto-colours those, because the system holds no data that would say which
 day was which, and inventing one would put a claim in a remittance
 document.
 
+--- It prints as the PDF ---
+
+The sheet carries its own print setup (A4 landscape at a fixed scale, the
+date row repeated on each page, page breaks that keep a supplier's block
+together, the legend as a second print area), and batch_pdf.py draws the PDF
+from the same layout functions below - so the downloaded PDF and the Print
+Preview are this sheet as Excel prints it.
+
 Cells a reader could recompute are written as FORMULAS, not as Python
 results: TOTAL QUANTITY is =SUM() across the day columns and FOR REMITTANCE
 is price × quantity, exactly as in the store's sheet. Editing a day cell
@@ -46,6 +54,8 @@ from datetime import date
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.page import PageMargins
+from openpyxl.worksheet.pagebreak import Break
 
 from batch_pdf import long_month
 
@@ -183,8 +193,161 @@ def _sheet_title(month):
     return f"{first.strftime('%B').upper()} {first.year} - TBS"
 
 
+# ------------------------------------------------------------ print layout
+#
+# The PDF (batch_pdf.py) is drawn from the same layout as the sheet, so the
+# downloaded PDF, the Print Preview and the .xlsx printed from Excel are one
+# document: same columns, row heights, scale and page breaks. Everything that
+# decides where things fall on paper lives here, and both renderers read it.
+#
+# The sheet prints at a FIXED scale rather than "fit to page": Excel ignores
+# manual page breaks under fit-to, and the breaks are what keep a supplier's
+# block on one page in both files.
+
+PAPER_W_IN, PAPER_H_IN = 11.69, 8.27            # A4, landscape: the sheet's paper and the PDF's
+# The layout is sized to fit Letter too (11 in wide, against A4's 11.69; A4 is
+# the shorter of the two), so the sheet prints whole on either: Excel prints
+# on whatever paper the printer has loaded, and short bond is common.
+FIT_W_IN, FIT_H_IN = 11.0, 8.27
+MARGIN_IN = {"left": 0.25, "right": 0.25, "top": 0.75, "bottom": 0.6,
+             "header": 0.3, "footer": 0.3}
+
+# Column widths in Excel's character units, measured from the store's sheet
+# (the legend's two are ours).
+WIDTH = {"item": 23.5, "day": 3.75, "total": 10.38, "price": 15.25, "remit": 13.75,
+         "swatch": 25, "label": 36}
+
+# Row heights in points. Set explicitly on the sheet so Excel does not size
+# rows from its own font metrics, which the PDF could not know.
+ROW_H = {"head": 48.0, "supplier": 18.75, "item": 15.75, "total": 17.25,
+         "gap": 15.75, "grand": 18.75, "legend": 15.75, "empty": 15.75}
+
+# A page is filled to this share of its height, and the grid to this share of
+# its width. Excel sizes printed columns from the printer's own font metrics,
+# a few percent wider than on screen and different from printer to printer;
+# without the spare width the last column moves to a page of its own.
+_PAGE_FILL = 0.97
+_WIDTH_FILL = 0.94
+
+
+def col_points(width):
+    """Printed width of a column at 100%, in points. Excel stores widths in
+    characters of the workbook's default font (openpyxl's Calibri 11, seven
+    pixels a digit) and draws trunc(7 * width + 0.5) pixels, 96 to the inch."""
+    return int(width * 7 + 0.5) * 0.75
+
+
+def grid_widths(n_days):
+    """Character widths of the grid's columns, item to FOR REMITTANCE."""
+    return [WIDTH["item"], *[WIDTH["day"]] * n_days,
+            WIDTH["total"], WIDTH["price"], WIDTH["remit"]]
+
+
+def print_scale(n_days):
+    """The whole-percent scale that fits the grid across the page, never
+    above 100%: what Excel prints at, and what the PDF draws at."""
+    avail = (FIT_W_IN - MARGIN_IN["left"] - MARGIN_IN["right"]) * 72
+    grid = sum(col_points(w) for w in grid_widths(n_days))
+    return min(100, int(avail * _WIDTH_FILL / grid * 100)) / 100
+
+
+def grid_rows(report):
+    """The rows under the header, in sheet order: (kind, entry, item).
+
+    kind is supplier | item | total | gap | grand | empty. The first is sheet
+    row 2."""
+    rows = []
+    if not report:
+        return [("empty", None, None)]
+    for entry in report:
+        rows.append(("supplier", entry, None))
+        rows.extend(("item", entry, item) for item in entry["items"])
+        rows.append(("total", entry, None))
+        rows.append(("gap", entry, None))
+    rows.append(("grand", None, None))
+    return rows
+
+
+def page_starts(rows, scale):
+    """Sheet rows (1-based) that begin a new page, the header row repeating
+    on each. A supplier block that fits on a page is never split: it moves
+    to the next page whole. Only a block taller than a page breaks inside."""
+    avail = ((FIT_H_IN - MARGIN_IN["top"] - MARGIN_IN["bottom"]) * 72 * _PAGE_FILL
+             / scale - ROW_H["head"])
+
+    # blocks of row indexes: a supplier with its items and TOTAL, then its gap
+    blocks, current = [], []
+    for i, (kind, _, _) in enumerate(rows):
+        current.append(i)
+        if kind in ("total", "grand", "empty"):
+            blocks.append(current)
+            current = []
+        elif kind == "gap":
+            blocks[-1].append(i)     # the gap closes the block before it
+            current = []
+    if current:
+        blocks.append(current)
+
+    starts, used = [], 0.0
+    for block in blocks:
+        body = [i for i in block if rows[i][0] != "gap"]
+        need = sum(ROW_H[rows[i][0]] for i in body)
+        if used and used + need > avail and need <= avail:
+            starts.append(block[0] + 2)
+            used = 0.0
+        for i in block:
+            h = ROW_H[rows[i][0]]
+            if used and used + h > avail:
+                starts.append(i + 2)
+                used = 0.0
+            used += h
+    return starts
+
+
+def legend_rows(marks, selling_days, unpriced):
+    """The legend block, one entry per sheet row from row 1:
+    (style, colour, text, note). Shared with the PDF's legend page."""
+    counts = {}
+    for mark in marks.values():
+        counts[mark] = counts.get(mark, 0) + 1
+    rows = [("head", None, "LEGEND", None)]
+    # Applied automatically. The day count tells a reader which of these
+    # actually occur this month, so an unused colour is never mistaken for a
+    # missing one.
+    for mark, colour, label in CALENDAR_KEY:
+        n = counts.get(mark, 0)
+        rows.append(("key", colour, label, f"{n} day{'' if n == 1 else 's'}" if n else "none"))
+    rows.append(("blank", None, None, None))
+    rows.append(("title", None, "STORE ANNOTATIONS", "shade by hand as on the store's sheet"))
+    rows.extend(("key", colour, label, None) for colour, label in STORE_KEY)
+    rows.append(("blank", None, None, None))
+    rows.append(("bold", None, "TOTAL SELLING DAYS", None))
+    rows.append(("plain", None, f"{selling_days} DAYS", None))
+    if unpriced:
+        rows.append(("blank", None, None, None))
+        rows.append(("bold", None, "NO PRICE ON RECORD", None))
+        rows.append(("plain", None, f"{unpriced} line item{'' if unpriced == 1 else 's'}: "
+                                    "price and remittance left blank", None))
+    return rows
+
+
+def item_units(item, days, by_date):
+    """TOTAL QUANTITY as the sheet's =SUM over the day cells computes it."""
+    if not days:
+        return item["quantity"]
+    return sum(by_date.get(iso) or 0 for iso in days)
+
+
+def page_header(month):
+    return (f"USTore Monthly Batch Sales Report — {long_month(month)}",
+            f"Generated {date.today().strftime('%m/%d/%Y')}")
+
+
+FOOTER_NOTE = "Unit counts only - not an invoice or official receipt."
+
+
 def render_xlsx(report, month, daily=None):
-    """The month as the store's TBS grid.
+    """The month as the store's TBS grid, set up to print.
 
     `daily` is build_batch_daily()'s output. It is optional so a caller
     holding only the monthly totals still gets a readable sheet — the grid
@@ -232,7 +395,7 @@ def render_xlsx(report, month, daily=None):
     month_cell.border = BOX
     month_cell.fill = HEADER_FILL
     month_cell.alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 48
+    ws.row_dimensions[1].height = ROW_H["head"]
     ws.freeze_panes = "B2"
 
     # Column index -> fill, for the vertical bands below.
@@ -243,17 +406,26 @@ def render_xlsx(report, month, daily=None):
             day_colour[first_day_col + offset] = colour
 
     # ---- one block per supplier -------------------------------------------
-    row = 2
-    for entry in report:
-        head = _text_cell(ws, row, 1, entry["supplier"])
-        head.font = Font(name=NARROW, size=14, bold=True)
-        head.fill = SUPPLIER_FILL
-        for col in range(1, remit_col + 1):
-            ws.cell(row, col).border = Border(left=MEDIUM, right=MEDIUM, bottom=THIN)
-        row += 1
+    rows = grid_rows(report)
+    first_item_row = None
+    total_rows = []
+    for i, (kind, entry, item) in enumerate(rows):
+        row = i + 2
+        ws.row_dimensions[row].height = ROW_H[kind]
 
-        first_item_row = row
-        for item in entry["items"]:
+        if kind == "empty":
+            ws.cell(row, 1, f"No sales were recorded for {long_month(month)}.").font = Font(
+                name=NARROW, size=12, italic=True)
+
+        elif kind == "supplier":
+            head = _text_cell(ws, row, 1, entry["supplier"])
+            head.font = Font(name=NARROW, size=14, bold=True)
+            head.fill = SUPPLIER_FILL
+            for col in range(1, remit_col + 1):
+                ws.cell(row, col).border = Border(left=MEDIUM, right=MEDIUM, bottom=THIN)
+            first_item_row = row + 1
+
+        elif kind == "item":
             by_date = quantities.get(item.get("product_id"), {})
             _text_cell(ws, row, 1, item["item_name"])
             for offset, iso in enumerate(days):
@@ -286,82 +458,96 @@ def render_xlsx(report, month, daily=None):
                     cell.alignment = Alignment(horizontal="center")
                 if col in (price_col, remit_col):
                     cell.number_format = MONEY
-            row += 1
 
-        last_item_row = row - 1
-        total = ws.cell(row, 1, "TOTAL")
-        total.alignment = Alignment(horizontal="right")
-        if last_item_row >= first_item_row:
+        elif kind in ("total", "grand"):
+            label = "TOTAL" if kind == "total" else "GRAND TOTAL — ALL SUPPLIERS"
+            total = ws.cell(row, 1, label)
+            # TOTAL sits right in column A; the longer grand-total label is
+            # left-aligned so it runs on over the empty day cells instead of
+            # being cut off at the sheet's left edge.
+            total.alignment = Alignment(horizontal="right" if kind == "total" else "left")
             for col in (total_col, remit_col):
                 letter = get_column_letter(col)
-                ws.cell(row, col, f"=SUM({letter}{first_item_row}:{letter}{last_item_row})")
-        for col in range(1, remit_col + 1):
-            cell = ws.cell(row, col)
-            cell.font = Font(name=NARROW, size=13, bold=True)
-            cell.fill = TOTAL_FILL
-            cell.border = TOTAL_BOX
-            if col in (total_col, remit_col):
-                cell.alignment = Alignment(horizontal="center")
-            if col == remit_col:
-                cell.number_format = MONEY
-        row += 2
+                if kind == "total" and row - 1 >= first_item_row:
+                    ws.cell(row, col, f"=SUM({letter}{first_item_row}:{letter}{row - 1})")
+                elif kind == "grand" and total_rows:
+                    ws.cell(row, col, "=" + "+".join(f"{letter}{r}" for r in total_rows))
+            for col in range(1, remit_col + 1):
+                cell = ws.cell(row, col)
+                cell.font = Font(name=NARROW, size=13, bold=True)
+                cell.fill = TOTAL_FILL if kind == "total" else HEADER_FILL
+                cell.border = TOTAL_BOX
+                if col in (total_col, remit_col):
+                    cell.alignment = Alignment(horizontal="center")
+                if col == remit_col:
+                    cell.number_format = MONEY
+            if kind == "total":
+                total_rows.append(row)
+
+    last_grid_row = len(rows) + 1
 
     # ---- legend block, to the right of the grid ---------------------------
     swatch_col = remit_col + 3
     label_col = swatch_col + 1
-    head = ws.cell(1, swatch_col, "LEGEND")
-    head.font = Font(name=LEGEND_FONT, size=12, bold=True)
-    head.alignment = Alignment(horizontal="center")
-    head.border = BOX
-    head.fill = HEADER_FILL
-    spacer = ws.cell(1, label_col)
-    spacer.border = BOX
-    spacer.fill = HEADER_FILL
-
-    def legend_row(row, colour, label, note=None):
-        swatch = ws.cell(row, swatch_col)
-        swatch.fill = PatternFill("solid", fgColor=colour)
-        swatch.border = BOX
-        text = ws.cell(row, label_col, label if not note else f"{label}  ({note})")
-        text.font = Font(name=LEGEND_FONT)
-        text.alignment = Alignment(horizontal="left")
-        text.border = BOX
-
-    # Applied automatically. The day count tells a reader which of these
-    # actually occur this month, so an unused colour is never mistaken for a
-    # missing one.
-    counts = {}
-    for mark in marks.values():
-        counts[mark] = counts.get(mark, 0) + 1
-    row = 2
-    for mark, colour, label in CALENDAR_KEY:
-        n = counts.get(mark, 0)
-        legend_row(row, colour, label, f"{n} day{'' if n == 1 else 's'}" if n else "none")
-        row += 1
-
-    row += 1
-    ws.cell(row, swatch_col, "STORE ANNOTATIONS").font = Font(
-        name=LEGEND_FONT, size=11, bold=True)
-    ws.cell(row, label_col, "shade by hand as on the store's sheet").font = Font(
-        name=LEGEND_FONT, italic=True)
-    row += 1
-    for colour, label in STORE_KEY:
-        legend_row(row, colour, label)
-        row += 1
-
-    row += 1
-    ws.cell(row, swatch_col, "TOTAL SELLING DAYS").font = Font(name=LEGEND_FONT, bold=True)
-    ws.cell(row + 1, swatch_col, f"{daily['selling_days']} DAYS").font = Font(name=LEGEND_FONT)
+    unpriced = sum(1 for e in report for it in e["items"] if it["unit_price_php"] is None)
+    legend = legend_rows(marks, daily["selling_days"], unpriced)
+    for i, (style, colour, text, note) in enumerate(legend):
+        row = i + 1
+        if row > last_grid_row:
+            ws.row_dimensions[row].height = ROW_H["legend"]
+        swatch, label = ws.cell(row, swatch_col), ws.cell(row, label_col)
+        if style == "head":
+            swatch.value = text
+            swatch.font = Font(name=LEGEND_FONT, size=12, bold=True)
+            swatch.alignment = Alignment(horizontal="center", vertical="center")
+            for cell in (swatch, label):
+                cell.border = BOX
+                cell.fill = HEADER_FILL
+        elif style == "key":
+            swatch.fill = PatternFill("solid", fgColor=colour)
+            swatch.border = BOX
+            label.value = text if not note else f"{text}  ({note})"
+            label.font = Font(name=LEGEND_FONT)
+            label.alignment = Alignment(horizontal="left")
+            label.border = BOX
+        elif style == "title":
+            swatch.value = text
+            swatch.font = Font(name=LEGEND_FONT, size=11, bold=True)
+            label.value = note
+            label.font = Font(name=LEGEND_FONT, italic=True)
+        elif style in ("bold", "plain"):
+            swatch.value = text
+            swatch.font = Font(name=LEGEND_FONT, bold=style == "bold")
 
     # ---- column widths, measured from the store's sheet --------------------
-    ws.column_dimensions["A"].width = 23.5
+    ws.column_dimensions["A"].width = WIDTH["item"]
     for col in range(first_day_col, last_day_col + 1):
-        ws.column_dimensions[get_column_letter(col)].width = 3.75
-    ws.column_dimensions[get_column_letter(total_col)].width = 10.38
-    ws.column_dimensions[get_column_letter(price_col)].width = 15.25
-    ws.column_dimensions[get_column_letter(remit_col)].width = 13.75
-    ws.column_dimensions[get_column_letter(swatch_col)].width = 20
-    ws.column_dimensions[get_column_letter(label_col)].width = 28
+        ws.column_dimensions[get_column_letter(col)].width = WIDTH["day"]
+    ws.column_dimensions[get_column_letter(total_col)].width = WIDTH["total"]
+    ws.column_dimensions[get_column_letter(price_col)].width = WIDTH["price"]
+    ws.column_dimensions[get_column_letter(remit_col)].width = WIDTH["remit"]
+    ws.column_dimensions[get_column_letter(swatch_col)].width = WIDTH["swatch"]
+    ws.column_dimensions[get_column_letter(label_col)].width = WIDTH["label"]
+
+    # ---- print setup: what the PDF reproduces -----------------------------
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.scale = int(round(print_scale(len(days)) * 100))
+    ws.page_margins = PageMargins(**MARGIN_IN)
+    ws.print_options.horizontalCentered = True
+    ws.print_title_rows = "1:1"
+    # The grid, then the legend on a page of its own.
+    ws.print_area = [f"A1:{get_column_letter(remit_col)}{last_grid_row}",
+                     f"{get_column_letter(swatch_col)}1:{get_column_letter(label_col)}{len(legend)}"]
+    for start in page_starts(rows, print_scale(len(days))):
+        ws.row_breaks.append(Break(id=start - 1))     # a break above `start`
+    left, right = page_header(month)
+    ws.oddHeader.left.text, ws.oddHeader.left.font, ws.oddHeader.left.size = left, "Arial,Bold", 9
+    ws.oddHeader.right.text, ws.oddHeader.right.font, ws.oddHeader.right.size = right, "Arial", 8
+    ws.oddFooter.left.text, ws.oddFooter.left.font, ws.oddFooter.left.size = FOOTER_NOTE, "Arial", 8
+    ws.oddFooter.right.text, ws.oddFooter.right.font, ws.oddFooter.right.size = (
+        "Page &P of &N", "Arial", 8)
+    ws.HeaderFooter.scaleWithDoc = False
 
     buf = io.BytesIO()
     wb.save(buf)
