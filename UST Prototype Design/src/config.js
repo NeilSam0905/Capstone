@@ -75,3 +75,8 @@ export function inspectEmbedUrl(url) {
  *  button scrolls to it on the Overview and opens a dialog everywhere else
  *  (App.jsx), so both sides read the id from here. */
 export const ADVISORIES_ANCHOR = 'event-advisories';
+
+/** sessionStorage key for the Tally Interface's open tab. The Tally Interface
+ *  remembers its tab under it, and the Overview's "Recount it" writes 'stock'
+ *  to it before switching views, so both read the key from here. */
+export const TALLY_TAB_KEY = 'tally.tab';

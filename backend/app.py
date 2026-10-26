@@ -2929,12 +2929,18 @@ def get_advisories():
             "type": "exam_week",
             "severity": "medium",
             "title": "Exam Week Upcoming",
+            # Measured, not assumed: past exam weeks sold about the same per
+            # day as regular days (tallied open days: ~160 vs ~158 units/day
+            # over all history, ~185 vs ~184 over the last year), so the
+            # advice is to restock as usual rather than to hold off.
             "description": f"Exams scheduled {span(run)}. "
-                           "Expect reduced foot traffic; delay non-urgent restocking.",
+                           "Past exam weeks sold about the same per day as regular days; "
+                           "restock as usual.",
             "date_range": [run["start"], run["end"]],
             "has_forecast": has_forecast,
             "basis": f"{run['days']} upcoming date(s) in Dim_Date carry is_exam_week = 1. "
-                     "Restocking these Fast movers can wait until after the window.",
+                     "Across past exam weeks, tallied sales averaged about the same per day "
+                     "as regular days, though single weeks vary widely.",
             "items": affected_items(("F",)),
         })
 

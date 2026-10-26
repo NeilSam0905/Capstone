@@ -21,6 +21,7 @@ import SearchSelect from '../components/SearchSelect';
 import Modal from '../components/Modal';
 import { num, usDate, usDateTime, longMonth, displayUser } from '../lib/format';
 import brandMark from '../assets/ustore-mark.png';
+import { TALLY_TAB_KEY } from '../config';
 
 const TYPE_TONE = { SALE: 'ok', DAMAGED: 'crit', PROMO: 'info', TRANSFER: 'hvl' };
 
@@ -257,7 +258,7 @@ const SECTIONS = [
   { id: 'calendar', label: 'Calendar',         icon: 'cal',   tone: 'info', desc: 'Closures and busy days' },
   { id: 'update',   label: 'Update Analytics', icon: 'zap',   tone: 'hvl',  desc: 'Run the pipeline' },
 ];
-const TAB_KEY = 'tally.tab';
+const TAB_KEY = TALLY_TAB_KEY;
 
 /** The tab last open in this browser tab, so a reload lands where you were. */
 function savedTab() {

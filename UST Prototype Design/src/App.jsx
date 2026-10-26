@@ -277,6 +277,7 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
           <PageComponent
             filters={pageFilters}
             setPage={setPage}
+            setView={setView}
             user={user}
             {...(page === 'report' ? { month: selectedMonth, setMonth: setReportMonth } : {})}
           />

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getProducts, getMonthlyUnits, getStockPosition, getReorderAlerts, getAdvisories,
-  getDecisionRules, getCategoryForecasts,
+  getDecisionRules, getCategoryForecasts, getMeta,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
@@ -11,7 +11,7 @@ import Modal from '../components/Modal';
 import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
 import { AdvisoriesPanel, AdvisoriesJump } from '../components/Advisories';
-import { ADVISORIES_ANCHOR } from '../config';
+import { ADVISORIES_ANCHOR, TALLY_TAB_KEY } from '../config';
 import { num, shortMonth, longMonth, usDate, roundNice, FSN_TONE, FSN_LABEL, RULE, RULE_ORDER } from '../lib/format';
 import { ALL_CATEGORIES, ALL_SUPPLIERS } from '../services/dataService';
 
@@ -47,7 +47,7 @@ const RULE_HINT = {
 const ORDER_FIRST_ROWS = 8;
 const HERO_LIST_ROWS = 5;
 
-export default function Overview({ filters, setPage, user }) {
+export default function Overview({ filters, setPage, setView, user }) {
   const [productsOpen, setProductsOpen] = useState(false);
   const advisoriesRef = useRef(null);
   const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
@@ -59,6 +59,18 @@ export default function Overview({ filters, setPage, user }) {
   const { data: advisories } = useData(getAdvisories, []);
   const { data: rules } = useData(() => getDecisionRules(), []);
   const { data: forecasts } = useData(getCategoryForecasts, []);
+  // The last day any sale was tallied: what every figure on this page rests
+  // on, said beside the stock-count month so neither looks current when it
+  // is not.
+  const { data: meta } = useData(getMeta, []);
+  const salesThrough = meta?.sales_span?.[1] ?? null;
+
+  // A zero on hand is often an old count, not an empty shelf. This opens the
+  // Tally Interface straight on its Stock tab, where the count is entered.
+  const recount = setView ? () => {
+    try { sessionStorage.setItem(TALLY_TAB_KEY, 'stock'); } catch { /* opens on its last tab */ }
+    setView('tally');
+  } : null;
 
   // Everything below follows the topbar's supplier and category: an item
   // counts only if the filtered product list holds it.
@@ -125,6 +137,7 @@ export default function Overview({ filters, setPage, user }) {
         counted={counted.length}
         uncounted={uncounted}
         latestCount={latestCount}
+        salesThrough={salesThrough}
         categoryOf={categoryOf}
         setPage={setPage}
       />
@@ -147,7 +160,8 @@ export default function Overview({ filters, setPage, user }) {
       </div>
 
       <div className="grid-2-1">
-        <OrderFirst due={due} showSupplier={showSupplier} setPage={setPage} />
+        <OrderFirst due={due} showSupplier={showSupplier} setPage={setPage}
+                    latestCount={latestCount} recount={recount} />
         <DecisionGroups counts={ruleCounts} setPage={setPage} />
       </div>
 
@@ -210,7 +224,7 @@ function stockStatus(product, alert) {
  *  categories need restocking and which suppliers that means calling. The
  *  footnote says how much of the catalogue the answer rests on, because an
  *  item never counted can never show up here however low it runs. */
-function ReorderHero({ alerts, due, nearRop, counted, uncounted, latestCount, categoryOf, setPage }) {
+function ReorderHero({ alerts, due, nearRop, counted, uncounted, latestCount, salesThrough, categoryOf, setPage }) {
   const categories = useMemo(() => groupDue(due, a => categoryOf.get(a.product_id)), [due, categoryOf]);
   const suppliers = useMemo(() => groupDue(due, a => a.supplier_name), [due]);
 
@@ -235,6 +249,7 @@ function ReorderHero({ alerts, due, nearRop, counted, uncounted, latestCount, ca
         : <>All {num(counted)} items have an inventory count</>}
       {latestCount && <> (last counted {longMonth(latestCount.slice(0, 7))})</>}.
       {uncounted > 0 && <> Count the other {num(uncounted)} to include them.</>}
+      {salesThrough && <> Based on sales tallied through {usDate(salesThrough)}.</>}
     </div>
   );
 
@@ -336,22 +351,26 @@ function ExpectedDemandTile({ forecasts, filters, setPage }) {
   const snapshot = cats[0]?.snapshot_date;
 
   let sub;
+  let passed = false;
   if (!forecasts) sub = 'Loading forecast…';
   else if (!forecasts.available || !snapshot) sub = forecasts.reason ?? 'Forecast not yet available';
   else if (!scoped.length) sub = `No forecast for ${filters.category}`;
   else {
     const start = addDays(snapshot, 1);
     const end = addDays(snapshot, 30);
-    const passed = end < new Date().toISOString().slice(0, 10);
+    passed = end < new Date().toISOString().slice(0, 10);
     sub = `${usDate(start)} – ${usDate(end)} · about ${num(total / 30)} a day`
       + (filters.supplier !== ALL_SUPPLIERS ? ' · all suppliers' : '')
       + (passed ? ' · this window has passed; add newer tally sheets' : '');
   }
 
+  // A window that has already passed supports no decision, so its total is
+  // shown greyed and smaller (.kpi__val.is-stale) rather than at headline size.
   return (
     <KPICard
       label="Expected Demand · 30 Days"
       value={forecasts?.available && scoped.length ? `${num(roundNice(total))} units` : <PendingValue />}
+      tone={passed ? 'stale' : undefined}
       sub={sub}
       icon="trend"
       onClick={() => setPage?.('forecast')}
@@ -385,9 +404,9 @@ function NextEventTile({ advisories, onOpen }) {
     );
   }
 
-  // "Exams scheduled 12/14/2026 to 12/20/2026. Expect reduced foot traffic;
-  // delay non-urgent restocking." - the dates are on the tile already, so
-  // only the advice after the first sentence is kept.
+  // "Exams scheduled 12/14/2026 to 12/20/2026. Past exam weeks sold about the
+  // same per day as regular days; restock as usual." - the dates are on the
+  // tile already, so only the advice after the first sentence is kept.
   const advice = next.description.split(/(?<=\.)\s+/).slice(1).join(' ') || next.description;
   const [from, to] = next.date_range;
   return (
@@ -406,8 +425,12 @@ function NextEventTile({ advisories, onOpen }) {
 
 /** The first few items to order, most urgent first, with the quantity. The
  *  full list, with how each figure was worked out, is Reorder Alerts. */
-function OrderFirst({ due, showSupplier, setPage }) {
+function OrderFirst({ due, showSupplier, setPage, latestCount, recount }) {
   const rows = due.slice(0, ORDER_FIRST_ROWS);
+  const countMonth = latestCount ? longMonth(latestCount.slice(0, 7)) : null;
+  // step5 marks every reorder point provisional while lead times are
+  // estimated from the item's name rather than measured deliveries.
+  const provisional = due.some(a => a.is_provisional);
   return (
     <div className="card card__pad">
       <div className="card-h">
@@ -427,8 +450,10 @@ function OrderFirst({ due, showSupplier, setPage }) {
                 <tr>
                   <th>Item</th>
                   {showSupplier && <th className="overview-order__supplier">Supplier</th>}
-                  <th className="num">On hand</th>
-                  <th className="num">Order</th>
+                  <th className="num" title={countMonth ? `Stock as last counted, ${countMonth}` : undefined}>
+                    On hand{countMonth && <span className="th-sub">as of {shortMonthYear(latestCount)}</span>}
+                  </th>
+                  <th className="num">Order{provisional && <span className="th-sub">provisional</span>}</th>
                 </tr>
               </thead>
               <tbody>
@@ -446,9 +471,20 @@ function OrderFirst({ due, showSupplier, setPage }) {
         )}
       <div className="hint" style={{ marginTop: 10 }}>
         Least stock cover first. Each order covers the supplier&rsquo;s lead time plus 30 days of sales.
+        {provisional && <> Quantities are provisional: lead times are estimates
+          {countMonth && <> and stock is as counted in {countMonth}</>}.</>}
+        {recount && rows.length > 0 && (
+          <> Is an item&rsquo;s stock wrong?{' '}
+            <button type="button" className="linkish" onClick={recount}>Recount it</button>.</>
+        )}
       </div>
     </div>
   );
+}
+
+/** '2026-04' or '2026-04-30' -> 'Apr 2026', short enough for a column heading. */
+function shortMonthYear(iso) {
+  return `${shortMonth(iso.slice(0, 7)).split(' ')[0]} ${iso.slice(0, 4)}`;
 }
 
 /** The FSN classes as the actions they call for (backend/decision_rules.py),
@@ -475,6 +511,14 @@ function DecisionGroups({ counts, setPage }) {
       </div>
       <StackBar parts={shown.map(k => ({ value: counts[k], color: TONE_COLOR[RULE[k].tone] }))} />
       <div className="hint" style={{ textAlign: 'right', marginTop: 6 }}>{num(total)} products</div>
+      {/* Promote + Review together are the Slow class, which is how Power BI
+          and Classification count it. A few never-sold rows are older names of
+          items that still sell under a new one (Names to review). */}
+      <div className="hint" style={{ marginTop: 8 }}>
+        {RULE.promote.label} and {RULE.review_discontinuation.label} together are the Slow-moving
+        items. {RULE.clear_out.label} includes a few older names of items that still sell; check
+        before returning stock.
+      </div>
     </div>
   );
 }
