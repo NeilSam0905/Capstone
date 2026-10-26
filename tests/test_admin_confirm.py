@@ -139,6 +139,14 @@ def test_a_first_count_is_free_but_changing_it_is_an_edit(api):
     assert api.post("/api/inventory", json={**count, "quantity": 12}, headers=ADMIN).status_code == 200
 
 
+def test_a_correction_from_current_inventory_is_always_an_edit(api):
+    sign_in(api, "staff")
+    count = {"product_id": 1, "count_month": MONTH, "quantity": 7, "correction": True}
+    r = api.post("/api/inventory", json=count)                                  # first count of the month
+    assert r.status_code == 403 and r.get_json()["admin_required"]
+    assert api.post("/api/inventory", json=count, headers=ADMIN).status_code == 200
+
+
 def test_closing_a_day_is_free_but_reopening_it_is_an_edit(api):
     sign_in(api, "staff")
     assert api.put(f"/api/calendar/{day(3)}/closure", json={"closed": True}).status_code == 200

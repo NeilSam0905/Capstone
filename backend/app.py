@@ -1280,7 +1280,15 @@ def add_inventory_count():
         SELECT quantity FROM Inventory_Count WHERE product_id = ? AND count_month = ?
     """, (product_id, count_month))
     # A first count is a new record; replacing a different figure is an edit.
-    if previous and previous["quantity"] != quantity:
+    # A correction from Current Inventory ({"correction": true}) is an edit
+    # even as the month's first count: it changes the on-hand figure the store
+    # already has on record (an earlier count or the workbook), and the
+    # interface sends it only when the figure differs from that one.
+    if payload.get("correction") is True:
+        gate = _needs_admin("Correcting the units on hand")
+        if gate:
+            return gate
+    elif previous and previous["quantity"] != quantity:
         gate = _needs_admin("Changing a recorded stock count")
         if gate:
             return gate
@@ -1994,6 +2002,33 @@ def get_events():
         # it; without this the Flag an Event list showed labels with no date.
         r["calendar_date"] = r["event_date"]
     return jsonify(rows)
+
+
+@app.get("/api/events/labels")
+def get_event_labels():
+    """Every event name already on record - the published calendar's event
+    days (calendar_ranges.csv, read-only) and the Event_Log - so Flag an
+    Event can offer them as the staff type. One entry per name, ignoring
+    case, newest first; a reviewer's "(date uncertain - verify)" note on the
+    calendar file is not part of the name."""
+    dated = []
+    try:
+        with open(DATA_DIR / "calendar_ranges.csv", newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                if (row.get("flag") or "").strip() == "is_event_day":
+                    dated.append(((row.get("start_date") or "").strip(), row.get("event_name") or ""))
+    except (OSError, KeyError):
+        pass
+    dated += [(r["event_date"] or "", r["event_name"] or "")
+              for r in dbmod.rows(con(), "SELECT event_date, event_name FROM Event_Log")]
+
+    labels, seen = [], set()
+    for _day, name in sorted(dated, key=lambda d: d[0], reverse=True):
+        name = re.sub(r"\(date uncertain[^)]*\)", "", name).strip()
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            labels.append(name)
+    return jsonify(labels)
 
 
 def _calendar_gap(c, iso_date):

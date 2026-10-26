@@ -15,7 +15,7 @@ export default function Pending({ title, reason, children }) {
       <div className="pending__title">{title}</div>
       {reason && <div className="pending__body">{reason}</div>}
       {children}
-      <span className="tag tag--gold">Pending pipeline output</span>
+      <span className="tag tag--gold">Waiting for an update</span>
     </div>
   );
 }

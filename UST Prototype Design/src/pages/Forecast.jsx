@@ -612,8 +612,8 @@ function ForecastGuidance({ g, title, setPage }) {
     <div className="fguide">
       {g.window.passed && (
         <div className="notice notice--warn" style={{ marginBottom: 12 }}>
-          These 30 days have already passed. Add the newest tally sheets and run the pipeline for a
-          current forecast.
+          These 30 days have already passed. Add the newest tally sheets and choose Run Forecast in the
+          Tally Interface for a current forecast.
         </div>
       )}
 

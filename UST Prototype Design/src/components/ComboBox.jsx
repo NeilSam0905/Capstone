@@ -111,6 +111,7 @@ export default function ComboBox({
               aria-selected={i === active}
               onMouseEnter={() => setActive(i)}
               onMouseDown={e => { e.preventDefault(); pick(o); }}
+              title={o}
             >{o}</li>
           ))}
           {!isNew && matches.length === 0 && (

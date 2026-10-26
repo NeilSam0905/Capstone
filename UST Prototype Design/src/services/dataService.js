@@ -469,6 +469,10 @@ export async function addEvent({ calendar_date, event_name, event_description })
 
 export const getEventLog = () => get('/events');
 
+/** Event names already on record (the school calendar and the event log),
+ *  newest first: the suggestions under Flag an Event's Label. */
+export const getEventLabels = () => get('/events/labels');
+
 /** Move an upcoming closure, or change its reason: the old day is reopened
  *  and the new one closed (backend edit_closure). Upcoming dates only. */
 export const editClosure = (isoDate, { calendar_date, reason }) =>
@@ -503,6 +507,12 @@ export const getInventoryCounts = month => get(`/inventory?month=${encodeURIComp
  *  Zero is a legitimate count — it means the store is out of that item. */
 export const saveInventoryCount = ({ product_id, count_month, quantity, note }) =>
   post('/inventory', { product_id, count_month, quantity, note });
+
+/** Correct the units on hand from Current Inventory. Saved as this month's
+ *  count like any other, but always an edit of the figure on record, so
+ *  anyone but the admin is asked for the admin's password. */
+export const correctOnHand = ({ product_id, count_month, quantity, note }) =>
+  post('/inventory', { product_id, count_month, quantity, note, correction: true });
 
 /** Remove a count recorded by mistake. */
 export const deleteInventoryCount = countId => del(`/inventory/${countId}`);

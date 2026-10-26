@@ -234,7 +234,7 @@ function ReorderHero({ alerts, due, nearRop, counted, uncounted, latestCount, sa
       <section className="card hero">
         <div className="hero__main">
           <div className="hero__title">Reorder data is not available yet</div>
-          <div className="hero__sub">{alerts.reason ?? 'Run the pipeline to calculate reorder points.'}</div>
+          <div className="hero__sub">{alerts.reason ?? 'Run Analytics in the Tally Interface to calculate reorder points.'}</div>
         </div>
       </section>
     );

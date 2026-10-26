@@ -357,7 +357,7 @@ export function AdvisoriesModal({ open, onClose, page, setPage }) {
     <Modal open onClose={onClose} width={860} title="Advisories"
            subtitle={first.length && ordered.some(a => first.includes(a.type))
              ? 'What to stock, promote or clear out - the ones about this page first.'
-             : 'What to stock, promote or clear out, from the latest pipeline run.'}>
+             : 'What to stock, promote or clear out, from the latest analytics update.'}>
       <div className="modal-grow">
         <div className="advisories-scroll">
           <AdvisoriesPanel advisories={data && { ...data, advisories: ordered }} setPage={go} />

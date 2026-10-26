@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   addEntry, addEvent, setStoreClosed, getSellableProducts, getRecentEntries,
-  getEntriesByDate, getEventLog, getClosedDates, getMeta,
+  getEntriesByDate, getEventLog, getEventLabels, getClosedDates, getMeta,
   runPipeline, stopPipeline, getPipelineStatus, getPipelineStaleness,
-  getInventoryCounts, saveInventoryCount, deleteInventoryCount,
+  getInventoryCounts, saveInventoryCount, correctOnHand, deleteInventoryCount,
   getStockPosition, ALL_CATEGORIES, ALL_SUPPLIERS, UNATTRIBUTED, addProduct,
   importInventoryCounts, importTallyEntries, addTallyWorkbook,
   getNamesToReview, settleName, renameProduct,
@@ -17,6 +17,7 @@ import DataTable from '../components/DataTable';
 import ErrorBanner from '../components/ErrorBanner';
 import Icon from '../components/Icon';
 import ComboBox from '../components/ComboBox';
+import InfoTip from '../components/InfoTip';
 import SearchSelect from '../components/SearchSelect';
 import Modal from '../components/Modal';
 import { num, usDate, usDateTime, longMonth, displayUser } from '../lib/format';
@@ -256,7 +257,7 @@ const SECTIONS = [
   { id: 'sales',    label: 'Sales',            icon: 'trend', tone: 'orange', desc: 'Record sales' },
   { id: 'stock',    label: 'Stock',            icon: 'box',   tone: 'ok',   desc: 'Counts and deliveries' },
   { id: 'calendar', label: 'Calendar',         icon: 'cal',   tone: 'info', desc: 'Closures and busy days' },
-  { id: 'update',   label: 'Update Analytics', icon: 'zap',   tone: 'hvl',  desc: 'Run the pipeline' },
+  { id: 'update',   label: 'Update Analytics', icon: 'zap',   tone: 'hvl',  desc: 'Refresh the dashboard' },
 ];
 const TAB_KEY = TALLY_TAB_KEY;
 
@@ -284,7 +285,7 @@ function TallyTabs({ active, onChange, staleness }) {
             <span className="tally-tab__label">
               {s.label}
               {s.id === 'update' && waiting != null && (
-                <span className="tally-tab__badge" title="Records waiting for the next pipeline run">
+                <span className="tally-tab__badge" title="Records waiting for the next update">
                   {typeof waiting === 'number' ? num(waiting) : waiting}
                 </span>
               )}
@@ -393,7 +394,7 @@ function NamesToReview({ products, reloadKey, onChanged }) {
     setMessage({
       ok: failed.length === 0,
       text: `${num(done)} name${done === 1 ? '' : 's'} settled as the suggested item.`
-        + (failed.length ? ` Not saved: ${failed.join('; ')}` : ' Run the pipeline to apply them.'),
+        + (failed.length ? ` Not saved: ${failed.join('; ')}` : ' Run Analytics to apply them.'),
     });
     onChanged?.();
   }
@@ -514,7 +515,7 @@ function NamesToReview({ products, reloadKey, onChanged }) {
       {awaiting.length > 0 && (
         <details className="collapse" style={{ marginTop: names.length ? 16 : 0 }}>
           <summary>
-            <span className="section-h">Settled, waiting for the next pipeline run</span>
+            <span className="section-h">Settled, waiting for the next update</span>
             <span className="hint">{num(awaiting.length)} name{awaiting.length === 1 ? '' : 's'}</span>
           </summary>
           <ul className="date-list" style={{ marginTop: 10 }}>
@@ -556,7 +557,7 @@ function outcome(r) {
   const added = (r.applied?.tally ?? 0) + (r.applied?.inventory ?? 0);
   return what
     + (added ? ` ${num(added)} waiting imported row${added === 1 ? '' : 's'} added.` : '')
-    + (r.next_run ? ' The next pipeline run applies it to the sales history.' : '');
+    + (r.next_run ? ' The next update applies it to the sales history.' : '');
 }
 
 /* ------------------------------------------------------------ Sales Tally */
@@ -832,7 +833,6 @@ function MonthlyInventoryCount({ products, onSaved }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [stockOpen, setStockOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
 
   const { data, loading } = useData(() => getInventoryCounts(month), [month, reloadKey], null);
   const counts = data?.counts ?? [];
@@ -901,9 +901,6 @@ function MonthlyInventoryCount({ products, onSaved }) {
           <button className="btn btn--ghost btn--sm" onClick={() => setAddOpen(v => !v)}>
             <Icon name="calPlus" size={13} /> Add New Item
           </button>
-          <button className="btn btn--ghost btn--sm" onClick={() => setRenameOpen(true)}>
-            <Icon name="tag" size={13} /> Rename Item
-          </button>
           <ImportButton
             onImport={file => importInventoryCounts(file, month)}
             onDone={() => { setReloadKey(k => k + 1); onSaved?.(); }}
@@ -927,11 +924,6 @@ function MonthlyInventoryCount({ products, onSaved }) {
           onSaved?.();            // refreshes the item list this card was given
         }}
       />
-
-      {renameOpen && (
-        <RenameItemModal products={products}
-                         onClose={() => setRenameOpen(false)} onRenamed={() => onSaved?.()} />
-      )}
 
       <div className="form-grid">
         <Field label="Count Month" error={errors.count_month}>
@@ -1122,76 +1114,6 @@ function AddItemModal({ open, products, onClose, onAdded }) {
  *  it has on this screen and the dashboard (the convention the July 2026
  *  renames followed). If the run got there first, the new name is already
  *  under Names to review and this settles it the same way. */
-function RenameItemModal({ products, onClose, onRenamed }) {
-  // Mounted only while open, so every opening starts from an empty form.
-  const [productId, setProductId] = useState('');
-  const [newName, setNewName] = useState('');
-  const [error, setError] = useState(null);
-  const [done, setDone] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  const item = products.find(p => p.product_id === Number(productId));
-
-  async function submit() {
-    if (!productId) { setError('Choose the item that was renamed.'); return; }
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await renameProduct(Number(productId), newName);
-      if (!r.ok) { setError(r.error); return; }
-      setDone(r);
-      setNewName('');
-      onRenamed?.();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal open onClose={onClose} title="Rename Item" width={620} overflowVisible
-           subtitle="For when the tally sheet starts calling an item by a new name.">
-      <div className="form-grid">
-        <div className="col-2">
-          <Field label="Item">
-            <ItemPicker items={products} value={productId}
-                        onChange={v => { setProductId(v); setError(null); setDone(null); }} />
-          </Field>
-        </div>
-        <div className="col-2">
-          <Field label="Name on the tally sheet now"
-                 hint="Type it as the sheet has it. Capitals and extra spaces do not matter.">
-            <input type="text" value={newName} placeholder="e.g. UST TIGER HEADBAND (2 DESIGNS)"
-                   onChange={e => { setNewName(e.target.value); setError(null); setDone(null); }}
-                   onKeyDown={e => { if (e.key === 'Enter') submit(); }} />
-          </Field>
-        </div>
-      </div>
-
-      <div className="notice" style={{ marginTop: 12 }}>
-        {item ? <b>{item.item_name}</b> : 'The item'} keeps its sales history and the name shown here.
-        From the next pipeline run, rows under the new name on the tally sheet count as this item.
-      </div>
-
-      {error && <div className="notice notice--warn" style={{ marginTop: 10 }}>{error}</div>}
-      {done && (
-        <div className="notice notice--ok" style={{ marginTop: 10 }}>
-          Saved: “{done.new_name}” is now another name for <b>{done.item_name}</b>.
-          {(done.applied?.tally || done.applied?.inventory) ? ' Waiting imported rows under that name were added.' : ''}
-        </div>
-      )}
-
-      <div className="btn-row" style={{ marginTop: 16 }}>
-        <button className="btn btn--ink btn--sm" onClick={submit} disabled={busy || !newName.trim()}>
-          {busy ? 'Saving…' : 'Save new name'}
-        </button>
-        <button className="btn btn--ghost btn--sm" onClick={onClose}>{done ? 'Close' : 'Cancel'}</button>
-      </div>
-    </Modal>
-  );
-}
-
 /** Everything the store currently believes it holds — the same figures the
  *  Stock Status screen reads (/api/stock), which take a count entered above
  *  over the historical workbook as soon as it is more recent.
@@ -1202,11 +1124,17 @@ function RenameItemModal({ products, onClose, onRenamed }) {
  *  the backend only returns rows where current_stock is not null, and "we
  *  have none" and "we have never counted this" are different statements.
  *
- *  A row's on-hand figure can be edited in place. It is saved as this month's
- *  count for that item, exactly as if it were entered in the Monthly
- *  Inventory Count form (and replacing any count already recorded for this
- *  month), so the newest count wins as it always does. An item marked
- *  discontinued (Product_Status) is tagged here. */
+ *  Edit opens a row in place, in the style of Edit Tally Entries (no Delete:
+ *  a count is removed from Counted in <month> instead). Two things can change:
+ *  - the units on hand, saved as this month's count for that item (replacing
+ *    any count already recorded for this month), so the newest count wins as
+ *    always. It changes the figure on record, so it is an edit even as the
+ *    month's first count: anyone but the admin is asked for the password;
+ *  - the name the tally sheet now uses for it. The item keeps its history and
+ *    the name shown here; from the next update, rows under the new name count
+ *    as this item (POST /api/products/<id>/rename). This was the Stock tab's
+ *    Rename Item dialog.
+ *  An item marked discontinued (Product_Status) is tagged here. */
 function CurrentStockModal({ open, onClose, onChanged }) {
   const [reloadKey, setReloadKey] = useState(0);
   // Only fetch once the dialog is actually opened: this is the whole catalogue
@@ -1219,7 +1147,7 @@ function CurrentStockModal({ open, onClose, onChanged }) {
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [supplier, setSupplier] = useState(ALL_SUPPLIERS);
   const [stockOnly, setStockOnly] = useState(false);
-  // { product_id, value } while one row's on-hand figure is being edited.
+  // { product_id, value, newName } while one row is being edited.
   const [editing, setEditing] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [message, setMessage] = useState(null);   // { ok, text }
@@ -1234,27 +1162,69 @@ function CurrentStockModal({ open, onClose, onChanged }) {
     }
   }, [open]);
 
+  // stable, so the Saved dialog's Modal does not re-run its focus effect on
+  // every render and take focus off Confirm
+  const clearMessage = useCallback(() => setMessage(null), []);
+
   function changed(text) {
     setMessage({ ok: true, text });
     setReloadKey(k => k + 1);
     onChanged?.();
   }
 
-  async function saveQuantity(item) {
+  const qtyChanged = item => !!editing && editing.value !== ''
+    && Number(editing.value) !== (item.current_stock ?? 0);
+  const nameGiven = () => !!editing?.newName.trim();
+
+  async function saveRow(item) {
+    if (!qtyChanged(item) && !nameGiven()) return;
     setBusyId(item.product_id);
-    const result = await saveInventoryCount({
-      product_id: item.product_id,
-      count_month: thisMonth(),
-      quantity: editing.value,
-      note: 'Adjusted from Current inventory',
-    });
-    setBusyId(null);
-    if (!result.ok) {
-      setMessage({ ok: false, text: Object.values(result.errors || {})[0] || result.error || 'Could not save that figure.' });
-      return;
+    const done = [];
+    try {
+      if (qtyChanged(item)) {
+        const result = await correctOnHand({
+          product_id: item.product_id,
+          count_month: thisMonth(),
+          quantity: editing.value,
+          note: 'Adjusted from Current inventory',
+        });
+        if (!result.ok) {
+          setMessage({ ok: false, text: Object.values(result.errors || {})[0] || result.error || 'Could not save that figure.' });
+          return;
+        }
+        done.push(`on hand set to ${num(result.count.quantity)} for ${longMonth(result.count.count_month)}`);
+      }
+      if (nameGiven()) {
+        const r = await renameProduct(item.product_id, editing.newName);
+        if (!r.ok) {
+          // A count saved just before stays saved: say so, and keep the row
+          // open on the name so it can be corrected.
+          if (done.length) {
+            setReloadKey(k => k + 1);
+            onChanged?.();
+          }
+          setMessage({
+            ok: false,
+            text: (done.length ? `${item.item_name}: ${done.join('; ')}. ` : '')
+              + (r.error || 'Could not save the new name.'),
+          });
+          return;
+        }
+        done.push(`“${r.new_name}” is now another name for it on the tally sheet`
+          + ((r.applied?.tally || r.applied?.inventory) ? ' (waiting imported rows under that name were added)' : ''));
+      }
+      setEditing(null);
+      changed(`${item.item_name}: ${done.join('; ')}.`);
+    } catch (err) {
+      setMessage({ ok: false, text: err.message });
+    } finally {
+      setBusyId(null);
     }
-    setEditing(null);
-    changed(`${item.item_name}: on hand set to ${num(result.count.quantity)} for ${longMonth(result.count.count_month)}.`);
+  }
+
+  function onEditKey(e, row) {
+    if (e.key === 'Enter') saveRow(row);
+    if (e.key === 'Escape') { e.stopPropagation(); setEditing(null); }
   }
 
   const categories = [...new Set(items.map(i => i.category || 'Uncategorised'))].sort();
@@ -1270,7 +1240,7 @@ function CurrentStockModal({ open, onClose, onChanged }) {
 
   const columns = [
     {
-      key: 'item_name', label: 'Item', strong: true, width: '31%',
+      key: 'item_name', label: 'Item', strong: true, width: '36%',
       render: (v, row) => (
         <span className="stock-item">
           <span className="cell-trunc" title={v}>{v}</span>
@@ -1279,47 +1249,33 @@ function CurrentStockModal({ open, onClose, onChanged }) {
       ),
     },
     { key: 'category',       label: 'Category', truncate: true, width: '17%' },
-    { key: 'supplier_name',  label: 'Supplier', truncate: true, width: '18%' },
+    { key: 'supplier_name',  label: 'Supplier', truncate: true, width: '20%' },
     {
-      key: 'current_stock', label: 'On hand', num: true, strong: true, width: '11%',
-      render: (v, row) => (editing?.product_id === row.product_id ? (
-        <input
-          type="number" min="0" step="1" className="stock-edit"
-          value={editing.value} autoFocus aria-label={`Units on hand for ${row.item_name}`}
-          onChange={e => setEditing(x => ({ ...x, value: e.target.value }))}
-          onKeyDown={e => {
-            if (e.key === 'Enter') saveQuantity(row);
-            if (e.key === 'Escape') { e.stopPropagation(); setEditing(null); }
-          }}
-        />
-      ) : num(v)),
+      key: 'current_stock', label: 'On hand', num: true, strong: true, width: '10%',
+      render: num,
     },
     {
       key: 'days_of_supply', label: 'Days left', num: true, width: '9%',
       render: v => v == null ? <span className="muted">—</span> : Math.round(v),
     },
     {
-      key: 'product_id', label: '', width: '14%',
+      key: 'product_id', label: '', width: '8%',
       render: (id, row) => {
         const busy = busyId === id;
-        if (editing?.product_id === id) {
-          return (
-            <span className="stock-actions">
-              <button className="btn btn--ink btn--sm" disabled={busy} onClick={() => saveQuantity(row)}>
-                {busy ? 'Saving…' : 'Save'}
-              </button>
-              <button className="btn btn--ghost btn--sm" disabled={busy} onClick={() => setEditing(null)}>Cancel</button>
-            </span>
-          );
-        }
+        // A gold Edit link, as on a row in Edit Tally Entries. The open row's
+        // fields are drawn by editorFor below, so it shows no link.
+        if (editing?.product_id === id) return null;
         // A Discontinue/Restore button belongs here too (the backend's
         // PUT /api/products/<id>/status and setProductDiscontinued are in
         // place); held back from the UI for now.
         return (
-          <span className="stock-actions">
-            <button className="btn btn--ghost btn--sm" disabled={busy}
-                    title="Correct the units on hand (saved as this month's count)"
-                    onClick={() => { setMessage(null); setEditing({ product_id: id, value: String(row.current_stock ?? 0) }); }}>
+          <span className="edit-dates__actions stock-actions">
+            <button type="button" className="linkish" disabled={busy}
+                    title="Correct the units on hand, or record a new name the tally sheet uses"
+                    onClick={() => {
+                      setMessage(null);
+                      setEditing({ product_id: id, value: String(row.current_stock ?? 0), newName: '' });
+                    }}>
               Edit
             </button>
           </span>
@@ -1327,6 +1283,45 @@ function CurrentStockModal({ open, onClose, onChanged }) {
       },
     },
   ];
+
+  // The row being edited, laid out like an open row in Edit Tally Entries:
+  // the row's own line stays (item, category, supplier under their headers)
+  // and the fields with Save / Cancel go on the line under it.
+  function editorFor(row) {
+    if (editing?.product_id !== row.product_id) return null;
+    const busy = busyId === row.product_id;
+    return (
+      <div className="stock-editrow">
+        <div className="stock-editrow__fields">
+          <input
+            type="text" className="stock-rename__input" value={editing.newName}
+            placeholder="New name on the tally sheet (optional)"
+            aria-label={`Name the tally sheet now uses for ${row.item_name}`}
+            title="Type it as the sheet has it. Capitals and extra spaces do not matter."
+            onChange={e => setEditing(x => ({ ...x, newName: e.target.value }))}
+            onKeyDown={e => onEditKey(e, row)}
+          />
+          <label className="stock-editrow__qty">
+            <span className="hint">On hand</span>
+            <input
+              type="number" min="0" step="1" className="stock-edit"
+              value={editing.value} autoFocus aria-label={`Units on hand for ${row.item_name}`}
+              onChange={e => setEditing(x => ({ ...x, value: e.target.value }))}
+              onKeyDown={e => onEditKey(e, row)}
+            />
+          </label>
+          <span className="edit-dates__actions">
+            <button type="button" className="btn btn--ink btn--sm"
+                    disabled={busy || (!qtyChanged(row) && !nameGiven())} onClick={() => saveRow(row)}>
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+            <button type="button" className="btn btn--ghost btn--sm" disabled={busy}
+                    onClick={() => setEditing(null)}>Cancel</button>
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   const inStock = items.filter(i => i.current_stock > 0);
   const out = items.length - inStock.length;
@@ -1376,10 +1371,8 @@ function CurrentStockModal({ open, onClose, onChanged }) {
                 : <>Showing all {num(items.length)} items</>}
             </div>
 
-            {message && (
-              <div className={`notice notice--${message.ok ? 'ok' : 'warn'}`} style={{ marginBottom: 10 }}>
-                {message.text}
-              </div>
+            {message && !message.ok && (
+              <div className="notice notice--warn" style={{ marginBottom: 10 }}>{message.text}</div>
             )}
 
             <div className="modal-grow">
@@ -1395,10 +1388,33 @@ function CurrentStockModal({ open, onClose, onChanged }) {
                     }))}
                     pageSize={12}
                     minWidth={860}
+                    rowEditor={editorFor}
                   />}
             </div>
           </>
         )}
+      {message?.ok && <SavedDialog text={message.text} onConfirm={clearMessage} />}
+    </Modal>
+  );
+}
+
+/** What a save changed, as a dialog the reader closes with Confirm, so the
+ *  result is acknowledged rather than left as a line above the table.
+ *  Mounted only while there is something to say. */
+function SavedDialog({ text, onConfirm }) {
+  const button = useRef(null);
+  // after the Modal focuses its own panel, put focus on Confirm so Enter closes it
+  useEffect(() => { button.current?.focus(); }, []);
+  return (
+    <Modal open onClose={onConfirm} width={460} title="Saved"
+           subtitle="The change is recorded.">
+      <p className="admin-confirm__text saved-dialog__text">
+        <Icon name="check" size={15} />
+        <span>{text}</span>
+      </p>
+      <div className="btn-row">
+        <button ref={button} type="button" className="btn btn--ink btn--sm" onClick={onConfirm}>Confirm</button>
+      </div>
     </Modal>
   );
 }
@@ -1567,6 +1583,10 @@ function ClosureAndEventCards({ onSaved, reloadKey }) {
 
   const { data: closed } = useData(getClosedDates, [reloadKey], []);
   const { data: events } = useData(getEventLog, [reloadKey], []);
+  // Names already on the school calendar or flagged before, offered as the
+  // label is typed so the same event is spelled the same way every year. A
+  // new name is still allowed.
+  const { data: eventLabels } = useData(getEventLabels, [reloadKey], []);
 
   const editButton = (
     <button type="button" className="btn btn--ghost btn--sm" onClick={() => setEditing(true)}
@@ -1678,9 +1698,9 @@ function ClosureAndEventCards({ onSaved, reloadKey }) {
                      onChange={e => setEvent(v => ({ ...v, calendar_date: e.target.value }))} />
             </Field>
             <Field label="Label" error={errors.event_name}>
-              <input type="text" value={event.event_name} placeholder="e.g. Paskuhan"
-                     className={errors.event_name ? 'is-err' : ''}
-                     onChange={e => { setEvent(v => ({ ...v, event_name: e.target.value })); setErrors(x => ({ ...x, event_name: undefined })); }} />
+              <ComboBox value={event.event_name} options={eventLabels ?? []} placeholder="e.g. Paskuhan Festivities"
+                        invalid={!!errors.event_name} newLabel="new event"
+                        onChange={v => { setEvent(x => ({ ...x, event_name: v })); setErrors(x => ({ ...x, event_name: undefined })); }} />
             </Field>
             <Field label="Description">
               <input type="text" value={event.event_description} placeholder="Optional"
@@ -1806,7 +1826,7 @@ function EditCalendarModal({ onClose, closed, events, onSaved }) {
           {past && (
             <div className="notice notice--info edit-dates__note">
               A change to a past date changes the history the forecasts learn from. It takes effect at
-              the next pipeline run.
+              the next update.
             </div>
           )}
           {done && <div className="ok-text" style={{ fontSize: 12.5 }}><Icon name="check" size={14} />{done}</div>}
@@ -1922,7 +1942,7 @@ function ClosureItem({ closure, past, onSaved }) {
       <span className="closure__date">{usDate(closure.calendar_date)}</span>
       <span className="closure__reason">{closure.reason || 'No reason given'}</span>
       <span className={`closure__src closure__src--${closure.source}`}
-            title={fromWorkbookOnly ? 'Read from the tally workbook - change it there; the pipeline reads it back every run'
+            title={fromWorkbookOnly ? 'Read from the tally workbook - change it there; every update reads it back'
               : closure.source === 'both' ? 'In the calendar and the tally workbook - a change here updates the calendar record'
                 : 'From the academic calendar or flagged here'}>
         {closure.source}
@@ -2069,7 +2089,7 @@ function EditTallyModal({ onClose, onSaved }) {
           </div>
 
           <div className="notice notice--info edit-dates__note">
-            A change reaches the forecasts at the next pipeline run.
+            A change reaches the forecasts at the next update.
           </div>
           {done && <div className="ok-text" style={{ fontSize: 12.5 }}><Icon name="check" size={14} />{done}</div>}
 
@@ -2328,12 +2348,12 @@ function StalenessBanner({ staleness, goTo }) {
         <Icon name="alert" size={16} />
         <div>
           <b>
-            The last pipeline run {interrupted === 'cancelled' ? 'was stopped' : 'failed'} part-way —
+            The last update {interrupted === 'cancelled' ? 'was stopped' : 'failed'} part-way —
             re-run it.
           </b>
           <div style={{ marginTop: 4 }}>
             Some steps completed and some did not, so FSN classes, forecasts and reorder points may not
-            agree with each other or with the sales data. Run the pipeline
+            agree with each other or with the sales data. Run Analytics
             in <TabLink to="update" goTo={goTo}>Update Analytics</TabLink> to bring them back into step.
             {parts.length > 0 && <> There {parts.length === 1 ? 'is' : 'are'} also {what} waiting to be
             folded in.</>}
@@ -2349,14 +2369,14 @@ function StalenessBanner({ staleness, goTo }) {
       <div>
         <b>
           {running
-            ? 'Pipeline running — the dashboard still shows the previous run’s analytics.'
-            : 'Analytics are out of date — re-run the pipeline.'}
+            ? 'Updating — the dashboard still shows the previous analytics until it finishes.'
+            : 'Analytics are out of date — run them again.'}
         </b>
         <div style={{ marginTop: 4 }}>
           {neverRun ? (
             <>
               {what} {parts.length === 1 && pending.tally_entries === 1 ? 'is' : 'are'} in the database, but no
-              pipeline run has been recorded for it yet. FSN classes, forecasts and reorder points on the
+              update has been run for it yet. FSN classes, forecasts and reorder points on the
               dashboard were not computed from this data.
             </>
           ) : (
@@ -2369,7 +2389,7 @@ function StalenessBanner({ staleness, goTo }) {
         </div>
         {!running && (
           <div style={{ marginTop: 4 }}>
-            Run the pipeline in <TabLink to="update" goTo={goTo}>Update Analytics</TabLink> to refresh them.
+            Run Analytics in <TabLink to="update" goTo={goTo}>Update Analytics</TabLink> to refresh them.
           </div>
         )}
       </div>
@@ -2493,7 +2513,7 @@ function WorkbookResult({ result }) {
         in {[...new Set(over.flatMap(t => t.from))].join(', ')}; from now
         on {over.length === 1 ? 'it is' : 'they are'} read from this workbook instead.</>
       )}
-      {' '}Run the pipeline to load it.
+      {' '}Run Analytics to load it.
     </div>
   );
 }
@@ -2519,7 +2539,7 @@ function FullPipelineRun({ onChanged }) {
       // banner, which a completed run is exactly what clears).
       if (s.status === 'done') onChanged?.();
     } catch (err) {
-      setPipelineError(err.message || 'Lost connection to the backend while polling pipeline status.');
+      setPipelineError(err.message || 'Lost connection to the backend while checking the update.');
     }
   }, [onChanged]);
 
@@ -2536,7 +2556,7 @@ function FullPipelineRun({ onChanged }) {
     setStarting(true);
     try {
       const res = await runPipeline({ includeForecast });
-      if (!res.ok) { setPipelineError(res.error || 'Could not start the pipeline.'); return; }
+      if (!res.ok) { setPipelineError(res.error || 'Could not start the update.'); return; }
       onChanged?.();  // so the staleness banner switches to its "running" wording
       poll();
     } catch (err) {
@@ -2550,7 +2570,7 @@ function FullPipelineRun({ onChanged }) {
     setStopping(true);
     try {
       const res = await stopPipeline();
-      if (!res.ok) { setPipelineError(res.error || 'Could not stop the pipeline.'); return; }
+      if (!res.ok) { setPipelineError(res.error || 'Could not stop the update.'); return; }
       poll();
     } catch (err) {
       setPipelineError(err.message || 'Could not reach the backend.');
@@ -2576,82 +2596,87 @@ function FullPipelineRun({ onChanged }) {
   // SKU and are otherwise many silent minutes of an unmoving progress bar.
   const tailStep = current || [...steps].reverse().find(s => s.output);
 
+  const finished = !running && !pipelineError ? pipelineStatus?.status : null;
+
   return (
     <div className="card card__pad card--pipeline-run">
-      <div className="card-h">
-        <CardTitle icon="zap">Full Pipeline Run</CardTitle>
+      {/* Says what the run is for, in the store's words; the explanation sits
+          behind the (i), as on the dashboard. How it is done (the step list)
+          is under Progress below - the staff only choose between the two runs. */}
+      <div className="run-hero">
+        <span className="run-hero__icon"><Icon name="zap" size={26} /></span>
+        <div className="run-hero__text">
+          <div className="run-hero__title">
+            Bring the dashboard up to{' '}
+            {/* the last word and the (i) wrap together, never the (i) alone */}
+            <span className="nowrap">date<InfoTip label="What updating does" width={400}>
+              <p>
+                Reads the tally sheets and everything saved on this screen, then works out again which items
+                are <b>fast, slow or not moving</b>, how much stock is left and <b>what to reorder</b>.
+              </p>
+              <p>
+                Nothing you recorded is lost. New item names are kept and listed under <b>Names to review</b>.
+              </p>
+            </InfoTip></span>
+          </div>
+        </div>
         <AddWorkbookButton onResult={setWorkbookResult} />
-      </div>
-
-      <div className="hint" style={{ marginBottom: 12 }}>
-        Reads every tally workbook in <span className="mono">rawdata/</span>, rebuilds{' '}
-        <span className="mono">ustore.db</span> and recomputes FSN classes, lead times and reorder points.
-        Tally entries, events and closures recorded on this screen are preserved and folded back in. Item
-        names the run does not know are kept and listed under Names to review.
       </div>
       <WorkbookResult result={workbookResult} />
 
-      <div className="btn-row">
-        <button className="btn btn--ink" onClick={() => start(false)} disabled={running || starting}>
-          {running ? 'Running…' : 'Run Pipeline (Without Forecast)'}
-        </button>
-        <button className="btn" onClick={() => start(true)} disabled={running || starting}>
-          {running ? 'Running…' : 'Run Full Pipeline + Forecast'}
-        </button>
-        <button className="btn btn--crit" onClick={stop} disabled={!running || stopping}>
-          {stopping ? 'Stopping…' : 'Stop'}
-        </button>
-        {pipelineError && <span className="field__err">{pipelineError}</span>}
-        {!running && !pipelineError && pipelineStatus?.status === 'done' && (
-          <span className="ok-text" style={{ fontSize: 12.5 }}>
-            <Icon name="check" size={14} /> Pipeline completed — data refreshed.
+      <div className="run-choices">
+        <button type="button" className="run-choice run-choice--main" onClick={() => start(false)}
+                disabled={running || starting}>
+          <span className="run-choice__title"><Icon name="zap" size={16} /> Run Analytics</span>
+          <span className="run-choice__desc">
+            Updates sales, the fast / slow / non-moving groups and the reorder points. Keeps the current
+            item forecasts.
           </span>
-        )}
-        {!running && !pipelineError && pipelineStatus?.status === 'error' && (
-          <span style={{ color: 'var(--crit)', fontWeight: 700, fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Icon name="xCircle" size={14} /> Stopped on an error — see below.
+        </button>
+        <button type="button" className="run-choice" onClick={() => start(true)} disabled={running || starting}>
+          <span className="run-choice__title"><Icon name="trend" size={16} /> Run Forecast</span>
+          <span className="run-choice__desc">
+            Everything in Run Analytics, plus a fresh forecast of each fast-selling item for the next 30
+            days.
           </span>
-        )}
-        {!running && !pipelineError && pipelineStatus?.status === 'cancelled' && (
-          <span className="hint" style={{ fontWeight: 700 }}>Run stopped by request.</span>
-        )}
+        </button>
       </div>
 
-      <div className="progress" style={{ marginTop: 14 }}>
-        <div className="progress__fill" style={{ width: `${pct}%` }} />
-      </div>
-      <div className="hint" style={{ margin: '8px 0 14px' }}>
-        {settled}/{total} steps
-        {current ? ` · running: ${current.label}${current.duration_s != null ? ` (${dur(current.duration_s)})` : ''}` : ''}
-      </div>
-
-      <div className="pipeline-steps">
-        {steps.map(s => (
-          <div key={s.id} className="pipeline-step">
-            <span className={`pipeline-step__dot pipeline-step__dot--${s.status}`} />
-            <span className="pipeline-step__label">
-              {s.label}{s.optional ? <span className="muted"> (optional)</span> : null}
+      {(running || finished || pipelineError) && (
+        <div className="run-status">
+          {running && (
+            <>
+              <div className="run-status__row">
+                <span className="run-status__text">
+                  <b>Updating…</b> {settled} of {total} steps done
+                  {current ? <span className="muted"> · {current.label}</span> : null}
+                </span>
+                <button className="btn btn--crit btn--sm" onClick={stop} disabled={stopping}>
+                  {stopping ? 'Stopping…' : 'Stop'}
+                </button>
+              </div>
+            </>
+          )}
+          {pipelineError && <span className="field__err">{pipelineError}</span>}
+          {finished === 'done' && (
+            <span className="ok-text" style={{ fontSize: 12.5 }}>
+              <Icon name="check" size={14} /> Done. The dashboard is up to date.
             </span>
-            {s.duration_s != null
-              ? <span className="hint mono">{dur(s.duration_s)}</span>
-              : s.estimate && <span className="hint">{s.estimate}</span>}
-            {s.status !== 'pending' && (
-              <span className={`tag ${STEP_TAG[s.status].cls}`}>{STEP_TAG[s.status].label}</span>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {tailStep?.output && (
-        <div style={{ marginTop: 12 }}>
-          <div className="hint" style={{ marginBottom: 6 }}>Output — <b>{tailStep.label}</b></div>
-          <pre className="pipeline-log">{tailStep.output}</pre>
+          )}
+          {finished === 'error' && (
+            <span style={{ color: 'var(--crit)', fontWeight: 700, fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Icon name="xCircle" size={14} /> The update stopped on an error. See below.
+            </span>
+          )}
+          {finished === 'cancelled' && (
+            <span className="hint" style={{ fontWeight: 700 }}>The update was stopped.</span>
+          )}
         </div>
       )}
 
       {failures.length > 0 && (
         <div className="notice notice--warn" style={{ marginTop: 12 }}>
-          <b>The run stopped here.</b>
+          <b>The update stopped here.</b>
           {failures.map(s => <StepProblem key={s.id} step={s} />)}
         </div>
       )}
@@ -2660,11 +2685,53 @@ function FullPipelineRun({ onChanged }) {
         <div className="notice notice--info" style={{ marginTop: 12 }}>
           <b>
             {skipped.length === 1 ? 'One optional step was' : `${skipped.length} optional steps were`}
-            {' '}skipped — the run completed without {skipped.length === 1 ? 'it' : 'them'}.
+            {' '}skipped. The update finished without {skipped.length === 1 ? 'it' : 'them'}.
           </b>
           {skipped.map(s => <StepProblem key={s.id} step={s} />)}
         </div>
       )}
+
+      {/* Progress, with the step list folded under it, closed by default. A
+          <details> keeps the list out of the way without unmounting it, so the
+          live log keeps streaming. */}
+      <details className="run-details">
+        <summary>
+          <span className="run-details__chev"><Icon name="chevron" size={14} /></span>
+          <span className="run-details__label">Progress</span>
+          <span className="progress run-details__bar">
+            <span className="progress__fill" style={{ width: `${pct}%` }} />
+          </span>
+          <span className="run-details__pct">{pct}%</span>
+        </summary>
+        <div className="hint" style={{ margin: '10px 0' }}>
+          Reads every tally workbook in <span className="mono">rawdata/</span>, rebuilds{' '}
+          <span className="mono">ustore.db</span> and recomputes FSN classes, lead times and reorder points.
+          Tally entries, events and closures recorded on this screen are preserved and folded back in.
+        </div>
+        <div className="pipeline-steps">
+          {steps.map(s => (
+            <div key={s.id} className="pipeline-step">
+              <span className={`pipeline-step__dot pipeline-step__dot--${s.status}`} />
+              <span className="pipeline-step__label">
+                {s.label}{s.optional ? <span className="muted"> (optional)</span> : null}
+              </span>
+              {s.duration_s != null
+                ? <span className="hint mono">{dur(s.duration_s)}</span>
+                : s.estimate && <span className="hint">{s.estimate}</span>}
+              {s.status !== 'pending' && (
+                <span className={`tag ${STEP_TAG[s.status].cls}`}>{STEP_TAG[s.status].label}</span>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {tailStep?.output && (
+          <div style={{ marginTop: 12 }}>
+            <div className="hint" style={{ marginBottom: 6 }}>Output: <b>{tailStep.label}</b></div>
+            <pre className="pipeline-log">{tailStep.output}</pre>
+          </div>
+        )}
+      </details>
     </div>
   );
 }

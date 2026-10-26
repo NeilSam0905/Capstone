@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { Fragment, useState, useMemo } from 'react';
 import Icon from './Icon';
 
 /**
@@ -14,11 +14,18 @@ import Icon from './Icon';
  *   strong    darker body text
  *   truncate  ellipsise, keeping the full value in a title tooltip
  *   render    (value, row) => node
+ *   sortable  false to drop the sort control; a column with no label (an
+ *             actions column) has none either
  *
  * `minWidth` keeps every column readable on a narrow viewport by letting the
  * wrapper scroll horizontally rather than crushing the columns.
+ *
+ * `rowEditor` (row) => node | null: a row it returns something for keeps its
+ * columns, so its values stay under their headers, and gets a full-width
+ * line under it holding that node - a row opened for editing, its fields
+ * laid out on their own rather than squeezed into the column widths.
  */
-export default function DataTable({ columns, data, pageSize = 10, minWidth = 0 }) {
+export default function DataTable({ columns, data, pageSize = 10, minWidth = 0, rowEditor }) {
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [page, setPage] = useState(1);
@@ -62,19 +69,25 @@ export default function DataTable({ columns, data, pageSize = 10, minWidth = 0 }
           </colgroup>
           <thead>
             <tr>
-              {columns.map(col => (
+              {columns.map(col => (col.sortable ?? !!col.label) ? (
                 <th key={col.key} className={'sortable' + (col.num ? ' num' : '')} onClick={() => handleSort(col.key)}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                     {col.label}
                     <Icon size={11} name={sortIcon(col.key)} />
                   </span>
                 </th>
+              ) : (
+                <th key={col.key} className={col.num ? 'num' : undefined}>{col.label}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => (
-              <tr key={row.product_id ?? row.rowKey ?? start + i}>
+            {rows.map((row, i) => {
+              const key = row.product_id ?? row.rowKey ?? start + i;
+              const editor = rowEditor?.(row);
+              return (
+              <Fragment key={key}>
+              <tr className={editor ? 'tbl__editing' : undefined}>
                 {columns.map(col => {
                   const value = col.render ? col.render(row[col.key], row) : row[col.key];
                   return (
@@ -88,7 +101,10 @@ export default function DataTable({ columns, data, pageSize = 10, minWidth = 0 }
                   );
                 })}
               </tr>
-            ))}
+              {editor && <tr className="tbl__edit"><td colSpan={columns.length}>{editor}</td></tr>}
+              </Fragment>
+              );
+            })}
             {rows.length === 0 && (
               <tr><td colSpan={columns.length}><div className="empty">Nothing to show.</div></td></tr>
             )}

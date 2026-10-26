@@ -28,17 +28,29 @@ export default function Modal({
 }) {
   const panel = useRef(null);
 
+  // Focus and the scroll lock follow `open` only. Callers often pass a new
+  // onClose on every render, and re-running this with it pulled focus back to
+  // this panel each time - away from a dialog opened on top of it.
   useEffect(() => {
     if (!open) return undefined;
-    const onKey = e => { if (e.key === 'Escape') onClose?.(); };
-    document.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     panel.current?.focus();
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    // Escape closes only the dialog on top: one opened over another (the
+    // admin's confirmation, a Saved notice) is the last panel in <body>.
+    const onKey = e => {
+      if (e.key !== 'Escape') return;
+      const panels = document.querySelectorAll('.modal-panel');
+      if (panels.length && panels[panels.length - 1] !== panel.current) return;
+      onClose?.();
     };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
   if (!open) return null;
