@@ -330,6 +330,10 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
 .kpi__val.is-ok { color: var(--ok); }
 /* A figure whose window has passed: still readable, no longer a headline. */
 .kpi__val.is-stale { color: var(--muted); font-size: 22px; }
+
+/* Overview: the labels over its peso sections (Overview.jsx). */
+.step-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 -4px; }
+.step-next { margin-top: 10px; }
 .kpi__sub { font-size: 12px; color: var(--muted); font-weight: 500; }
 
 /* Tag (portal-style category chip) */

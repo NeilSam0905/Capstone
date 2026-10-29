@@ -309,6 +309,12 @@ export const getSellableProducts = () => get('/products?has_history=1');
 export const getMonthlyUnits = (filters = {}) =>
   get(`/sales/monthly${qs({ supplier: filters.supplier, category: filters.category, ...rangeParams(filters) })}`);
 
+/** The Overview's story in pesos: the latest tallied month against the one
+ *  before and the same month last year, the last 90 days of daily sales, and
+ *  the items that make 80% of sales. Supplier and category narrow the sums. */
+export const getOverviewPerformance = (filters = {}) =>
+  get(`/overview/performance${qs({ supplier: filters.supplier, category: filters.category })}`);
+
 /** One product's observed monthly units — measured history, no fit. */
 export const getProductHistory = productId => get(`/products/${productId}/history`);
 

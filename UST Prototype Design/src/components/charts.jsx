@@ -69,7 +69,7 @@ function useWidth() {
 }
 
 /* ---------- Line chart ---------- */
-export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', tickFmt = num }) {
+export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', tickFmt = num, unit = 'units' }) {
   // Hover is tracked as an index, not a pixel: the pointer is mapped back
   // through the same x() the points were drawn with, so the highlighted point
   // is always the nearest one rather than whatever happens to be under the
@@ -157,7 +157,7 @@ export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', 
     </svg>
     {hover && hover.left != null && (
       <div className="charttip-wrap" style={{ left: `${hover.left}px` }}>
-        <ChartTip label={xs[hover.i]} value={tickFmt(ys[hover.i])} sub="units" />
+        <ChartTip label={xs[hover.i]} value={tickFmt(ys[hover.i])} sub={unit || undefined} />
       </div>
     )}
     </div>

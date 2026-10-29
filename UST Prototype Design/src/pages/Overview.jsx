@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getProducts, getMonthlyUnits, getStockPosition, getReorderAlerts, getAdvisories,
-  getDecisionRules, getCategoryForecasts, getMeta,
+  getDecisionRules, getMeta, getOverviewPerformance,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
@@ -12,24 +12,21 @@ import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
 import { AdvisoriesPanel, AdvisoriesJump } from '../components/Advisories';
 import { ADVISORIES_ANCHOR, TALLY_TAB_KEY } from '../config';
-import { num, shortMonth, longMonth, usDate, roundNice, FSN_TONE, FSN_LABEL, RULE, RULE_ORDER } from '../lib/format';
+import { num, shortMonth, longMonth, usDate, pesoK, FSN_TONE, FSN_LABEL, RULE, RULE_ORDER } from '../lib/format';
 import { ALL_CATEGORIES, ALL_SUPPLIERS } from '../services/dataService';
 
-/* The Overview is read top to bottom, general to detailed:
+/* The Overview reads top to bottom from the store as a whole down to the
+ * items to order (the adviser's review, Oct 2026):
  *
- *   1. the decision the dashboard exists to support - what to reorder now -
- *      readable in one look, with the suppliers it means calling;
- *   2. three glance tiles for what shapes the next decisions: expected
- *      demand, the items that cannot be checked yet, and the next calendar
- *      event;
- *   3. the actions themselves: the items to order first, and what to do with
- *      each FSN group;
- *   4. the advisories;
- *   5. the sales detail behind all of it.
+ *   Sale Overview                    sales value (pesos), latest tallied month
+ *   Top 10 Earners                   the items that drive sales, not all 500
+ *   Reorder                          the reorder decision, in units
  *
- * Counts that support no decision on their own (total products, units by
- * category) are left out; the product list stays one click away under
- * Best Sellers. */
+ * Pesos tell the story because a unit total across a category adds lanyards
+ * to jackets; units stay the measure for ordering, which is what suppliers
+ * deliver. Each section ends in something to do, so leading with performance
+ * does not turn the page into a report. After them: the advisories and the
+ * sales detail behind all of it. */
 
 const TONE_COLOR = {
   ok: 'var(--ok)', warn: 'var(--warn)', gold: 'var(--gold)', crit: 'var(--crit)', info: 'var(--info)',
@@ -58,7 +55,8 @@ export default function Overview({ filters, setPage, setView, user }) {
   const { data: alerts } = useData(getReorderAlerts, []);
   const { data: advisories } = useData(getAdvisories, []);
   const { data: rules } = useData(() => getDecisionRules(), []);
-  const { data: forecasts } = useData(getCategoryForecasts, []);
+  const { data: perf } = useData(() => getOverviewPerformance(filters), [filters.supplier, filters.category]);
+  const [showAllEarners, setShowAllEarners] = useState(false);
   // The last day any sale was tallied: what every figure on this page rests
   // on, said beside the stock-count month so neither looks current when it
   // is not.
@@ -99,6 +97,16 @@ export default function Overview({ filters, setPage, setView, user }) {
   // /api/reorder carries no category; the product list does.
   const categoryOf = useMemo(() => new Map(products.map(p => [p.product_id, p.category])), [products]);
 
+  // The Top 10 Earners section's items: the items that make most of the sales value, by
+  // which the reorder card says how many reorders fall on them.
+  const top = perf?.available ? perf.top : null;
+  const earners = useMemo(() => top?.items ?? [], [top]);
+  const earnerIds = useMemo(
+    () => new Set(earners.slice(0, top?.n_for_share ?? 0).map(t => t.product_id)), [earners, top]);
+  const dueAmongEarners = due.filter(a => earnerIds.has(a.product_id)).length;
+  const top10Uncounted = earners.slice(0, 10)
+    .filter(t => alertById.get(t.product_id)?.current_stock == null).length;
+
   const ruleCounts = useMemo(() => {
     const counts = Object.fromEntries(RULE_ORDER.map(k => [k, 0]));
     (rules?.items ?? []).forEach(i => {
@@ -130,6 +138,12 @@ export default function Overview({ filters, setPage, setView, user }) {
 
   return (
     <div className="stack">
+      <SectionLabel title="Sale Overview" hint="Sales value, latest tallied month" />
+      <PerformanceStep perf={perf} />
+
+      <TopEarnersStep perf={perf} showAll={showAllEarners} setShowAll={setShowAllEarners}
+                      alertById={alertById} showSupplier={showSupplier} />
+
       <ReorderHero
         alerts={alerts}
         due={due}
@@ -140,10 +154,21 @@ export default function Overview({ filters, setPage, setView, user }) {
         salesThrough={salesThrough}
         categoryOf={categoryOf}
         setPage={setPage}
+        earners={top ? { due: dueAmongEarners, n: top.n_for_share, share: top.share } : null}
       />
 
       <div className="grid-3">
-        <ExpectedDemandTile forecasts={forecasts} filters={filters} setPage={setPage} />
+        <KPICard
+          label="Top 10 Earners Without a Count"
+          value={top ? `${num(top10Uncounted)} of ${num(Math.min(10, earners.length))}` : <PendingValue />}
+          tone={top10Uncounted > 0 ? 'crit' : 'ok'}
+          sub={top10Uncounted > 0
+            ? 'The items that bring in the most cannot be checked against a reorder point until they are counted. Count these first.'
+            : 'Every top-10 earner has a stock count.'}
+          icon="tag"
+          onClick={top10Uncounted > 0 ? recount ?? undefined : undefined}
+          linkLabel="Count them in the Tally Interface"
+        />
         <KPICard
           label="Items Without an Inventory Count"
           value={alerts?.available ? num(uncounted) : <PendingValue />}
@@ -224,7 +249,7 @@ function stockStatus(product, alert) {
  *  categories need restocking and which suppliers that means calling. The
  *  footnote says how much of the catalogue the answer rests on, because an
  *  item never counted can never show up here however low it runs. */
-function ReorderHero({ alerts, due, nearRop, counted, uncounted, latestCount, salesThrough, categoryOf, setPage }) {
+function ReorderHero({ alerts, due, nearRop, counted, uncounted, latestCount, salesThrough, categoryOf, setPage, earners }) {
   const categories = useMemo(() => groupDue(due, a => categoryOf.get(a.product_id)), [due, categoryOf]);
   const suppliers = useMemo(() => groupDue(due, a => a.supplier_name), [due]);
 
@@ -278,6 +303,14 @@ function ReorderHero({ alerts, due, nearRop, counted, uncounted, latestCount, sa
         <div className="hero__sub">
           Order about <b>{num(units)} units</b> across <b>{num(suppliers.length)} {suppliers.length === 1 ? 'supplier' : 'suppliers'}</b>.
           {outOfStock > 0 && <> <b className="is-crit">{num(outOfStock)}</b> of {outOfStock === 1 ? 'this item has' : 'these items have'} no stock left.</>}
+          {/* Every due item stays in the list: filtering it to the top
+              earners would hide real reorders. This only says where the
+              sales value is among them. */}
+          {earners && (
+            <> {num(earners.due)} of them {earners.due === 1 ? 'is' : 'are'} among the {num(earners.n)} items
+              that make {Math.round(earners.share * 100)}% of sales; the
+              other {num(due.length - earners.due)} are lower-value.</>
+          )}
         </div>
         <div className="hero__actions">
           <button type="button" className="btn btn--ink" onClick={() => setPage?.('reorder')}>
@@ -338,52 +371,146 @@ function HeroList({ title, groups, noun }) {
   );
 }
 
-/* ---------------------------------------------------------------- tiles */
+/* ---------------------------------------------------------------- steps */
 
-/** Expected demand over the forecast's 30 days. Forecasts are per category,
- *  so a category filter narrows it and a supplier filter cannot. The window
- *  starts the day after the last tally, which can already be in the past -
- *  said so rather than passed off as the next 30 days from today. */
-function ExpectedDemandTile({ forecasts, filters, setPage }) {
-  const cats = forecasts?.available ? forecasts.data.categories : [];
-  const scoped = filters.category === ALL_CATEGORIES ? cats : cats.filter(c => c.category === filters.category);
-  const total = scoped.reduce((s, c) => s + c.total_30d, 0);
-  const snapshot = cats[0]?.snapshot_date;
+/* The peso sections read /api/overview/performance. Every date there is anchored on
+ * the last day a sale was tallied, not on today, so "latest month" is the
+ * latest TALLIED month and is labelled that way. The old "Expected Demand ·
+ * 30 Days" tile is gone: it added units of unlike items together ("480 units
+ * of what?"); units appear only per
+ * item, in the reorder card. */
 
-  let sub;
-  let passed = false;
-  if (!forecasts) sub = 'Loading forecast…';
-  else if (!forecasts.available || !snapshot) sub = forecasts.reason ?? 'Forecast not yet available';
-  else if (!scoped.length) sub = `No forecast for ${filters.category}`;
-  else {
-    const start = addDays(snapshot, 1);
-    const end = addDays(snapshot, 30);
-    passed = end < new Date().toISOString().slice(0, 10);
-    sub = `${usDate(start)} – ${usDate(end)} · about ${num(total / 30)} a day`
-      + (filters.supplier !== ALL_SUPPLIERS ? ' · all suppliers' : '')
-      + (passed ? ' · this window has passed; add newer tally sheets' : '');
-  }
+const change = (a, b) => (b ? (a - b) / b : null);
+const signedPct = p => `${p >= 0 ? '+' : '−'}${Math.abs(Math.round(p * 100))}%`;
+const pct1 = v => `${v.toFixed(1)}%`;
+/** '2026-07-31' -> 'Jul 31', short enough for a daily axis. */
+const dayLabel = iso => `${shortMonth(iso.slice(0, 7)).split(' ')[0]} ${+iso.slice(8, 10)}`;
 
-  // A window that has already passed supports no decision, so its total is
-  // shown greyed and smaller (.kpi__val.is-stale) rather than at headline size.
+/** A label over the part of the page it names. */
+function SectionLabel({ title, hint }) {
   return (
-    <KPICard
-      label="Expected Demand · 30 Days"
-      value={forecasts?.available && scoped.length ? `${num(roundNice(total))} units` : <PendingValue />}
-      tone={passed ? 'stale' : undefined}
-      sub={sub}
-      icon="trend"
-      onClick={() => setPage?.('forecast')}
-      linkLabel="Open Demand Forecast"
-    />
+    <div className="step-h">
+      <span className="section-h">{title}</span>
+      {hint && <span className="hint">{hint}</span>}
+    </div>
   );
 }
 
-function addDays(iso, days) {
-  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+/** "Next step: ...", the line every step ends on. */
+function NextStep({ children }) {
+  return <div className="hint step-next"><b>Next step:</b> {children}</div>;
 }
+
+/** Sale Overview: the latest tallied month's sales value against the month before
+ *  and the same month a year earlier, and the last 90 days day by day. */
+function PerformanceStep({ perf }) {
+  if (!perf) return <div className="card card__pad"><Loading label="Adding up sales…" /></div>;
+  if (!perf.available) return <div className="card card__pad"><div className="empty">{perf.reason}</div></div>;
+
+  const cur = perf.latest_month, prev = perf.previous_month, ly = perf.same_month_last_year;
+  const vsPrev = prev && change(cur.php, prev.php);
+  const vsLy = ly && change(cur.php, ly.php);
+  const unpriced = perf.priced_unit_share == null ? 0 : 1 - perf.priced_unit_share;
+  const daily = perf.daily.map(d => ({ label: dayLabel(d.date), value: d.php }));
+
+  let action;
+  if (vsPrev == null) action = 'keep the Top 10 Earners below in stock.';
+  else if (vsPrev < 0) {
+    action = `sales fell ${Math.abs(Math.round(vsPrev * 100))}% from ${longMonth(prev.month)}. `
+      + 'Check that the Top 10 Earners below did not run out.';
+  } else {
+    action = `sales rose ${Math.round(vsPrev * 100)}% from ${longMonth(prev.month)}. `
+      + 'Make sure the Top 10 Earners below are stocked for demand like this.';
+  }
+
+  return (
+    <>
+      <div className="grid-3">
+        <KPICard
+          label={`Sales, ${longMonth(cur.month)}`}
+          value={pesoK(cur.php)}
+          sub={`${num(cur.units)} units · latest tallied month`
+            + (perf.latest_month_complete ? '' : `, through ${usDate(perf.history_end)}`)}
+          icon="trend"
+        />
+        <KPICard
+          label={prev ? `vs ${longMonth(prev.month)}` : 'vs the month before'}
+          value={vsPrev == null ? '—' : signedPct(vsPrev)}
+          tone={vsPrev == null ? undefined : vsPrev >= 0 ? 'ok' : 'crit'}
+          sub={prev ? `${pesoK(prev.php)} the month before` : 'No sales tallied the month before'}
+          icon="chart"
+        />
+        <KPICard
+          label={ly ? `vs ${longMonth(ly.month)}` : 'vs a year earlier'}
+          value={vsLy == null ? '—' : signedPct(vsLy)}
+          tone={vsLy == null ? undefined : vsLy >= 0 ? 'ok' : 'crit'}
+          sub={ly ? `${pesoK(ly.php)} the same month last year` : 'No sales tallied a year earlier'}
+          icon="cal"
+        />
+      </div>
+      <div className="card card__pad">
+        <div className="card-h">
+          <span className="section-h">Daily Sales, Last 90 Days</span>
+          <span className="hint">Pesos per day, to {usDate(perf.history_end)}</span>
+        </div>
+        <LineChart data={daily} tickFmt={pesoK} unit="" />
+        <NextStep>
+          {action}
+          {unpriced > 0.001 && <> (Peso figures leave out the {pct1(unpriced * 100)} of units with no price.)</>}
+        </NextStep>
+      </div>
+    </>
+  );
+}
+
+/** Top 10 Earners: the items that make most of the sales value, top 10 first, with
+ *  the rest of the 80% one click away. Items that barely sold are named as
+ *  left out rather than silently dropped. */
+function TopEarnersStep({ perf, showAll, setShowAll, alertById, showSupplier }) {
+  if (!perf) return <div className="card card__pad"><Loading label="Ranking items by sales…" /></div>;
+  if (!perf.available) return <div className="card card__pad"><div className="empty">{perf.reason}</div></div>;
+
+  const t = perf.top, s = perf.small_sellers;
+  const sharePct = Math.round(t.share * 100);
+  const list = showAll ? t.items.slice(0, t.n_for_share) : t.items.slice(0, 10);
+  const rows = list.map(i => ({
+    name: i.item_name,
+    value: i.php,
+    sub: [`${pct1(i.share * 100)} of sales`, showSupplier ? i.supplier_name : null,
+          stockStatus(i, alertById.get(i.product_id))].filter(Boolean).join(' · '),
+  }));
+
+  return (
+    <div className="card card__pad">
+      <div className="card-h">
+        <span className="section-h">
+          {showAll ? `The ${num(t.n_for_share)} Items That Make ${sharePct}% of Sales` : 'Top 10 Earners'}
+        </span>
+        {t.n_for_share > 10 && (
+          <button type="button" className="linkish" onClick={() => setShowAll(!showAll)}>
+            {showAll ? 'Show top 10' : `Show all ${num(t.n_for_share)} (${sharePct}% of sales)`}
+          </button>
+        )}
+      </div>
+      <div className="hint" style={{ marginBottom: 12 }}>
+        {usDate(t.window_start)} – {usDate(t.window_end)}: {pesoK(t.total_php)} in sales. The top 10 made
+        {' '}{pct1(t.top10_share * 100)}; {num(t.n_for_share)} of the {num(t.n_selling)} items that sold
+        made {sharePct}%.
+      </div>
+      {rows.length ? <HBars data={rows} valueFmt={pesoK} /> : <div className="empty">No priced sales in this window.</div>}
+      <NextStep>
+        keep these items in stock first; the reorder list below shows which need ordering.
+        {s.count > 0 && (
+          <> {num(s.count)} {s.count === 1 ? 'item' : 'items'} sold {s.max_units} or fewer units in these 12
+            months ({pct1(s.share * 100)} of sales) and {s.count === 1 ? 'is' : 'are'} left out here; they
+            stay under Browse all products and Classification.</>
+        )}
+      </NextStep>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- tiles */
 
 /** The next dated advisory (enrollment, exams, a break, an event) that has
  *  not ended yet: what the store should plan the next order around. */

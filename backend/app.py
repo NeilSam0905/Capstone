@@ -678,6 +678,124 @@ def get_monthly_units():
     return jsonify(sorted(by_month.values(), key=lambda a: a["month"]))
 
 
+# How many trailing days of daily sales the Overview's performance line shows,
+# and the window its top earners are ranked over.
+PERFORMANCE_DAILY_DAYS = 90
+TOP_EARNER_WINDOW_DAYS = 365
+TOP_EARNER_SHARE = 0.80          # list items down to this share of sales
+SMALL_SELLER_UNITS = 10          # "sold this many or fewer" = negligible
+
+
+def _month_before(month, years=0, months=1):
+    y, m = int(month[:4]) - years, int(month[5:7]) - months
+    while m < 1:
+        y, m = y - 1, m + 12
+    return f"{y:04d}-{m:02d}"
+
+
+@app.get("/api/overview/performance")
+def get_overview_performance():
+    """The Overview's story in pesos: how the store is doing, and which
+    products drive the sales.
+
+    Summed here from Fact_Sales x Dim_Product's unit price (unpriced items left
+    out; `priced_unit_share` says how much that is).
+
+    Every date is anchored on the last day any sale was tallied, store-wide,
+    not on today: the latest month is the latest TALLIED month, and a filter
+    cannot move it. Supplier / category narrow the sums."""
+    c = con()
+    cat = catalog.compute_catalog(c)
+    supplier = request.args.get("supplier") or None
+    category = request.args.get("category") or None
+    by_id = {p["product_id"]: p for p in cat}
+    keep = {p["product_id"] for p in cat if catalog.matches(p, supplier, category)}
+
+    rows = dbmod.rows(c, f"""
+        SELECT f.product_id, d.calendar_date AS day, SUM(f.quantity_sold) AS units
+        FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        WHERE {dbmod.SALE_ONLY} AND f.quantity_sold > 0
+        GROUP BY 1, 2
+    """)
+    if not rows:
+        return jsonify({"available": False, "reason": "No sales have been tallied yet."})
+    history_end = max(r["day"] for r in rows)
+    end = date.fromisoformat(history_end)
+    window_start = (end - timedelta(days=TOP_EARNER_WINDOW_DAYS - 1)).isoformat()
+    daily_start = (end - timedelta(days=PERFORMANCE_DAILY_DAYS - 1)).isoformat()
+
+    daily, monthly, items = {}, {}, {}
+    units_all = units_priced = 0
+    for r in rows:
+        pid = r["product_id"]
+        if pid not in keep:
+            continue
+        price = (by_id.get(pid) or {}).get("unit_price_php")
+        month = r["day"][:7]
+        m = monthly.setdefault(month, {"month": month, "php": 0.0, "units": 0})
+        m["units"] += r["units"]
+        if r["day"] >= window_start:
+            units_all += r["units"]
+        if price is None:
+            continue
+        php = r["units"] * price
+        m["php"] += php
+        if r["day"] >= daily_start:
+            daily[r["day"]] = daily.get(r["day"], 0.0) + php
+        if r["day"] >= window_start:
+            units_priced += r["units"]
+            it = items.setdefault(pid, {"php": 0.0, "units": 0})
+            it["php"] += php
+            it["units"] += r["units"]
+
+    latest = history_end[:7]
+    def month_figure(mo):
+        m = monthly.get(mo)
+        return None if not m else {"month": mo, "php": round(m["php"], 2), "units": m["units"]}
+
+    # The latest month is complete only if the tallies run to its last day.
+    month_end = (date(int(latest[:4]) + (latest[5:] == "12"), int(latest[5:]) % 12 + 1, 1)
+                 - timedelta(days=1))
+    days = [(end - timedelta(days=i)).isoformat() for i in range(PERFORMANCE_DAILY_DAYS - 1, -1, -1)]
+
+    ranked = sorted(items.items(), key=lambda kv: -kv[1]["php"])
+    total = sum(v["php"] for _, v in ranked) or 0.0
+    top, cum = [], 0.0
+    for pid, v in ranked:
+        cum += v["php"]
+        p = by_id.get(pid, {})
+        top.append({
+            "product_id": pid, "item_name": p.get("item_name"), "category": p.get("category"),
+            "supplier_name": p.get("supplier_name"), "fsn_class": p.get("fsn_class"),
+            "units": v["units"], "php": round(v["php"], 2),
+            "share": v["php"] / total if total else 0.0, "cum_share": cum / total if total else 0.0,
+        })
+    n_for_share = next((i + 1 for i, t in enumerate(top) if t["cum_share"] >= TOP_EARNER_SHARE), len(top))
+    small = [t for t in top if t["units"] <= SMALL_SELLER_UNITS]
+
+    return jsonify({
+        "available": True,
+        "history_end": history_end,
+        "latest_month": month_figure(latest),
+        "latest_month_complete": end == month_end,
+        "previous_month": month_figure(_month_before(latest)),
+        "same_month_last_year": month_figure(_month_before(latest, years=1, months=0)),
+        "daily": [{"date": d, "php": round(daily.get(d, 0.0), 2)} for d in days],
+        "priced_unit_share": units_priced / units_all if units_all else None,
+        "top": {
+            "window_start": window_start, "window_end": history_end,
+            "total_php": round(total, 2), "n_selling": len(top),
+            "n_for_share": n_for_share, "share": TOP_EARNER_SHARE,
+            "top10_share": top[min(10, len(top)) - 1]["cum_share"] if top else 0.0,
+            "items": top[:max(n_for_share, 10)],
+        },
+        "small_sellers": {
+            "max_units": SMALL_SELLER_UNITS, "count": len(small),
+            "share": sum(t["php"] for t in small) / total if total else 0.0,
+        },
+    })
+
+
 # A batch report covers a month, one day or one week. Longer spans are left
 # to the month view: the grid has a column per day, and past a month it no
 # longer fits a page at a readable size.
