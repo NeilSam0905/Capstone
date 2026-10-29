@@ -12,7 +12,7 @@ import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
 import { AdvisoriesPanel, AdvisoriesJump } from '../components/Advisories';
 import { ADVISORIES_ANCHOR, TALLY_TAB_KEY } from '../config';
-import { num, shortMonth, longMonth, usDate, pesoK, FSN_TONE, FSN_LABEL, RULE, RULE_ORDER } from '../lib/format';
+import { num, shortMonth, longMonth, usDate, peso, pesoK, FSN_TONE, FSN_LABEL, RULE, RULE_ORDER } from '../lib/format';
 import { ALL_CATEGORIES, ALL_SUPPLIERS } from '../services/dataService';
 
 /* The Overview reads top to bottom from the store as a whole down to the
@@ -96,6 +96,15 @@ export default function Overview({ filters, setPage, setView, user }) {
   const alertById = useMemo(() => new Map(alertItems.map(a => [a.product_id, a])), [alertItems]);
   // /api/reorder carries no category; the product list does.
   const categoryOf = useMemo(() => new Map(products.map(p => [p.product_id, p.category])), [products]);
+  // Items due for reorder per category, for the Sale Overview's change table.
+  const dueByCategory = useMemo(() => {
+    const counts = new Map();
+    due.forEach(a => {
+      const name = categoryOf.get(a.product_id) ?? 'Uncategorised';
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    });
+    return counts;
+  }, [due, categoryOf]);
 
   // The Top 10 Earners section's items: the items that make most of the sales value, by
   // which the reorder card says how many reorders fall on them.
@@ -139,7 +148,7 @@ export default function Overview({ filters, setPage, setView, user }) {
   return (
     <div className="stack">
       <SectionLabel title="Sale Overview" hint="Sales value, latest tallied month" />
-      <PerformanceStep perf={perf} />
+      <PerformanceStep perf={perf} dueByCategory={dueByCategory} setPage={setPage} />
 
       <TopEarnersStep perf={perf} showAll={showAllEarners} setShowAll={setShowAllEarners}
                       alertById={alertById} showSupplier={showSupplier} />
@@ -383,8 +392,9 @@ function HeroList({ title, groups, noun }) {
 const change = (a, b) => (b ? (a - b) / b : null);
 const signedPct = p => `${p >= 0 ? '+' : '−'}${Math.abs(Math.round(p * 100))}%`;
 const pct1 = v => `${v.toFixed(1)}%`;
-/** '2026-07-31' -> 'Jul 31', short enough for a daily axis. */
-const dayLabel = iso => `${shortMonth(iso.slice(0, 7)).split(' ')[0]} ${+iso.slice(8, 10)}`;
+/** Pesos, in thousands once they are big enough for it to read well. */
+const money = n => (Math.abs(n) < 10000 ? peso(n) : pesoK(n));
+const signedMoney = n => `${n >= 0 ? '+' : '−'}${money(Math.abs(n))}`;
 
 /** A label over the part of the page it names. */
 function SectionLabel({ title, hint }) {
@@ -401,31 +411,52 @@ function NextStep({ children }) {
   return <div className="hint step-next"><b>Next step:</b> {children}</div>;
 }
 
-/** Sale Overview: the latest tallied month's sales value against the month before
- *  and the same month a year earlier, and the last 90 days day by day. */
-function PerformanceStep({ perf }) {
+/** Sale Overview: the latest tallied month's sales value against the month
+ *  before, and where it moved - category by category, with how many items in
+ *  each are due for reorder - so every figure points at something to do.
+ *
+ *  Two things that used to sit here are gone. The daily sales line rose and
+ *  fell without saying what to order, and most of its ₱0 days were days with no
+ *  tally rather than days with no sales; it moved to Demand Forecast, for
+ *  exploring. The same month a year earlier went too: the older months were
+ *  tallied on far fewer days (12 in July 2025 against 20 in July 2026), so that
+ *  comparison measured record-keeping as much as sales. */
+function PerformanceStep({ perf, dueByCategory, setPage }) {
   if (!perf) return <div className="card card__pad"><Loading label="Adding up sales…" /></div>;
   if (!perf.available) return <div className="card card__pad"><div className="empty">{perf.reason}</div></div>;
 
-  const cur = perf.latest_month, prev = perf.previous_month, ly = perf.same_month_last_year;
+  const cur = perf.latest_month, prev = perf.previous_month;
   const vsPrev = prev && change(cur.php, prev.php);
-  const vsLy = ly && change(cur.php, ly.php);
   const unpriced = perf.priced_unit_share == null ? 0 : 1 - perf.priced_unit_share;
-  const daily = perf.daily.map(d => ({ label: dayLabel(d.date), value: d.php }));
 
-  let action;
-  if (vsPrev == null) action = 'keep the Top 10 Earners below in stock.';
-  else if (vsPrev < 0) {
-    action = `sales fell ${Math.abs(Math.round(vsPrev * 100))}% from ${longMonth(prev.month)}. `
-      + 'Check that the Top 10 Earners below did not run out.';
-  } else {
-    action = `sales rose ${Math.round(vsPrev * 100)}% from ${longMonth(prev.month)}. `
-      + 'Make sure the Top 10 Earners below are stocked for demand like this.';
+  const cats = (perf.by_category ?? [])
+    .filter(c => c.php > 0 || c.previous_php > 0)
+    .map(c => ({
+      ...c,
+      diff: c.php - c.previous_php,
+      pct: change(c.php, c.previous_php),
+      due: dueByCategory.get(c.category) ?? 0,
+    }));
+  // The category that moved furthest the way the store moved: the reason the
+  // month-on-month tile gives for its number.
+  const mover = vsPrev == null || !cats.length ? null
+    : [...cats].sort((a, b) => (vsPrev < 0 ? a.diff - b.diff : b.diff - a.diff))[0];
+  const grew = cats.filter(c => c.diff > 0).sort((a, b) => b.diff - a.diff).slice(0, 2);
+  const fell = cats.filter(c => c.diff < 0).sort((a, b) => a.diff - b.diff)[0];
+
+  const steps = [];
+  if (grew.length) {
+    steps.push(`restock the categories that grew most first: ${grew.map(c => c.category).join(' and ')}.`);
   }
+  if (fell) {
+    steps.push(`Check why ${fell.category} fell ${signedMoney(fell.diff)}`
+      + (fell.due ? `: ${num(fell.due)} of its items are at their reorder point, so it may have run out.` : '.'));
+  }
+  if (!steps.length) steps.push('keep the Top 10 Earners below in stock.');
 
   return (
     <>
-      <div className="grid-3">
+      <div className="grid-2">
         <KPICard
           label={`Sales, ${longMonth(cur.month)}`}
           value={pesoK(cur.php)}
@@ -437,28 +468,65 @@ function PerformanceStep({ perf }) {
           label={prev ? `vs ${longMonth(prev.month)}` : 'vs the month before'}
           value={vsPrev == null ? '—' : signedPct(vsPrev)}
           tone={vsPrev == null ? undefined : vsPrev >= 0 ? 'ok' : 'crit'}
-          sub={prev ? `${pesoK(prev.php)} the month before` : 'No sales tallied the month before'}
+          sub={prev
+            ? `${pesoK(prev.php)} the month before`
+              + (mover && mover.diff !== 0
+                ? ` · biggest ${mover.diff < 0 ? 'drop' : 'rise'}: ${mover.category} (${signedMoney(mover.diff)})`
+                : '')
+            : 'No sales tallied the month before'}
           icon="chart"
         />
-        <KPICard
-          label={ly ? `vs ${longMonth(ly.month)}` : 'vs a year earlier'}
-          value={vsLy == null ? '—' : signedPct(vsLy)}
-          tone={vsLy == null ? undefined : vsLy >= 0 ? 'ok' : 'crit'}
-          sub={ly ? `${pesoK(ly.php)} the same month last year` : 'No sales tallied a year earlier'}
-          icon="cal"
-        />
       </div>
-      <div className="card card__pad">
-        <div className="card-h">
-          <span className="section-h">Daily Sales, Last 90 Days</span>
-          <span className="hint">Pesos per day, to {usDate(perf.history_end)}</span>
+
+      {cats.length > 0 && (
+        <div className="card card__pad">
+          <div className="card-h">
+            <span className="section-h">What Changed This Month</span>
+            <span className="hint">
+              By category{prev ? `, ${longMonth(cur.month)} against ${longMonth(prev.month)}` : ''}
+            </span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th className="num">{longMonth(cur.month)}</th>
+                  {prev && <th className="num">{longMonth(prev.month)}</th>}
+                  {prev && <th className="num">Change</th>}
+                  <th className="num">Items to reorder</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cats.map(c => (
+                  <tr key={c.category}>
+                    <td className="strong">{c.category}</td>
+                    <td className="num strong">{money(c.php)}</td>
+                    {prev && <td className="num">{money(c.previous_php)}</td>}
+                    {prev && (
+                      <td className={`num change-cell${c.diff > 0 ? ' is-up' : c.diff < 0 ? ' is-down' : ''}`}>
+                        {c.pct == null
+                          ? (c.php > 0 ? 'new' : '—')
+                          : <>{c.diff >= 0 ? '▲' : '▼'} {Math.abs(Math.round(c.pct * 100))}%</>}
+                        <span className="change-cell__php">{signedMoney(c.diff)}</span>
+                      </td>
+                    )}
+                    <td className="num">
+                      {c.due > 0
+                        ? <button type="button" className="linkish" onClick={() => setPage?.('reorder')}>{num(c.due)}</button>
+                        : <span className="nodata">&mdash;</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <NextStep>
+            {steps.join(' ')}
+            {unpriced > 0.001 && <> (Peso figures leave out the {pct1(unpriced * 100)} of units with no price.)</>}
+          </NextStep>
         </div>
-        <LineChart data={daily} tickFmt={pesoK} unit="" />
-        <NextStep>
-          {action}
-          {unpriced > 0.001 && <> (Peso figures leave out the {pct1(unpriced * 100)} of units with no price.)</>}
-        </NextStep>
-      </div>
+      )}
     </>
   );
 }

@@ -1,12 +1,12 @@
 import { useState, useMemo } from 'react';
 import {
   getProducts, getForecast, getProductForecast, getProductHistory,
-  getCategoryForecast, getCategoryForecasts,
+  getCategoryForecast, getCategoryForecasts, getOverviewPerformance,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
 import { LineChart, ScrollForecastChart } from '../components/charts';
-import { num, shortMonth, longMonth, monthName, usDate, isCalendarAdjusted, roundNice, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, shortMonth, longMonth, monthName, usDate, isCalendarAdjusted, roundNice, pesoK, FSN_TONE, FSN_LABEL } from '../lib/format';
 import SearchSelect from '../components/SearchSelect';
 import Icon from '../components/Icon';
 import InfoTip from '../components/InfoTip';
@@ -183,6 +183,43 @@ export default function Forecast({ filters, setPage }) {
         ? <ForecastPanel productId={product.product_id} itemName={product.item_name}
                          forecastMeta={forecastMeta} setPage={setPage} />
         : <CategoryForecastPanel category={activeCategory} onPickItem={setSelectedId} setPage={setPage} />}
+
+      <DailySales filters={filters} />
+    </div>
+  );
+}
+
+/** '2026-07-31' -> 'Jul 31', short enough for a daily axis. */
+const dayLabel = iso => `${shortMonth(iso.slice(0, 7)).split(' ')[0]} ${+iso.slice(8, 10)}`;
+
+/**
+ * The store's sales in pesos, day by day over the last 90 tallied days - the
+ * daily view the second consultation asked for. It lives here, with the
+ * forecasts, rather than on the Overview: it is for exploring how sales move,
+ * not a decision, and most of its ₱0 days are days with no sales recorded
+ * (Sundays, and days the old tally sheets skipped) rather than days nothing
+ * sold. The note under the chart says so.
+ */
+function DailySales({ filters }) {
+  const { data: perf } = useData(() => getOverviewPerformance(filters), [filters.supplier]);
+  if (!perf?.available) return null;
+  const daily = perf.daily.map(d => ({ label: dayLabel(d.date), value: d.php }));
+  const recorded = perf.daily.filter(d => d.php > 0).length;
+
+  return (
+    <div className="card card__pad">
+      <div className="card-h">
+        <span className="section-h">Daily Sales, Last 90 Days</span>
+        <span className="hint">
+          Pesos per day, to {usDate(perf.history_end)}
+          {filters.supplier !== ALL_SUPPLIERS ? ` · ${filters.supplier} only` : ' · whole store'}
+        </span>
+      </div>
+      <LineChart data={daily} tickFmt={pesoK} unit="" />
+      <div className="hint" style={{ marginTop: 8 }}>
+        Sales were recorded on {num(recorded)} of these {num(daily.length)} days. A day at ₱0 usually means
+        no sales were recorded that day (Sundays, and days the tally sheets skipped), not that nothing sold.
+      </div>
     </div>
   );
 }

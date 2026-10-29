@@ -703,7 +703,10 @@ def get_overview_performance():
 
     Every date is anchored on the last day any sale was tallied, store-wide,
     not on today: the latest month is the latest TALLIED month, and a filter
-    cannot move it. Supplier / category narrow the sums."""
+    cannot move it. Supplier / category narrow the sums.
+
+    `by_category` splits the latest and previous months by category, so the
+    Overview can say where sales moved rather than only that they did."""
     c = con()
     cat = catalog.compute_catalog(c)
     supplier = request.args.get("supplier") or None
@@ -723,8 +726,10 @@ def get_overview_performance():
     end = date.fromisoformat(history_end)
     window_start = (end - timedelta(days=TOP_EARNER_WINDOW_DAYS - 1)).isoformat()
     daily_start = (end - timedelta(days=PERFORMANCE_DAILY_DAYS - 1)).isoformat()
+    latest = history_end[:7]
+    previous = _month_before(latest)
 
-    daily, monthly, items = {}, {}, {}
+    daily, monthly, items, by_category = {}, {}, {}, {}
     units_all = units_priced = 0
     for r in rows:
         pid = r["product_id"]
@@ -740,6 +745,10 @@ def get_overview_performance():
             continue
         php = r["units"] * price
         m["php"] += php
+        if month in (latest, previous):
+            name = (by_id.get(pid) or {}).get("category") or "Uncategorised"
+            bc = by_category.setdefault(name, {"category": name, "php": 0.0, "previous_php": 0.0})
+            bc["php" if month == latest else "previous_php"] += php
         if r["day"] >= daily_start:
             daily[r["day"]] = daily.get(r["day"], 0.0) + php
         if r["day"] >= window_start:
@@ -748,7 +757,6 @@ def get_overview_performance():
             it["php"] += php
             it["units"] += r["units"]
 
-    latest = history_end[:7]
     def month_figure(mo):
         m = monthly.get(mo)
         return None if not m else {"month": mo, "php": round(m["php"], 2), "units": m["units"]}
@@ -778,8 +786,12 @@ def get_overview_performance():
         "history_end": history_end,
         "latest_month": month_figure(latest),
         "latest_month_complete": end == month_end,
-        "previous_month": month_figure(_month_before(latest)),
+        "previous_month": month_figure(previous),
         "same_month_last_year": month_figure(_month_before(latest, years=1, months=0)),
+        "by_category": sorted(
+            ({"category": v["category"], "php": round(v["php"], 2),
+              "previous_php": round(v["previous_php"], 2)} for v in by_category.values()),
+            key=lambda v: -v["php"]),
         "daily": [{"date": d, "php": round(daily.get(d, 0.0), 2)} for d in days],
         "priced_unit_share": units_priced / units_all if units_all else None,
         "top": {
