@@ -423,15 +423,17 @@ def get_meta():
 def get_suppliers():
     c = con()
 
-    # ?month=YYYY-MM — only suppliers with a sale in that month, for the batch
-    # report's filter. Taken from build_batch_report()'s own output rather than
-    # a query of its own, so the dropdown cannot offer a supplier whose section
-    # that report would then come back empty for. An unparseable month is
-    # ignored rather than rejected: a filter list is not worth a failed screen.
-    month = request.args.get("month") or None
-    if month and validation.ISO_MONTH_RE.match(month):
-        sold = sorted({e["supplier"] for e in build_batch_report(c, month)})
-        return jsonify([catalog.ALL_SUPPLIERS, *sold])
+    # ?month=YYYY-MM, or ?start=&end=YYYY-MM-DD — only suppliers with a sale
+    # in that period, for the batch report's filter. Taken from
+    # build_batch_report()'s own output rather than a query of its own, so the
+    # dropdown cannot offer a supplier whose section that report would then
+    # come back empty for. An unparseable period is ignored rather than
+    # rejected: a filter list is not worth a failed screen.
+    if request.args.get("month") or request.args.get("start"):
+        period, error = _batch_period()
+        if not error:
+            sold = sorted({e["supplier"] for e in build_batch_report(c, period)})
+            return jsonify([catalog.ALL_SUPPLIERS, *sold])
 
     cat = catalog.compute_catalog(c)
     # ?forecastable=1 — only suppliers with at least one SKU the model actually
@@ -676,11 +678,48 @@ def get_monthly_units():
     return jsonify(sorted(by_month.values(), key=lambda a: a["month"]))
 
 
-def build_batch_report(c, month, only_supplier=None):
-    """The month's sales grouped by supplier — the shared body of both
+# A batch report covers a month, one day or one week. Longer spans are left
+# to the month view: the grid has a column per day, and past a month it no
+# longer fits a page at a readable size.
+BATCH_MAX_DAYS = 31
+
+
+def _batch_period():
+    """The report period the request asks for, as (period, error).
+
+    ?month=YYYY-MM is a month; ?start=&end=YYYY-MM-DD a span of days (one
+    day is start == end, a week Monday to Sunday). The period is what
+    batch_pdf.period_span() and the renderers take: the month string, or the
+    (start, end) pair."""
+    start, end = request.args.get("start"), request.args.get("end")
+    if start or end:
+        try:
+            if not (validation.ISO_DATE_RE.match(start or "") and validation.ISO_DATE_RE.match(end or "")):
+                raise ValueError
+            first, last = date.fromisoformat(start), date.fromisoformat(end)
+        except ValueError:
+            return None, "start= and end= must both be dates, YYYY-MM-DD."
+        if last < first:
+            return None, "end= is before start=."
+        if (last - first).days >= BATCH_MAX_DAYS:
+            return None, f"A batch report covers at most {BATCH_MAX_DAYS} days; use month= for a month."
+        return (start, end), None
+    month = request.args.get("month")
+    if not month or not validation.ISO_MONTH_RE.match(month):
+        return None, "month=YYYY-MM, or start= and end=YYYY-MM-DD, is required."
+    return month, None
+
+
+def _period_error(message):
+    return jsonify({"ok": False, "errors": {"period": message}}), 400
+
+
+def build_batch_report(c, period, only_supplier=None):
+    """The period's sales grouped by supplier — the shared body of both
     /api/reports/batch (JSON, for the screen) and /api/reports/batch.pdf
     (the document Purchasing and Finance actually receive). Neither may
-    compute this differently from the other.
+    compute this differently from the other. `period` is a month
+    ('YYYY-MM') or a (start, end) span of days; see _batch_period().
 
     `only_supplier` narrows the report to that supplier's section. It is applied
     here, in the shared body, rather than on the screen: a filter that trimmed
@@ -689,15 +728,15 @@ def build_batch_report(c, month, only_supplier=None):
     cat = catalog.compute_catalog(c)
     product_by_id = {p["product_id"]: p for p in cat}
 
-    monthly = dbmod.rows(c, f"""
-        SELECT f.product_id, substr(d.calendar_date, 1, 7) AS month, SUM(f.quantity_sold) AS units
+    totals = dbmod.rows(c, f"""
+        SELECT f.product_id, SUM(f.quantity_sold) AS units
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
-        WHERE substr(d.calendar_date, 1, 7) = ? AND {dbmod.SALE_ONLY}
-        GROUP BY 1, 2
-    """, (month,))
+        WHERE d.calendar_date BETWEEN ? AND ? AND {dbmod.SALE_ONLY}
+        GROUP BY 1
+    """, batch_pdf.period_span(period))
 
     by_supplier = {}
-    for row in monthly:
+    for row in totals:
         if row["units"] <= 0:
             continue
         p = product_by_id.get(row["product_id"])
@@ -738,10 +777,10 @@ def build_batch_report(c, month, only_supplier=None):
     return out
 
 
-def build_batch_daily(c, month):
-    """The month laid out day by day, for the TBS-shaped .xlsx export.
+def build_batch_daily(c, period):
+    """The period laid out day by day, for the TBS-shaped .xlsx export.
 
-    `build_batch_report` aggregates each item to a monthly total, which is
+    `build_batch_report` aggregates each item to a period total, which is
     what the screen, the PDF and the CSV show. The store's own TBS workbook
     is a grid instead - one column per calendar day - so this returns the
     same Fact_Sales rows at day resolution. The two cannot disagree: the
@@ -756,17 +795,17 @@ def build_batch_daily(c, month):
         SELECT calendar_date, is_store_closed, is_event_day,
                is_enrollment_period, is_exam_week, is_sem_break
         FROM Dim_Date
-        WHERE substr(calendar_date, 1, 7) = ?
+        WHERE calendar_date BETWEEN ? AND ?
         ORDER BY calendar_date
-    """, (month,))
+    """, batch_pdf.period_span(period))
 
     qty_rows = dbmod.rows(c, f"""
         SELECT f.product_id, d.calendar_date AS day, SUM(f.quantity_sold) AS units
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
-        WHERE substr(d.calendar_date, 1, 7) = ? AND {dbmod.SALE_ONLY}
+        WHERE d.calendar_date BETWEEN ? AND ? AND {dbmod.SALE_ONLY}
         GROUP BY 1, 2
         HAVING SUM(f.quantity_sold) > 0
-    """, (month,))
+    """, batch_pdf.period_span(period))
 
     by_product = {}
     for row in qty_rows:
@@ -803,10 +842,10 @@ def build_batch_daily(c, month):
 
 @app.get("/api/reports/batch")
 def get_batch_report():
-    month = request.args.get("month")
-    if not month:
-        return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
-    return jsonify(build_batch_report(con(), month, request.args.get("supplier") or None))
+    period, error = _batch_period()
+    if error:
+        return _period_error(error)
+    return jsonify(build_batch_report(con(), period, request.args.get("supplier") or None))
 
 
 @app.get("/api/reports/batch.pdf")
@@ -823,16 +862,16 @@ def get_batch_report_pdf():
     `?inline=1` serves it for viewing in the browser (the Print Preview
     button); the default is a download (Export as PDF).
     """
-    month = request.args.get("month")
-    if not month or not validation.ISO_MONTH_RE.match(month):
-        return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
+    period, error = _batch_period()
+    if error:
+        return _period_error(error)
 
     c = con()
-    report = build_batch_report(c, month, request.args.get("supplier") or None)
-    pdf_bytes = batch_pdf.render(report, month, build_batch_daily(c, month))
+    report = build_batch_report(c, period, request.args.get("supplier") or None)
+    pdf_bytes = batch_pdf.render(report, period, build_batch_daily(c, period))
 
     disposition = "inline" if _bool_flag("inline") else "attachment"
-    filename = f"USTore_Batch_Sales_Report_{month}.pdf"
+    filename = f"USTore_Batch_Sales_Report_{batch_pdf.period_slug(period)}.pdf"
     return Response(pdf_bytes, mimetype="application/pdf", headers={
         "Content-Disposition": f'{disposition}; filename="{filename}"',
         "Content-Length": str(len(pdf_bytes)),
@@ -844,13 +883,13 @@ def get_batch_report_csv():
     """The batch sales report as CSV, in the same row shape as the store's
     own TBS workbooks (see batch_export.py). Same build_batch_report() body
     as the PDF and the screen - never a different number."""
-    month = request.args.get("month")
-    if not month or not validation.ISO_MONTH_RE.match(month):
-        return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
+    period, error = _batch_period()
+    if error:
+        return _period_error(error)
 
-    report = build_batch_report(con(), month, request.args.get("supplier") or None)
-    csv_bytes = batch_export.render_csv(report, month)
-    filename = f"USTore_Batch_Sales_Report_{month}.csv"
+    report = build_batch_report(con(), period, request.args.get("supplier") or None)
+    csv_bytes = batch_export.render_csv(report, period)
+    filename = f"USTore_Batch_Sales_Report_{batch_pdf.period_slug(period)}.csv"
     return Response(csv_bytes, mimetype="text/csv", headers={
         "Content-Disposition": f'attachment; filename="{filename}"',
         "Content-Length": str(len(csv_bytes)),
@@ -863,14 +902,14 @@ def get_batch_report_xlsx():
     own TBS sheet: supplier blocks, one column per calendar day, TOTAL
     QUANTITY / ITEM PRICE / FOR REMITTANCE. Same build_batch_report() body
     as the CSV, PDF and screen, plus build_batch_daily() for the grid."""
-    month = request.args.get("month")
-    if not month or not validation.ISO_MONTH_RE.match(month):
-        return jsonify({"ok": False, "errors": {"month": "month=YYYY-MM is required."}}), 400
+    period, error = _batch_period()
+    if error:
+        return _period_error(error)
 
     c = con()
-    report = build_batch_report(c, month, request.args.get("supplier") or None)
-    xlsx_bytes = batch_export.render_xlsx(report, month, build_batch_daily(c, month))
-    filename = f"USTore_Batch_Sales_Report_{month}.xlsx"
+    report = build_batch_report(c, period, request.args.get("supplier") or None)
+    xlsx_bytes = batch_export.render_xlsx(report, period, build_batch_daily(c, period))
+    filename = f"USTore_Batch_Sales_Report_{batch_pdf.period_slug(period)}.xlsx"
     return Response(xlsx_bytes,
                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={

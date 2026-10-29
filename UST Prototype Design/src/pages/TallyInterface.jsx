@@ -2648,8 +2648,13 @@ function FullPipelineRun({ onChanged }) {
             <>
               <div className="run-status__row">
                 <span className="run-status__text">
-                  <b>Updating…</b> {settled} of {total} steps done
-                  {current ? <span className="muted"> · {current.label}</span> : null}
+                  <b>Updating<span className="loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></b>
+                  {' '}{settled} of {total} steps done
+                  {/* Before the first step the backend restores the data files
+                      from vault/ (pipeline.py's _run_all), which can take a few
+                      seconds with no step running - name it, so 0% isn't read
+                      as stuck. */}
+                  <span className="muted"> · {current ? current.label : 'Preparing the data files'}</span>
                 </span>
                 <button className="btn btn--crit btn--sm" onClick={stop} disabled={stopping}>
                   {stopping ? 'Stopping…' : 'Stop'}

@@ -176,6 +176,17 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
   padding: 8px 30px 8px 12px; cursor: pointer; min-width: 124px;
 }
 .filter select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The Batch Sales Report's day picker, styled as the selects beside it. */
+.filter input[type="date"] {
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  color: var(--text-2); background: var(--bg);
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 7px 10px; min-width: 170px;
+}
+.filter input[type="date"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Batch Sales Report: Period, the Day / Week / Month switch, then the picker. */
+.report-period { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .filter__chev { position: absolute; right: 10px; pointer-events: none; color: var(--muted); }
 /* "Change" beside an active custom date range: same height as the selects. */
 .topbar__edit-range { height: 34px; white-space: nowrap; flex-shrink: 0; }
@@ -527,19 +538,19 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* Upcoming / Previous: a two-segment switch, with the month filter beside it
    on the Previous side. */
 .edit-dates__bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.edit-dates__tabs {
+.edit-dates__tabs, .period-tabs {
   display: inline-flex; padding: 3px; gap: 2px;
   background: var(--bg); border: 1px solid var(--line); border-radius: 999px;
 }
-.edit-dates__tab {
+.edit-dates__tab, .period-tab {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 6px 14px; border: 0; border-radius: 999px; background: none; cursor: pointer;
   font: inherit; font-size: 12.5px; font-weight: 700; color: var(--muted);
   transition: background .12s, color .12s;
 }
-.edit-dates__tab:hover { color: var(--text-2); }
-.edit-dates__tab.is-active { background: var(--ink); color: #fff; }
-.edit-dates__tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.edit-dates__tab:hover, .period-tab:hover { color: var(--text-2); }
+.edit-dates__tab.is-active, .period-tab.is-active { background: var(--ink); color: #fff; }
+.edit-dates__tab:focus-visible, .period-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .edit-dates__count {
   min-width: 20px; padding: 0 6px; border-radius: 999px; font-size: 11px;
   background: rgba(0, 0, 0, .07); font-variant-numeric: tabular-nums;
@@ -1945,6 +1956,22 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .run-status { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
 .run-status__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .run-status__text { font-size: 13px; color: var(--text-2); min-width: 0; }
+
+/* "Updating..." with the three dots rising in turn. Each dot keeps its width
+   while faded, so the text after it does not shift. */
+.loading-dots span {
+  display: inline-block;
+  animation: loading-dot 1.2s ease-in-out infinite;
+}
+.loading-dots span:nth-child(2) { animation-delay: .15s; }
+.loading-dots span:nth-child(3) { animation-delay: .3s; }
+@keyframes loading-dot {
+  0%, 60%, 100% { opacity: .25; transform: translateY(0); }
+  30%           { opacity: 1;   transform: translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-dots span { animation: none; opacity: 1; }
+}
 
 .run-details { margin-top: 16px; border-top: 1px solid var(--line-soft); padding-top: 12px; }
 .run-details > summary {

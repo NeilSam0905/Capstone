@@ -1,5 +1,9 @@
 """
-batch_export.py — CSV and XLSX renderers for the monthly Batch Sales Report.
+batch_export.py — CSV and XLSX renderers for the Batch Sales Report.
+
+A report covers a month (the store's own TBS sheet), one day, or a Monday-
+to-Sunday week; see batch_pdf.py's "periods". The grid is the same for all
+three, with one column per day the period covers.
 
 Shares build_batch_report()'s output with the PDF (batch_pdf.py) and the
 on-screen table, so all three export formats and the screen can never show
@@ -49,7 +53,9 @@ per-line reference data only.
 """
 import csv
 import io
+import math
 from datetime import date
+from functools import lru_cache
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -57,7 +63,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 from openpyxl.worksheet.pagebreak import Break
 
-from batch_pdf import long_month
+from batch_pdf import (MONTHS, _day, _general, _money, period_label, period_short,
+                       text_width, wrap_lines)
 
 COLUMNS = ["Supplier", "Item", "Quantity", "Item Price (PHP)", "For Remittance (PHP)"]
 
@@ -105,11 +112,11 @@ def _line_rows(report):
         yield [f"SUBTOTAL — {entry['supplier']}", "", entry["total_units"], None, None]
 
 
-def render_csv(report, month):
+def render_csv(report, period):
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["USTore Monthly Batch Sales Report"])
-    writer.writerow([f"Period: {long_month(month)}"])
+    writer.writerow(["USTore Batch Sales Report"])
+    writer.writerow([f"Period: {period_label(period)}"])
     writer.writerow([])
     writer.writerow(COLUMNS)
     for row in _line_rows(report):
@@ -183,14 +190,29 @@ def ink_on(hex_colour):
     return "000000" if (0.299 * r + 0.587 * g + 0.114 * b) > 140 else "FFFFFF"
 
 
-def _iso_to_date(iso):
-    return date(*(int(part) for part in iso.split("-")))
+_iso_to_date = _day
 
 
-def _sheet_title(month):
-    """"OCTOBER 2025 - TBS" — the store's own tab naming."""
-    first = _iso_to_date(f"{month}-01")
-    return f"{first.strftime('%B').upper()} {first.year} - TBS"
+def _sheet_title(period):
+    """"OCTOBER 2025 - TBS" — the store's own tab naming; a day or a week is
+    named the same way, "JUL 3 2026 - TBS" / "JUL 6-12 2026 - TBS" (a tab
+    name holds 31 characters and no slash or colon)."""
+    if isinstance(period, str):
+        first = _iso_to_date(f"{period}-01")
+        return f"{MONTHS[first.month - 1].upper()} {first.year} - TBS"
+    start, end = (_iso_to_date(d) for d in period)
+
+    def md(d):
+        return f"{MONTHS[d.month - 1][:3].upper()} {d.day}"
+    if start == end:
+        span = f"{md(start)} {start.year}"
+    elif start.year != end.year:
+        span = f"{md(start)} {start.year}-{md(end)} {end.year}"
+    elif start.month == end.month:
+        span = f"{md(start)}-{end.day} {end.year}"
+    else:
+        span = f"{md(start)}-{md(end)} {end.year}"
+    return f"{span} - TBS"[:31]
 
 
 # ------------------------------------------------------------ print layout
@@ -238,16 +260,83 @@ def col_points(width):
 
 
 def grid_widths(n_days):
-    """Character widths of the grid's columns, item to FOR REMITTANCE."""
+    """Character widths of the grid's columns, item to FOR REMITTANCE, as
+    measured from the store's sheet."""
     return [WIDTH["item"], *[WIDTH["day"]] * n_days,
             WIDTH["total"], WIDTH["price"], WIDTH["remit"]]
 
 
-def print_scale(n_days):
+# --- fitting the columns to what is in them --------------------------------
+#
+# The measured widths are a floor, not a fixed size. A three-digit day count
+# (a busy enrollment day) is wider than the store's 3.75-character day
+# column, and a seven-digit remittance total wider than FOR REMITTANCE; each
+# such column alone is widened to fit, so the figure never runs over the
+# border into its neighbour. Item names are not widened for - the longest
+# runs to 68 characters - they wrap onto a second line instead (row_height).
+
+CELL_PAD_PT = 1.5      # Excel's inner margin, each side of a cell
+_TEXT_SLACK = 1.08     # printer font metrics run a few percent wider than ours
+ITEM_LINE_PT = 14.25   # each further line of a wrapped item name
+
+
+def _width_for(points):
+    """The column width, in quarter characters, that prints `points` of text
+    with Excel's padding on both sides (the inverse of col_points)."""
+    px = (points * _TEXT_SLACK + 2 * CELL_PAD_PT) / 0.75
+    return math.ceil((px - 0.5) / 7 * 4) / 4
+
+
+def fitted_widths(report, daily):
+    """grid_widths(), each column widened only as far as its own widest
+    figure needs."""
+    days = list(daily["dates"])
+    quantities = daily["quantities"]
+    widths = grid_widths(len(days))
+
+    def fit(col, texts, size=12, style=""):
+        need = max((text_width(t, size, style) for t in texts if t), default=0)
+        widths[col] = max(widths[col], _width_for(need))
+
+    items = [it for e in report for it in e["items"]]
+    shown = [quantities.get(it.get("product_id"), {}) for it in items]
+    for k, iso in enumerate(days):
+        fit(1 + k, [_general(q.get(iso)) for q in shown])
+
+    units = [e["total_units"] for e in report]
+    remit = [sum(it["line_total"] or 0 for it in e["items"]) for e in report]
+    total_col = len(widths) - 3
+    fit(total_col, [_general(it["quantity"]) for it in items])
+    fit(total_col, [_general(u) for u in units + [sum(units)]], 13, "B")
+    fit(total_col + 1, [_money(it["unit_price_php"]) for it in items
+                        if it["unit_price_php"] is not None])
+    fit(total_col + 2, [_money(it["line_total"]) for it in items
+                        if it["line_total"] is not None])
+    fit(total_col + 2, [_money(r) for r in remit + [sum(remit)]], 13, "B")
+    return widths
+
+
+@lru_cache(maxsize=4096)
+def item_lines(name):
+    """An item name as it wraps in the store's item column."""
+    room = (col_points(WIDTH["item"]) - 2 * CELL_PAD_PT) / _TEXT_SLACK
+    return tuple(wrap_lines(name, room))
+
+
+def row_height(kind, item=None):
+    """A row's height in points: the sheet's measured height, plus a line for
+    each further line an item name wraps onto."""
+    if kind == "item":
+        return ROW_H["item"] + (len(item_lines(item["item_name"])) - 1) * ITEM_LINE_PT
+    return ROW_H[kind]
+
+
+def print_scale(n_days, widths=None):
     """The whole-percent scale that fits the grid across the page, never
-    above 100%: what Excel prints at, and what the PDF draws at."""
+    above 100%: what Excel prints at, and what the PDF draws at. `widths` is
+    fitted_widths()'s; without it, the store's measured widths."""
     avail = (FIT_W_IN - MARGIN_IN["left"] - MARGIN_IN["right"]) * 72
-    grid = sum(col_points(w) for w in grid_widths(n_days))
+    grid = sum(col_points(w) for w in (widths or grid_widths(n_days)))
     return min(100, int(avail * _WIDTH_FILL / grid * 100)) / 100
 
 
@@ -288,15 +377,19 @@ def page_starts(rows, scale):
     if current:
         blocks.append(current)
 
+    def height(i):
+        kind, _, item = rows[i]
+        return row_height(kind, item)
+
     starts, used = [], 0.0
     for block in blocks:
         body = [i for i in block if rows[i][0] != "gap"]
-        need = sum(ROW_H[rows[i][0]] for i in body)
+        need = sum(height(i) for i in body)
         if used and used + need > avail and need <= avail:
             starts.append(block[0] + 2)
             used = 0.0
         for i in block:
-            h = ROW_H[rows[i][0]]
+            h = height(i)
             if used and used + h > avail:
                 starts.append(i + 2)
                 used = 0.0
@@ -338,19 +431,20 @@ def item_units(item, days, by_date):
     return sum(by_date.get(iso) or 0 for iso in days)
 
 
-def page_header(month):
-    return (f"USTore Monthly Batch Sales Report — {long_month(month)}",
+def page_header(period):
+    return (f"USTore Batch Sales Report — {period_label(period)}",
             f"Generated {date.today().strftime('%m/%d/%Y')}")
 
 
 FOOTER_NOTE = "Unit counts only - not an invoice or official receipt."
 
 
-def render_xlsx(report, month, daily=None):
-    """The month as the store's TBS grid, set up to print.
+def render_xlsx(report, period, daily=None):
+    """The period as the store's TBS grid, set up to print. `period` is a
+    month ('YYYY-MM') or a (start, end) span of days (batch_pdf.py).
 
     `daily` is build_batch_daily()'s output. It is optional so a caller
-    holding only the monthly totals still gets a readable sheet — the grid
+    holding only the period's totals still gets a readable sheet — the grid
     then carries a TOTAL QUANTITY column and no day columns, rather than
     failing.
     """
@@ -358,10 +452,12 @@ def render_xlsx(report, month, daily=None):
     days = list(daily["dates"])
     marks = daily.get("marks") or {}
     quantities = daily["quantities"]
+    widths = fitted_widths(report, daily)
+    period_name = period_label(period)
 
     wb = Workbook()
     ws = wb.active
-    ws.title = _sheet_title(month)
+    ws.title = _sheet_title(period)
 
     first_day_col = 2                                   # column B
     last_day_col = first_day_col + len(days) - 1
@@ -370,8 +466,13 @@ def render_xlsx(report, month, daily=None):
     remit_col = total_col + 2
 
     # ---- header row -------------------------------------------------------
-    month_cell = ws.cell(1, 1, _iso_to_date(f"{month}-01"))
-    month_cell.number_format = MONTH_FMT
+    # A month heads its sheet as the store's does, a date shown "mmm yyyy";
+    # a day or a week as its span in words.
+    if isinstance(period, str):
+        month_cell = ws.cell(1, 1, _iso_to_date(f"{period}-01"))
+        month_cell.number_format = MONTH_FMT
+    else:
+        month_cell = ws.cell(1, 1, period_short(period))
     for offset, iso in enumerate(days):
         cell = ws.cell(1, first_day_col + offset, _iso_to_date(iso))
         cell.number_format = DAY_FMT
@@ -394,7 +495,7 @@ def render_xlsx(report, month, daily=None):
     month_cell.font = Font(name=NARROW, size=12, bold=True)
     month_cell.border = BOX
     month_cell.fill = HEADER_FILL
-    month_cell.alignment = Alignment(horizontal="center", vertical="center")
+    month_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     ws.row_dimensions[1].height = ROW_H["head"]
     ws.freeze_panes = "B2"
 
@@ -411,10 +512,10 @@ def render_xlsx(report, month, daily=None):
     total_rows = []
     for i, (kind, entry, item) in enumerate(rows):
         row = i + 2
-        ws.row_dimensions[row].height = ROW_H[kind]
+        ws.row_dimensions[row].height = row_height(kind, item)
 
         if kind == "empty":
-            ws.cell(row, 1, f"No sales were recorded for {long_month(month)}.").font = Font(
+            ws.cell(row, 1, f"No sales were recorded for {period_name}.").font = Font(
                 name=NARROW, size=12, italic=True)
 
         elif kind == "supplier":
@@ -454,8 +555,12 @@ def render_xlsx(report, month, daily=None):
                 cell.font = Font(name=NARROW, size=12,
                                  color=ink_on(colour) if colour else "000000")
                 cell.border = BOX
-                if col > 1:
-                    cell.alignment = Alignment(horizontal="center")
+                # The name wraps inside its own column rather than running on
+                # over the empty day cells beside it, so it never reads as
+                # part of the grid; a wrapped row is taller (row_height), and
+                # its figures sit level with the middle of the name.
+                cell.alignment = (Alignment(vertical="center", wrap_text=True) if col == 1
+                                  else Alignment(horizontal="center", vertical="center"))
                 if col in (price_col, remit_col):
                     cell.number_format = MONEY
 
@@ -519,29 +624,26 @@ def render_xlsx(report, month, daily=None):
             swatch.value = text
             swatch.font = Font(name=LEGEND_FONT, bold=style == "bold")
 
-    # ---- column widths, measured from the store's sheet --------------------
-    ws.column_dimensions["A"].width = WIDTH["item"]
-    for col in range(first_day_col, last_day_col + 1):
-        ws.column_dimensions[get_column_letter(col)].width = WIDTH["day"]
-    ws.column_dimensions[get_column_letter(total_col)].width = WIDTH["total"]
-    ws.column_dimensions[get_column_letter(price_col)].width = WIDTH["price"]
-    ws.column_dimensions[get_column_letter(remit_col)].width = WIDTH["remit"]
+    # ---- column widths: the store's, widened where a figure needs it --------
+    for col, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(col)].width = width
     ws.column_dimensions[get_column_letter(swatch_col)].width = WIDTH["swatch"]
     ws.column_dimensions[get_column_letter(label_col)].width = WIDTH["label"]
 
     # ---- print setup: what the PDF reproduces -----------------------------
     ws.page_setup.orientation = "landscape"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
-    ws.page_setup.scale = int(round(print_scale(len(days)) * 100))
+    scale = print_scale(len(days), widths)
+    ws.page_setup.scale = int(round(scale * 100))
     ws.page_margins = PageMargins(**MARGIN_IN)
     ws.print_options.horizontalCentered = True
     ws.print_title_rows = "1:1"
     # The grid, then the legend on a page of its own.
     ws.print_area = [f"A1:{get_column_letter(remit_col)}{last_grid_row}",
                      f"{get_column_letter(swatch_col)}1:{get_column_letter(label_col)}{len(legend)}"]
-    for start in page_starts(rows, print_scale(len(days))):
+    for start in page_starts(rows, scale):
         ws.row_breaks.append(Break(id=start - 1))     # a break above `start`
-    left, right = page_header(month)
+    left, right = page_header(period)
     ws.oddHeader.left.text, ws.oddHeader.left.font, ws.oddHeader.left.size = left, "Arial,Bold", 9
     ws.oddHeader.right.text, ws.oddHeader.right.font, ws.oddHeader.right.size = right, "Arial", 8
     ws.oddFooter.left.text, ws.oddFooter.left.font, ws.oddFooter.left.size = FOOTER_NOTE, "Arial", 8

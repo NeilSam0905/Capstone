@@ -61,8 +61,8 @@ async function run(gen) {
   // Batch Sales Report opens on the latest month.
   const latest = Array.isArray(months) ? months[months.length - 1] : null;
   if (latest) {
-    await step(() => getSuppliers({ month: latest }));
-    await step(() => getBatchReport(latest, undefined));
+    await step(() => getSuppliers({ period: { month: latest } }));
+    await step(() => getBatchReport({ month: latest }, undefined));
   }
 
   // Demand Forecast: every category's chart, so switching category is

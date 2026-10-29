@@ -262,10 +262,11 @@ export const getMeta = () => get('/meta');
  *  SKU the model actually forecast — the Demand Forecast screen's dropdown.
  *  It falls back to the full list when the pipeline has produced no forecasts
  *  at all, matching that screen's own fallback. */
-/** `month` ('YYYY-MM') narrows the list to suppliers with a sale that month —
- *  the batch report's filter, whose report is a single month. */
-export const getSuppliers = ({ forecastable = false, month } = {}) =>
-  get(`/suppliers${qs({ forecastable: forecastable ? 1 : '', month })}`);
+/** `period` (lib/reportPeriod.js periodParams: { month } or { start, end })
+ *  narrows the list to suppliers with a sale in that period — the batch
+ *  report's filter, whose report is a single day, week or month. */
+export const getSuppliers = ({ forecastable = false, period } = {}) =>
+  get(`/suppliers${qs({ forecastable: forecastable ? 1 : '', ...period })}`);
 
 export const getCategories = () => get('/categories');
 
@@ -311,27 +312,29 @@ export const getMonthlyUnits = (filters = {}) =>
 /** One product's observed monthly units — measured history, no fit. */
 export const getProductHistory = productId => get(`/products/${productId}/history`);
 
-/** Per-supplier unit counts and remittance line totals for one month.
+/** Per-supplier unit counts and remittance line totals for one period —
+ *  `period` is { month: 'YYYY-MM' } or { start, end } ('YYYY-MM-DD'; one day
+ *  or one week), as lib/reportPeriod.js periodParams builds it.
  *  §3.2's batch sales report: internal reporting, not a customer document. */
-export const getBatchReport = (month, supplier) =>
-  get(`/reports/batch${qs({ month, supplier })}`);
+export const getBatchReport = (period, supplier) =>
+  get(`/reports/batch${qs({ ...period, supplier })}`);
 
-/** URL of the server-rendered PDF for one month ('YYYY-MM').
+/** URL of the server-rendered PDF for one period.
  *
  *  Returns a URL rather than fetching, because the browser has to do the
  *  navigating: `inline` opens it in the PDF viewer (Print Preview), the
  *  default sends Content-Disposition: attachment (Export as PDF). Building it
  *  here keeps API_BASE in this module, per the rule that no screen constructs
  *  an API path of its own. */
-export const batchReportPdfUrl = (month, { inline = false, supplier } = {}) =>
-  `${API_BASE}/reports/batch.pdf${qs({ month, supplier, inline: inline ? 1 : '' })}`;
+export const batchReportPdfUrl = (period, { inline = false, supplier } = {}) =>
+  `${API_BASE}/reports/batch.pdf${qs({ ...period, supplier, inline: inline ? 1 : '' })}`;
 
 /** Same report, as a raw-data-shaped .csv/.xlsx download - same shared body
  *  as the PDF (backend/batch_export.py), so the numbers can never diverge. */
-export const batchReportCsvUrl = (month, supplier) =>
-  `${API_BASE}/reports/batch.csv${qs({ month, supplier })}`;
-export const batchReportXlsxUrl = (month, supplier) =>
-  `${API_BASE}/reports/batch.xlsx${qs({ month, supplier })}`;
+export const batchReportCsvUrl = (period, supplier) =>
+  `${API_BASE}/reports/batch.csv${qs({ ...period, supplier })}`;
+export const batchReportXlsxUrl = (period, supplier) =>
+  `${API_BASE}/reports/batch.xlsx${qs({ ...period, supplier })}`;
 
 // ---------------------------------------------------------------- FSN
 

@@ -24,11 +24,11 @@ const CUSTOM_DEFAULT_MONTHS = 6;
  */
 export default function FilterBar({
   filters, setFilters, pageTitle, show = [],
-  forecastableSuppliers = false, supplierMonth, action = null,
+  forecastableSuppliers = false, supplierPeriod, action = null,
 }) {
   const { data: suppliers } = useData(
-    () => getSuppliers({ forecastable: forecastableSuppliers, month: supplierMonth }),
-    [forecastableSuppliers, supplierMonth], []);
+    () => getSuppliers({ forecastable: forecastableSuppliers, period: supplierPeriod }),
+    [forecastableSuppliers, supplierPeriod?.month, supplierPeriod?.start, supplierPeriod?.end], []);
   const { data: categories } = useData(getCategories, [], []);
   const { data: months } = useData(getMonths, [], []);
 

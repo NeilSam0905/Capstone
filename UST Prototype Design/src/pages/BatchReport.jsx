@@ -3,14 +3,20 @@ import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import Icon from '../components/Icon';
 import { peso, num, longMonth, usDate } from '../lib/format';
+import { PERIOD_KINDS, periodParams, periodLabel, periodSlug } from '../lib/reportPeriod';
 import { ALL_SUPPLIERS } from '../services/dataService';
 
-/** `month` / `setMonth` come from App: the topbar's supplier list is scoped to
- *  the month on show, so the two have to read the same value. */
-export default function BatchReport({ filters, month, setMonth }) {
+/** `period` / `setPeriod` come from App: the topbar's supplier list is scoped
+ *  to the period on show, so the two have to read the same value. `period` is
+ *  { kind: 'day' | 'week' | 'month', month, date } (lib/reportPeriod.js), and
+ *  setPeriod merges a change into it, so switching Day / Week / Month keeps
+ *  the day and the month already picked. */
+export default function BatchReport({ filters, period, setPeriod }) {
   const { data: months } = useData(getMonths, [], []);
   const { data: meta } = useData(getMeta, []);
-  const selected = month ?? months[months.length - 1] ?? null;
+  const selected = periodParams(period);
+  const label = periodLabel(selected);
+  const [firstSale, lastSale] = meta?.sales_span ?? [];
 
   // The topbar's supplier, or undefined for all of them. It is sent to the
   // server rather than applied to the response so the three exports below
@@ -21,7 +27,7 @@ export default function BatchReport({ filters, month, setMonth }) {
 
   const { data: report, loading } = useData(
     () => (selected ? getBatchReport(selected, supplier) : Promise.resolve([])),
-    [selected, supplier],
+    [selected?.month, selected?.start, selected?.end, supplier],
     []
   );
 
@@ -48,7 +54,7 @@ export default function BatchReport({ filters, month, setMonth }) {
   }
   // Filtered exports get the supplier in the filename too, so a folder of
   // downloads does not end up with several different reports under one name.
-  const stem = `USTore_Batch_Sales_Report_${selected}`
+  const stem = `USTore_Batch_Sales_Report_${periodSlug(selected)}`
     + (supplier ? `_${supplier.replace(/[^\w]+/g, '_').replace(/^_|_$/g, '')}` : '');
   const downloadPdf = () => download(batchReportPdfUrl(selected, { supplier }), `${stem}.pdf`);
   const downloadCsv = () => download(batchReportCsvUrl(selected, supplier), `${stem}.csv`);
@@ -58,14 +64,37 @@ export default function BatchReport({ filters, month, setMonth }) {
     <div className="stack">
       {/* Controls */}
       <div className="card-h" style={{ marginBottom: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span className="section-h">Month</span>
-          <div className="filter">
-            <select value={selected ?? ''} onChange={e => setMonth(e.target.value)} style={{ minWidth: 170 }}>
-              {months.map(m => <option key={m} value={m}>{longMonth(m)}</option>)}
-            </select>
-            <span className="filter__chev">▾</span>
+        <div className="report-period">
+          <span className="section-h">Period</span>
+          <div className="period-tabs" role="tablist" aria-label="Report period">
+            {PERIOD_KINDS.map(([key, name]) => (
+              <button key={key} type="button" role="tab" aria-selected={period.kind === key}
+                      className={'period-tab' + (period.kind === key ? ' is-active' : '')}
+                      onClick={() => setPeriod({ kind: key })}>
+                {name}
+              </button>
+            ))}
           </div>
+          {period.kind === 'month' ? (
+            <div className="filter">
+              <select value={period.month ?? ''} onChange={e => setPeriod({ month: e.target.value })}
+                      aria-label="Month" style={{ minWidth: 170 }}>
+                {months.map(m => <option key={m} value={m}>{longMonth(m)}</option>)}
+              </select>
+              <span className="filter__chev">▾</span>
+            </div>
+          ) : (
+            // Any day picks its week: the week is the Monday to Sunday that
+            // holds it, named beside the picker so it is clear which one.
+            <div className="filter">
+              <input type="date" value={period.date ?? ''} min={firstSale} max={lastSale}
+                     aria-label={period.kind === 'week' ? 'A day in the week' : 'Day'}
+                     onChange={e => e.target.value && setPeriod({ date: e.target.value })} />
+            </div>
+          )}
+          {period.kind === 'week' && selected && (
+            <span className="hint">Mon – Sun, {label}</span>
+          )}
         </div>
         <div className="btn-row">
           {/* Both hit the same server-rendered PDF (backend/batch_pdf.py, fpdf2
@@ -114,14 +143,14 @@ export default function BatchReport({ filters, month, setMonth }) {
       <div className="card card__pad">
         <div className="card-h" style={{ marginBottom: 0, alignItems: 'flex-start' }}>
           <div>
-            <div className="section-title" style={{ fontSize: 16 }}>USTore Monthly Batch Sales Report</div>
+            <div className="section-title" style={{ fontSize: 16 }}>USTore Batch Sales Report</div>
             <div className="hint" style={{ marginTop: 4 }}>
               For UST Purchasing Office and Finance Department — internal supplier remittance reference
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
             <div className="hint">Period</div>
-            <div style={{ fontWeight: 800, fontSize: 14 }}>{selected ? longMonth(selected) : '—'}</div>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>{label}</div>
             {meta && <div className="hint" style={{ marginTop: 3 }}>As of: {usDate(meta.generated_at)}</div>}
           </div>
         </div>
@@ -130,8 +159,8 @@ export default function BatchReport({ filters, month, setMonth }) {
       {loading ? <Loading label="Building report…" /> : report.length === 0 ? (
         <div className="empty">
           {supplier
-            ? `${supplier} recorded no sales in ${selected ? longMonth(selected) : 'this period'}.`
-            : `No sales were recorded in ${selected ? longMonth(selected) : 'this period'}.`}
+            ? `${supplier} recorded no sales for ${selected ? label : 'this period'}.`
+            : `No sales were recorded for ${selected ? label : 'this period'}.`}
         </div>
       ) : (
         <>
@@ -207,7 +236,7 @@ export default function BatchReport({ filters, month, setMonth }) {
                       changed, since the value is the API's to report. */}
                   <Icon name="file" size={12} /> Source: {(meta?.source ?? 'ustore.db').replace(/\s*\(.*\)\s*$/, '')}
                 </div>
-                <div className="hint">Period: {selected ? longMonth(selected) : '—'}</div>
+                <div className="hint">Period: {label}</div>
                 <div className="hint">Prepared for: UST Purchasing Office / Finance Department</div>
               </div>
               <div className="hint" style={{ textAlign: 'right' }}>

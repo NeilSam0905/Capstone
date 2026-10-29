@@ -21,6 +21,7 @@ import {
 } from './services/dataService';
 import brandMark from './assets/ustore-mark.png';
 import { displayUser } from './lib/format';
+import { periodParams } from './lib/reportPeriod';
 
 // Shell markup and class names come from the redesign prototype
 // ("design-reference/chrome.jsx"); only the routing is ours.
@@ -39,7 +40,7 @@ const PAGE_TITLES = {
   classification: 'FSN Classification',
   forecast:       'Demand Forecast',
   reorder:        'Reorder Alerts',
-  report:         'Monthly Batch Sales Report',
+  report:         'Batch Sales Report',
   powerbi:        'Analytics Dashboard (Power BI)',
 };
 
@@ -60,9 +61,9 @@ const UNFILTERED = {
  *  Only the pages whose queries actually read a filter offer it:
  *   - forecast has no date range because the model forecasts the next month
  *     and nothing else; a history window cannot change that horizon.
- *   - report takes supplier but no date range: it is a single-month document
- *     with its own month picker, and a second date control beside that one
- *     could only contradict it.
+ *   - report takes supplier but no date range: it is a single day, week or
+ *     month with its own period picker, and a second date control beside
+ *     that one could only contradict it.
  *   - reorder and powerbi take no topbar filters at all. Reorder is a
  *     stock-position decision about every item, and the Power BI report
  *     carries its own slicers.
@@ -166,16 +167,25 @@ function Shell({ user, signOut }) {
 }
 
 function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut }) {
-  const { error: connectionError } = useData(getMeta, []);
+  const { data: meta, error: connectionError } = useData(getMeta, []);
 
-  // The batch report's month lives here rather than inside that page because
-  // the topbar needs it too: its supplier list is scoped to the month on
-  // show. Both readers therefore have to see the same value, and the page
-  // alone cannot supply one to a sibling above it. (getMonths is cached, so
-  // BatchReport asking for the same list again costs no request.)
+  // The batch report's period lives here rather than inside that page
+  // because the topbar needs it too: its supplier list is scoped to the
+  // period on show. Both readers therefore have to see the same value, and
+  // the page alone cannot supply one to a sibling above it. (getMonths and
+  // getMeta are cached, so BatchReport asking again costs no request.)
+  //
+  // Until the reader picks one, it is the latest month with sales, and the
+  // day/week views open on the last day with sales.
   const { data: months } = useData(getMonths, [], []);
-  const [reportMonth, setReportMonth] = useState(null);
-  const selectedMonth = reportMonth ?? months[months.length - 1] ?? null;
+  const [reportChoice, setReportChoice] = useState({ kind: 'month', month: null, date: null });
+  const reportPeriod = useMemo(() => ({
+    kind: reportChoice.kind,
+    month: reportChoice.month ?? months[months.length - 1] ?? null,
+    date: reportChoice.date ?? meta?.sales_span?.[1] ?? null,
+  }), [reportChoice, months, meta]);
+  const reportParams = useMemo(() => periodParams(reportPeriod), [reportPeriod]);
+  const setReportPeriod = useCallback(change => setReportChoice(p => ({ ...p, ...change })), []);
 
   // The advisories are the prescriptive half of the dashboard, so they are
   // one click away on every page, through the topbar's Advisories button.
@@ -265,7 +275,7 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
           pageTitle={PAGE_TITLES[page]}
           show={shown}
           forecastableSuppliers={page === 'forecast'}
-          supplierMonth={page === 'report' ? selectedMonth : undefined}
+          supplierPeriod={page === 'report' ? reportParams ?? undefined : undefined}
           action={<AdvisoriesButton onClick={openAdvisories} />}
         />
         <AdvisoriesModal open={advisoriesOpen} onClose={closeAdvisories} page={page} setPage={setPage} />
@@ -279,7 +289,7 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
             setPage={setPage}
             setView={setView}
             user={user}
-            {...(page === 'report' ? { month: selectedMonth, setMonth: setReportMonth } : {})}
+            {...(page === 'report' ? { period: reportPeriod, setPeriod: setReportPeriod } : {})}
           />
         </div>
       </div>

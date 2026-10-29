@@ -1,5 +1,5 @@
 """
-batch_pdf.py — renders the monthly Batch Sales Report as a PDF.
+batch_pdf.py — renders the Batch Sales Report as a PDF.
 
 This is the document the **UST Purchasing Office** and **Finance Department**
 work from: Purchasing issues the Purchase Orders and Finance cuts the cheques,
@@ -40,6 +40,7 @@ the store's sheet - the reason this stays inside the BIR constraint: it is an
 internal counting document, not an invoice.
 """
 import os
+from datetime import date, timedelta
 from pathlib import Path
 
 from fpdf import FPDF
@@ -64,6 +65,112 @@ def short_month(iso_month):
         return f"{MONTHS[int(m) - 1][:3]} {y}"
     except (ValueError, IndexError):
         return iso_month
+
+
+# ----------------------------------------------------------------- periods
+#
+# A report covers a PERIOD: a month as 'YYYY-MM' (the store's own TBS sheet),
+# or a span of days as a (start, end) pair of ISO dates - one day is
+# (d, d), a week is Monday to Sunday. Every label the documents print is
+# derived here, so the screen's period, the PDF's header and the sheet's tab
+# can never name different things.
+
+WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _day(iso):
+    return date(*(int(part) for part in iso.split("-")))
+
+
+def period_span(period):
+    """(first, last) ISO dates the period covers, inclusive."""
+    if isinstance(period, str):
+        first = _day(f"{period}-01")
+        nxt = date(first.year + first.month // 12, first.month % 12 + 1, 1)
+        return first.isoformat(), (nxt - timedelta(days=1)).isoformat()
+    return tuple(period)
+
+
+def _md(d, short=False):
+    """'July 6' / 'Jul 6'."""
+    name = MONTHS[d.month - 1]
+    return f"{name[:3] if short else name} {d.day}"
+
+
+def _range_label(start, end, short=False):
+    """'July 6 – 12, 2026', 'June 29 – July 5, 2026',
+    'December 28, 2026 – January 3, 2027'."""
+    if start == end:
+        return f"{_md(start, short)}, {start.year}"
+    if start.year != end.year:
+        return f"{_md(start, short)}, {start.year} – {_md(end, short)}, {end.year}"
+    tail = str(end.day) if start.month == end.month else _md(end, short)
+    return f"{_md(start, short)} – {tail}, {end.year}"
+
+
+def period_label(period):
+    """How the documents name the period: 'July 2026', 'Friday, July 3, 2026'
+    or 'July 6 – 12, 2026'."""
+    if isinstance(period, str):
+        return long_month(period)
+    start, end = (_day(d) for d in period)
+    if start == end:
+        return f"{WEEKDAYS[start.weekday()]}, {_range_label(start, end)}"
+    return _range_label(start, end)
+
+
+def period_short(period):
+    """The grid's top-left header cell: 'Jul 2026', 'Jul 3, 2026',
+    'Jul 6 – 12, 2026'."""
+    if isinstance(period, str):
+        return short_month(period)
+    return _range_label(*(_day(d) for d in period), short=True)
+
+
+def period_slug(period):
+    """For filenames: '2026-07', '2026-07-03', '2026-07-06_to_2026-07-12'."""
+    if isinstance(period, str):
+        return period
+    start, end = period
+    return start if start == end else f"{start}_to_{end}"
+
+
+# ------------------------------------------------------------ measuring
+#
+# The grid is laid out from the width its text actually takes in the sheet's
+# font, so the .xlsx and the PDF agree on which item names need a second line
+# and which day columns need widening for a three-digit count.
+
+_measurer = None
+
+
+def text_width(value, size=12, style="", family="narrow"):
+    """Width of `value` in points, in the sheet's own font when Windows has
+    it (Helvetica, which is wider, otherwise - so the layout errs roomy)."""
+    global _measurer
+    if _measurer is None:
+        _measurer = _Sheet("2000-01")
+    _measurer.use(family, style, size)
+    return _measurer.get_string_width(_measurer.t(value))
+
+
+def wrap_lines(value, room, size=12, style="", family="narrow"):
+    """`value` broken into lines no wider than `room` points, at spaces where
+    it can be and inside a word only when the word alone is too wide - the
+    way Excel's wrap_text breaks a cell."""
+    lines = []
+    for word in str(value).split():
+        if lines and text_width(f"{lines[-1]} {word}", size, style, family) <= room:
+            lines[-1] += f" {word}"
+            continue
+        while text_width(word, size, style, family) > room and len(word) > 1:
+            cut = len(word) - 1
+            while cut > 1 and text_width(word[:cut], size, style, family) > room:
+                cut -= 1
+            lines.append(word[:cut])
+            word = word[cut:]
+        lines.append(word)
+    return lines or [""]
 
 
 def _txt(value):
@@ -105,16 +212,16 @@ def _font_dir():
 class _Sheet(FPDF):
     """A4 landscape in points, with the sheet's page header and footer."""
 
-    def __init__(self, month):
+    def __init__(self, period):
         super().__init__(orientation="L", unit="pt", format="A4")
         from batch_export import MARGIN_IN, page_header
 
-        self.month = month
+        self.period = period
         self.margin = {k: v * 72 for k, v in MARGIN_IN.items()}
-        self.head_left, self.head_right = page_header(month)
+        self.head_left, self.head_right = page_header(period)
         self.set_auto_page_break(False)
         self.set_margins(self.margin["left"], self.margin["top"], self.margin["right"])
-        self.set_title(f"USTore Batch Sales Report - {long_month(month)}")
+        self.set_title(f"USTore Batch Sales Report - {period_label(period)}")
         self.set_creator("USTore Inventory Analytics")
         self.unicode = self._load_fonts()
 
@@ -254,6 +361,28 @@ class _Grid:
                 value = value[:-1]
             pdf.text(self.x[col] + pad, base, value)
 
+    def centred(self, col, y, h, lines, line_h, first_h, size=12, align="L", colour="000000",
+                style=""):
+        """Lines of text centred top to bottom in the cell, as a wrapped cell
+        with vertical="center" prints: the first line `first_h` points tall
+        (the sheet's row height), each further one `line_h`."""
+        pdf, s = self.pdf, self.s
+        pdf.use("narrow", style, size * s)
+        pdf.set_text_color(*_rgb(colour))
+        pad = 1.5 * s
+        block = (first_h + line_h * (len(lines) - 1)) * s
+        base = y + (h - block) / 2 + (first_h - 0.25 * size - 1.5) * s
+        for k, line in enumerate(lines):
+            line = pdf.t(line)
+            width = pdf.get_string_width(line)
+            if align == "C":
+                x = self.x[col] + (self.w[col] - width) / 2
+            elif align == "R":
+                x = self.x[col] + self.w[col] - pad - width
+            else:
+                x = self.x[col] + pad
+            pdf.text(x, base + line_h * s * k, line)
+
     def middle(self, col, y, h, lines, size, colour="000000", family="narrow", style="B"):
         """Centred both ways, several lines - the header labels."""
         pdf = self.pdf
@@ -293,16 +422,17 @@ class _Grid:
 
 # ------------------------------------------------------------------ render
 
-def render(report, month, daily=None):
-    """report -> PDF bytes, drawn as the .xlsx prints.
+def render(report, period, daily=None):
+    """report -> PDF bytes, drawn as the .xlsx prints. `period` is a month
+    ('YYYY-MM') or a (start, end) span of days.
 
     `report` is build_batch_report()'s output and `daily` is
     build_batch_daily()'s. Without `daily` the grid carries no day columns,
     as the sheet does."""
     from batch_export import (
-        CALENDAR_KEY, HEADER_FILL, ROW_H, SUPPLIER_FILL, TOTAL_FILL, WIDTH,
-        grid_rows, grid_widths, ink_on, item_units, legend_rows, page_starts,
-        print_scale, col_points,
+        CALENDAR_KEY, HEADER_FILL, ITEM_LINE_PT, ROW_H, SUPPLIER_FILL, TOTAL_FILL, WIDTH,
+        fitted_widths, grid_rows, ink_on, item_lines, item_units, legend_rows, page_starts,
+        print_scale, row_height, col_points,
     )
 
     daily = daily or {"dates": [], "marks": {}, "quantities": {}, "selling_days": 0}
@@ -314,14 +444,14 @@ def render(report, month, daily=None):
     cream = SUPPLIER_FILL.fgColor.rgb[-6:]
     yellow = TOTAL_FILL.fgColor.rgb[-6:]
 
-    scale = print_scale(len(days))
+    widths = fitted_widths(report, daily)
+    scale = print_scale(len(days), widths)
     rows = grid_rows(report)
     starts = set(page_starts(rows, scale))
 
-    pdf = _Sheet(month)
+    pdf = _Sheet(period)
     pdf.alias_nb_pages()
 
-    widths = grid_widths(len(days))
     avail = pdf.w - pdf.margin["left"] - pdf.margin["right"]
     grid_w = sum(col_points(w) for w in widths) * scale
     g = _Grid(pdf, scale, widths, pdf.margin["left"] + max(0.0, (avail - grid_w) / 2))
@@ -338,7 +468,7 @@ def render(report, month, daily=None):
                 g.fill(first_day + k, y, h, colour)
         for col in range(n):
             g.box(col, y, h)
-        g.middle(0, y, h, [short_month(month)], 12)
+        g.middle(0, y, h, g.wrap(0, period_short(period), 12), 12)
         for k, iso in enumerate(days):
             colour = fills.get(marks.get(iso))
             g.rotated(first_day + k, y, h, f"{MONTHS[int(iso[5:7]) - 1][:3]}-{int(iso[8:])}", 12,
@@ -357,10 +487,10 @@ def render(report, month, daily=None):
     for i, (kind, entry, item) in enumerate(rows):
         if i + 2 in starts:
             y = new_page()
-        h = ROW_H[kind] * scale
+        h = row_height(kind, item) * scale
 
         if kind == "empty":
-            g.text(0, y, h, f"No sales were recorded for {long_month(month)}.", style="I",
+            g.text(0, y, h, f"No sales were recorded for {period_label(period)}.", style="I",
                    span_to=n)
 
         elif kind == "supplier":
@@ -384,21 +514,24 @@ def render(report, month, daily=None):
                 colour = fills.get(marks.get(iso))
                 if colour:
                     g.fill(first_day + k, y, h, colour)
-            # the name runs on over the empty day cells, as in Excel
-            filled = [k for k, iso in enumerate(days) if by_date.get(iso)]
-            span = first_day + filled[0] if filled else total_col
-            g.row_box(range(n), y, h, run=(0, g.reach(0, item["item_name"], span_to=span)))
-            g.text(0, y, h, item["item_name"], span_to=span)
+            # The name wraps inside its own column, as the sheet's wrap_text
+            # cell does, and every figure sits level with its middle.
+            g.row_box(range(n), y, h)
+
+            def put(col, lines, align="C", colour="000000"):
+                g.centred(col, y, h, lines, ITEM_LINE_PT, ROW_H["item"], align=align,
+                          colour=colour)
+
+            put(0, item_lines(item["item_name"]), align="L")
             for k, iso in enumerate(days):
                 v = by_date.get(iso)
                 if v:
                     colour = fills.get(marks.get(iso))
-                    g.text(first_day + k, y, h, _general(v), align="C",
-                           colour=ink_on(colour) if colour else "000000")
-            g.text(total_col, y, h, _general(units), align="C")
+                    put(first_day + k, [_general(v)], colour=ink_on(colour) if colour else "000000")
+            put(total_col, [_general(units)])
             if price is not None:
-                g.text(price_col, y, h, _money(price), align="C")
-                g.text(remit_col, y, h, _money(remit), align="C")
+                put(price_col, [_money(price)])
+                put(remit_col, [_money(remit)])
 
         elif kind in ("total", "grand"):
             if kind == "total":
@@ -429,7 +562,7 @@ def render(report, month, daily=None):
     lw = [WIDTH["swatch"], WIDTH["label"]]
     lg_w = sum(col_points(w) for w in lw) * scale
     lg = _Grid(pdf, scale, lw, pdf.margin["left"] + max(0.0, (avail - lg_w) / 2))
-    heights = [ROW_H["head"]] + [ROW_H[k] for k, _, _ in rows]
+    heights = [ROW_H["head"]] + [row_height(k, it) for k, _, it in rows]
     y = pdf.margin["top"]
     for i, (style, colour, text, note) in enumerate(legend):
         h = (heights[i] if i < len(heights) else ROW_H["legend"]) * scale
