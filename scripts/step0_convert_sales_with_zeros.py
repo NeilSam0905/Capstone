@@ -297,11 +297,32 @@ def plan_sheets(files):
     return plan, notes
 
 
-def convert_sheet(ws, sheet_label, warnings, density_log):
+def label_column(ws):
+    """The column holding the item and supplier names: A, unless A only
+    numbers the rows. AUGUST 2026 - TBS has 1, 2, 3 ... down column A and
+    the names in B; read from A, every row of it was skipped as an item
+    "before any supplier". Decided from the body, as day_status.py tells
+    the label column from the date columns: names are text, a row number
+    is not."""
+    numbers = names = 0
+    for r in range(2, min(ws.max_row, 60) + 1):
+        value = ws.cell(r, 1).value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            numbers += 1
+        elif isinstance(value, str) and value.strip():
+            names += 1
+    return 2 if numbers > names else 1
+
+
+def convert_sheet(ws, sheet_label, warnings, density_log, tallied=None):
+    """Yields (sort key, date, item, quantity, supplier). `tallied`, a set if
+    given, receives every date with at least one cell filled in - a 0 typed
+    in counts, a blank does not (see drop_untallied_tail)."""
+    first = label_column(ws)
     date_cols = []
     relevant_cols = []  # date/meta columns only - excludes stray trailing
                          # annotation columns like "LEGEND" comments
-    for c in range(2, ws.max_column + 1):
+    for c in range(first + 1, ws.max_column + 1):
         header = ws.cell(1, c).value
         kind, d = parse_date_header(header)
         if kind:
@@ -323,7 +344,7 @@ def convert_sheet(ws, sheet_label, warnings, density_log):
     supplier = None
     prev_was_header_row = False
     for r in range(2, ws.max_row + 1):
-        label = ws.cell(r, 1).value
+        label = ws.cell(r, first).value
         if label is None or str(label).strip() == "":
             continue
         label = str(label).strip()
@@ -366,6 +387,8 @@ def convert_sheet(ws, sheet_label, warnings, density_log):
                     yield (1, 0), "NO DATE", label, qty, supplier
                 continue
 
+            if qty is not None and tallied is not None:
+                tallied.add(obs.strftime("%Y-%m-%d"))
             if qty is None:
                 if is_dense:
                     qty = 0.0
@@ -386,9 +409,10 @@ def sheet_item_prices(ws):
             break
     if price_col is None:
         return []
+    first = label_column(ws)
     out = []
     for r in range(2, ws.max_row + 1):
-        label = ws.cell(r, 1).value
+        label = ws.cell(r, first).value
         if label is None:
             continue
         label = str(label).strip()
@@ -430,6 +454,30 @@ def may2024_dsr_prices(wb):
     return out
 
 
+def drop_untallied_tail(rows, tallied, sheet_label, warnings):
+    """The month still being tallied, without the blank days at its end.
+
+    The store adds a month's sheet with every date column of the month in
+    place and fills it in day by day, so mid-month the columns past today
+    are blank - OCTOBER 2026 - TBS is filled in up to the 18th and empty from
+    the 19th to the 31st. A dense sheet reads a blank as "sold zero", which
+    would record two weeks the store has not reached yet as two weeks of no
+    demand. So the date columns after the last one with anything in it
+    (`tallied`, from convert_sheet) are left out; a 0 typed in is a tally and
+    is kept. Only the newest month is cut this way: in an older month a blank
+    tail is the store shut at the end of it, a real zero."""
+    if not tallied:
+        return rows
+    last = max(tallied)
+    kept = [row for row in rows if row[1] == "NO DATE" or row[1] <= last]
+    cut = sorted({row[1] for row in rows} - {row[1] for row in kept})
+    if cut:
+        warnings.append(f"[{sheet_label}] newest month: {len(cut)} blank day(s) after the last "
+                        f"one filled in ({cut[0]} to {cut[-1]}) - not tallied yet, so left out "
+                        f"rather than read as zero sales")
+    return kept
+
+
 def write_rows(path, header, rows):
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -450,6 +498,7 @@ def convert(plan, out_path, prices=None):
     warnings = []
     density_log = []
     per_sheet = []
+    converted = []                     # (month, sheet label, rows, tallied dates), plan order
 
     for fn, sheet_names in plan:
         wb = openpyxl.load_workbook(fn, read_only=True, data_only=True)
@@ -461,18 +510,28 @@ def convert(plan, out_path, prices=None):
             for sn in sheet_names:
                 ws = SheetGrid(wb[sn])
                 label = f"{short} :: {sn}"
-                count = 0
-                for sort_key, date_str, item, qty, supplier in convert_sheet(ws, label, warnings, density_log):
-                    key = (date_str, item, supplier)
-                    agg[key] += qty
-                    meta[key] = sort_key
-                    count += 1
-                per_sheet.append((short, sn, count))
+                tallied = set()
+                converted.append((sheet_month(ws), label,
+                                  list(convert_sheet(ws, label, warnings, density_log, tallied)),
+                                  tallied))
+                per_sheet.append((short, sn))
                 if prices is not None:
                     prices.setdefault("tbs", []).extend(
                         (item, sheet_month(ws), price) for item, price in sheet_item_prices(ws))
         finally:
             wb.close()
+
+    newest = max((month for month, _label, _rows, _tallied in converted if month), default=None)
+    counts = []
+    for month, label, sheet_rows, tallied in converted:
+        if month == newest:
+            sheet_rows = drop_untallied_tail(sheet_rows, tallied, label, warnings)
+        for sort_key, date_str, item, qty, supplier in sheet_rows:
+            key = (date_str, item, supplier)
+            agg[key] += qty
+            meta[key] = sort_key
+        counts.append(len(sheet_rows))
+    per_sheet = [(short, sn, n) for (short, sn), n in zip(per_sheet, counts)]
 
     rows = sorted(
         ((meta[k], k) for k in agg),

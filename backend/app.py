@@ -423,13 +423,13 @@ def get_meta():
 def get_suppliers():
     c = con()
 
-    # ?month=YYYY-MM, or ?start=&end=YYYY-MM-DD — only suppliers with a sale
-    # in that period, for the batch report's filter. Taken from
+    # ?year=YYYY, ?month=YYYY-MM, or ?start=&end=YYYY-MM-DD — only suppliers
+    # with a sale in that period, for the batch report's filter. Taken from
     # build_batch_report()'s own output rather than a query of its own, so the
     # dropdown cannot offer a supplier whose section that report would then
     # come back empty for. An unparseable period is ignored rather than
     # rejected: a filter list is not worth a failed screen.
-    if request.args.get("month") or request.args.get("start"):
+    if request.args.get("year") or request.args.get("month") or request.args.get("start"):
         period, error = _batch_period()
         if not error:
             sold = sorted({e["supplier"] for e in build_batch_report(c, period)})
@@ -808,19 +808,20 @@ def get_overview_performance():
     })
 
 
-# A batch report covers a month, one day or one week. Longer spans are left
-# to the month view: the grid has a column per day, and past a month it no
-# longer fits a page at a readable size.
+# A batch report covers a year, a month, one day or one week. A span of days
+# stops at a month: its grid has a column per day, and past a month it no
+# longer fits a page at a readable size. A year's grid has a column per month.
 BATCH_MAX_DAYS = 31
+YEAR_RE = re.compile(r"^\d{4}$")
 
 
 def _batch_period():
     """The report period the request asks for, as (period, error).
 
-    ?month=YYYY-MM is a month; ?start=&end=YYYY-MM-DD a span of days (one
-    day is start == end, a week Monday to Sunday). The period is what
-    batch_pdf.period_span() and the renderers take: the month string, or the
-    (start, end) pair."""
+    ?year=YYYY is a year; ?month=YYYY-MM a month; ?start=&end=YYYY-MM-DD a
+    span of days (one day is start == end, a week Monday to Sunday). The
+    period is what batch_pdf.period_span() and the renderers take: the year
+    or month string, or the (start, end) pair."""
     start, end = request.args.get("start"), request.args.get("end")
     if start or end:
         try:
@@ -834,9 +835,14 @@ def _batch_period():
         if (last - first).days >= BATCH_MAX_DAYS:
             return None, f"A batch report covers at most {BATCH_MAX_DAYS} days; use month= for a month."
         return (start, end), None
+    year = request.args.get("year")
+    if year is not None:
+        if not YEAR_RE.match(year):
+            return None, "year= must be a year, YYYY."
+        return year, None
     month = request.args.get("month")
     if not month or not validation.ISO_MONTH_RE.match(month):
-        return None, "month=YYYY-MM, or start= and end=YYYY-MM-DD, is required."
+        return None, "year=YYYY, month=YYYY-MM, or start= and end=YYYY-MM-DD, is required."
     return month, None
 
 
@@ -849,7 +855,8 @@ def build_batch_report(c, period, only_supplier=None):
     /api/reports/batch (JSON, for the screen) and /api/reports/batch.pdf
     (the document Purchasing and Finance actually receive). Neither may
     compute this differently from the other. `period` is a month
-    ('YYYY-MM') or a (start, end) span of days; see _batch_period().
+    ('YYYY-MM'), a year ('YYYY') or a (start, end) span of days; see
+    _batch_period().
 
     `only_supplier` narrows the report to that supplier's section. It is applied
     here, in the shared body, rather than on the screen: a filter that trimmed
@@ -958,9 +965,21 @@ def build_batch_daily(c, period):
         return None
 
     marks = {d["calendar_date"]: mark(d) for d in days}
+    columns = [d["calendar_date"] for d in days]
+
+    # A year is laid out a column per month, each the month's total. The
+    # marks stay per day: no month column is shaded, and the legend still
+    # counts the year's closed, event and exam days.
+    if batch_pdf.is_year(period):
+        columns = [f"{period}-{m:02d}" for m in range(1, 13)]
+        for product, per_day in by_product.items():
+            per_month = {}
+            for day, units in per_day.items():
+                per_month[day[:7]] = per_month.get(day[:7], 0) + units
+            by_product[product] = per_month
 
     return {
-        "dates": [d["calendar_date"] for d in days],
+        "dates": columns,
         "marks": {d: m for d, m in marks.items() if m},
         "quantities": by_product,
         # The store writes this in the legend block as "N DAYS". It counts

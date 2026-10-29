@@ -63,7 +63,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 from openpyxl.worksheet.pagebreak import Break
 
-from batch_pdf import (MONTHS, _day, _general, _money, period_label, period_short,
+from batch_pdf import (MONTHS, _day, _general, _money, is_year, period_label, period_short,
                        text_width, wrap_lines)
 
 COLUMNS = ["Supplier", "Item", "Quantity", "Item Price (PHP)", "For Remittance (PHP)"]
@@ -149,6 +149,7 @@ TOTAL_BOX = Border(left=MEDIUM, right=MEDIUM, top=MEDIUM, bottom=MEDIUM)
 MONEY = "#,##0.00"
 DAY_FMT = 'mmm"-"d'
 MONTH_FMT = "mmm yyyy"
+MONTH_COL_FMT = "mmm"
 
 # --- the colour key, shared by the XLSX and the PDF ------------------------
 #
@@ -193,10 +194,29 @@ def ink_on(hex_colour):
 _iso_to_date = _day
 
 
+# A grid column is a day ('YYYY-MM-DD') in every period but a year, whose
+# twelve columns are its months ('YYYY-MM'): a column per day would be 365
+# of them, far past what a page can print.
+
+def column_date(key):
+    """The date a column's header cell holds: the day, or its month's first."""
+    return _iso_to_date(key if len(key) == 10 else f"{key}-01")
+
+
+def column_label(key):
+    """A column's header as the sheet shows it: 'Jul-28' for a day, 'Jul'
+    for a month."""
+    name = MONTHS[int(key[5:7]) - 1][:3]
+    return f"{name}-{int(key[8:])}" if len(key) == 10 else name
+
+
 def _sheet_title(period):
-    """"OCTOBER 2025 - TBS" — the store's own tab naming; a day or a week is
-    named the same way, "JUL 3 2026 - TBS" / "JUL 6-12 2026 - TBS" (a tab
-    name holds 31 characters and no slash or colon)."""
+    """"OCTOBER 2025 - TBS" — the store's own tab naming; a year, a day or a
+    week is named the same way, "2026 - TBS", "JUL 3 2026 - TBS",
+    "JUL 6-12 2026 - TBS" (a tab name holds 31 characters and no slash or
+    colon)."""
+    if is_year(period):
+        return f"{period} - TBS"
     if isinstance(period, str):
         first = _iso_to_date(f"{period}-01")
         return f"{MONTHS[first.month - 1].upper()} {first.year} - TBS"
@@ -441,7 +461,8 @@ FOOTER_NOTE = "Unit counts only - not an invoice or official receipt."
 
 def render_xlsx(report, period, daily=None):
     """The period as the store's TBS grid, set up to print. `period` is a
-    month ('YYYY-MM') or a (start, end) span of days (batch_pdf.py).
+    month ('YYYY-MM'), a year ('YYYY') or a (start, end) span of days
+    (batch_pdf.py).
 
     `daily` is build_batch_daily()'s output. It is optional so a caller
     holding only the period's totals still gets a readable sheet — the grid
@@ -467,15 +488,15 @@ def render_xlsx(report, period, daily=None):
 
     # ---- header row -------------------------------------------------------
     # A month heads its sheet as the store's does, a date shown "mmm yyyy";
-    # a day or a week as its span in words.
-    if isinstance(period, str):
+    # a year, a day or a week as its span in words.
+    if isinstance(period, str) and not is_year(period):
         month_cell = ws.cell(1, 1, _iso_to_date(f"{period}-01"))
         month_cell.number_format = MONTH_FMT
     else:
         month_cell = ws.cell(1, 1, period_short(period))
     for offset, iso in enumerate(days):
-        cell = ws.cell(1, first_day_col + offset, _iso_to_date(iso))
-        cell.number_format = DAY_FMT
+        cell = ws.cell(1, first_day_col + offset, column_date(iso))
+        cell.number_format = DAY_FMT if len(iso) == 10 else MONTH_COL_FMT
         cell.alignment = Alignment(horizontal="center", vertical="center", textRotation=90)
         cell.border = BOX
         # A marked day takes its own colour; every other day takes the gold

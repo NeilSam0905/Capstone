@@ -8,12 +8,13 @@ import { ALL_SUPPLIERS } from '../services/dataService';
 
 /** `period` / `setPeriod` come from App: the topbar's supplier list is scoped
  *  to the period on show, so the two have to read the same value. `period` is
- *  { kind: 'day' | 'week' | 'month', month, date } (lib/reportPeriod.js), and
- *  setPeriod merges a change into it, so switching Day / Week / Month keeps
- *  the day and the month already picked. */
+ *  { kind: 'day' | 'week' | 'month' | 'year', month, date, year }
+ *  (lib/reportPeriod.js), and setPeriod merges a change into it, so switching
+ *  Day / Week / Month / Year keeps the day, month and year already picked. */
 export default function BatchReport({ filters, period, setPeriod }) {
   const { data: months } = useData(getMonths, [], []);
   const { data: meta } = useData(getMeta, []);
+  const years = [...new Set(months.map(m => m.slice(0, 4)))];
   const selected = periodParams(period);
   const label = periodLabel(selected);
   const [firstSale, lastSale] = meta?.sales_span ?? [];
@@ -27,7 +28,7 @@ export default function BatchReport({ filters, period, setPeriod }) {
 
   const { data: report, loading } = useData(
     () => (selected ? getBatchReport(selected, supplier) : Promise.resolve([])),
-    [selected?.month, selected?.start, selected?.end, supplier],
+    [selected?.year, selected?.month, selected?.start, selected?.end, supplier],
     []
   );
 
@@ -75,7 +76,15 @@ export default function BatchReport({ filters, period, setPeriod }) {
               </button>
             ))}
           </div>
-          {period.kind === 'month' ? (
+          {period.kind === 'year' ? (
+            <div className="filter">
+              <select value={period.year ?? ''} onChange={e => setPeriod({ year: e.target.value })}
+                      aria-label="Year" style={{ minWidth: 110 }}>
+                {years.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+              <span className="filter__chev">▾</span>
+            </div>
+          ) : period.kind === 'month' ? (
             <div className="filter">
               <select value={period.month ?? ''} onChange={e => setPeriod({ month: e.target.value })}
                       aria-label="Month" style={{ minWidth: 170 }}>
@@ -94,8 +103,7 @@ export default function BatchReport({ filters, period, setPeriod }) {
           )}
           {period.kind === 'week' && selected && (
             <span className="hint">Mon – Sun, {label}</span>
-          )}
-        </div>
+          )}        </div>
         <div className="btn-row">
           {/* Both hit the same server-rendered PDF (backend/batch_pdf.py, fpdf2
              — pure Python, no native dependency, which is what had blocked

@@ -186,15 +186,40 @@ def load_supplier_mapping():
             dict(zip(sm["raw_supplier"], sm["payment_status"])))
 
 
+# A payment status the sheet writes after a supplier's name, as most rows of
+# supplier_mapping.csv do: "STITCH CORP. (BLEEVES) (Consignment)".
+_STATUS_SUFFIX = re.compile(r"\s*\((CONSIGNMENT|PAID)\)\s*$", re.I)
+
+
+def provisional_supplier(raw):
+    """(supplier_name, payment_status) for a supplier string the mapping does
+    not have yet: the name as the sheet writes it, its payment status taken
+    from a "(Consignment)" / "(Paid)" suffix when there is one, else UNKNOWN."""
+    m = _STATUS_SUFFIX.search(raw)
+    if m:
+        return raw[:m.start()].strip() or raw, m.group(1).upper()
+    return raw, "UNKNOWN"
+
+
 def apply_supplier_mapping(sales, name_map, status_map):
+    """A supplier string the mapping does not know no longer stops the run,
+    as an unknown item name no longer does: a new academic year's workbook
+    brings new suppliers, and the sales of a whole update waited on someone
+    editing supplier_mapping.csv. The string is loaded as a provisional
+    supplier (provisional_supplier) and listed below; adding its row to
+    supplier_mapping.csv - by a person; nothing here writes that file -
+    replaces it on the next run, merging it into an existing supplier when
+    it is one under another spelling."""
     raw = sales["Supplier"].astype(str).str.strip()
     unknown = sorted(set(raw) - set(name_map))
     if unknown:
-        print("[supplier] UNMAPPED supplier strings:")
+        name_map, status_map = dict(name_map), dict(status_map)
+        print(f"[supplier] {len(unknown)} supplier string(s) not in {SUPPLIER_MAPPING_CSV}: "
+              f"loaded as provisional suppliers, named as the sheet names them. The run continues.")
         for u in unknown:
-            print(f"   - {u!r}")
-        sys.exit(f"ABORTING: {len(unknown)} supplier string(s) missing from "
-                 f"{SUPPLIER_MAPPING_CSV}. Add them there first.")
+            name_map[u], status_map[u] = provisional_supplier(u)
+            print(f"   - {u!r} -> supplier {name_map[u]!r}, payment status {status_map[u]} "
+                  f"({int((raw == u).sum())} rows) - add a row to {SUPPLIER_MAPPING_CSV} to confirm it")
     sales = sales.copy()
     sales["supplier_name"] = raw.map(name_map).replace("", pd.NA)
     sales["payment_status"] = raw.map(status_map).replace("", pd.NA)

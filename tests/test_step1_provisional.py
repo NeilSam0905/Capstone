@@ -4,6 +4,8 @@ tests/test_step1_provisional.py
 step1_apply_mapping.py, for a sheet that renamed or added items:
 
   - an unknown name becomes a provisional item instead of stopping the run;
+  - so does an unknown supplier string, named as the sheet names it, its
+    payment status read from a "(Consignment)" / "(Paid)" suffix;
   - a name typed with different capitals still matches its vocabulary row;
   - product_id stays with the item name across rebuilds. It used to be
     renumbered 1..N in name order, so one new name moved every later id
@@ -25,6 +27,15 @@ def test_unknown_names_become_provisional_items():
     assert unmatched == ["UST NEW TOTE"]
     filled = step1.load_as_provisional(mapped)
     assert filled["canonical_item_name"].tolist() == ["Tote (Viva)", "UST NEW TOTE"]
+
+
+def test_unknown_suppliers_become_provisional_suppliers():
+    sales = pd.DataFrame({"Supplier": ["JUC", "BAGS ALL YOU WANT", "NEW CO (Consignment)",
+                                       "BAGS ALL YOU WANT"]})
+    out = step1.apply_supplier_mapping(sales, {"JUC": "JUC"}, {"JUC": "PAID"})
+    assert out["supplier_name"].tolist() == ["JUC", "BAGS ALL YOU WANT", "NEW CO",
+                                             "BAGS ALL YOU WANT"]
+    assert out["payment_status"].tolist() == ["PAID", "UNKNOWN", "CONSIGNMENT", "UNKNOWN"]
 
 
 def test_capitals_and_spacing_still_match_the_vocabulary():

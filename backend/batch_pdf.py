@@ -70,10 +70,10 @@ def short_month(iso_month):
 # ----------------------------------------------------------------- periods
 #
 # A report covers a PERIOD: a month as 'YYYY-MM' (the store's own TBS sheet),
-# or a span of days as a (start, end) pair of ISO dates - one day is
-# (d, d), a week is Monday to Sunday. Every label the documents print is
-# derived here, so the screen's period, the PDF's header and the sheet's tab
-# can never name different things.
+# a year as 'YYYY', or a span of days as a (start, end) pair of ISO dates -
+# one day is (d, d), a week is Monday to Sunday. Every label the documents
+# print is derived here, so the screen's period, the PDF's header and the
+# sheet's tab can never name different things.
 
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -82,8 +82,15 @@ def _day(iso):
     return date(*(int(part) for part in iso.split("-")))
 
 
+def is_year(period):
+    """A year, 'YYYY' - the one period whose grid has a column per month."""
+    return isinstance(period, str) and len(period) == 4
+
+
 def period_span(period):
     """(first, last) ISO dates the period covers, inclusive."""
+    if is_year(period):
+        return f"{period}-01-01", f"{period}-12-31"
     if isinstance(period, str):
         first = _day(f"{period}-01")
         nxt = date(first.year + first.month // 12, first.month % 12 + 1, 1)
@@ -109,8 +116,10 @@ def _range_label(start, end, short=False):
 
 
 def period_label(period):
-    """How the documents name the period: 'July 2026', 'Friday, July 3, 2026'
-    or 'July 6 – 12, 2026'."""
+    """How the documents name the period: '2026', 'July 2026',
+    'Friday, July 3, 2026' or 'July 6 – 12, 2026'."""
+    if is_year(period):
+        return period
     if isinstance(period, str):
         return long_month(period)
     start, end = (_day(d) for d in period)
@@ -120,15 +129,18 @@ def period_label(period):
 
 
 def period_short(period):
-    """The grid's top-left header cell: 'Jul 2026', 'Jul 3, 2026',
+    """The grid's top-left header cell: '2026', 'Jul 2026', 'Jul 3, 2026',
     'Jul 6 – 12, 2026'."""
+    if is_year(period):
+        return period
     if isinstance(period, str):
         return short_month(period)
     return _range_label(*(_day(d) for d in period), short=True)
 
 
 def period_slug(period):
-    """For filenames: '2026-07', '2026-07-03', '2026-07-06_to_2026-07-12'."""
+    """For filenames: '2026', '2026-07', '2026-07-03',
+    '2026-07-06_to_2026-07-12'."""
     if isinstance(period, str):
         return period
     start, end = period
@@ -424,15 +436,15 @@ class _Grid:
 
 def render(report, period, daily=None):
     """report -> PDF bytes, drawn as the .xlsx prints. `period` is a month
-    ('YYYY-MM') or a (start, end) span of days.
+    ('YYYY-MM'), a year ('YYYY') or a (start, end) span of days.
 
     `report` is build_batch_report()'s output and `daily` is
     build_batch_daily()'s. Without `daily` the grid carries no day columns,
     as the sheet does."""
     from batch_export import (
         CALENDAR_KEY, HEADER_FILL, ITEM_LINE_PT, ROW_H, SUPPLIER_FILL, TOTAL_FILL, WIDTH,
-        fitted_widths, grid_rows, ink_on, item_lines, item_units, legend_rows, page_starts,
-        print_scale, row_height, col_points,
+        column_label, fitted_widths, grid_rows, ink_on, item_lines, item_units, legend_rows,
+        page_starts, print_scale, row_height, col_points,
     )
 
     daily = daily or {"dates": [], "marks": {}, "quantities": {}, "selling_days": 0}
@@ -471,7 +483,7 @@ def render(report, period, daily=None):
         g.middle(0, y, h, g.wrap(0, period_short(period), 12), 12)
         for k, iso in enumerate(days):
             colour = fills.get(marks.get(iso))
-            g.rotated(first_day + k, y, h, f"{MONTHS[int(iso[5:7]) - 1][:3]}-{int(iso[8:])}", 12,
+            g.rotated(first_day + k, y, h, column_label(iso), 12,
                       ink_on(colour) if colour else "000000")
         for col, label in ((total_col, "TOTAL QUANTITY"), (price_col, "ITEM PRICE"),
                            (remit_col, "FOR REMITTANCE")):

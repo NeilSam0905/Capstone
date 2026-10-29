@@ -175,14 +175,16 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
   // the page alone cannot supply one to a sibling above it. (getMonths and
   // getMeta are cached, so BatchReport asking again costs no request.)
   //
-  // Until the reader picks one, it is the latest month with sales, and the
-  // day/week views open on the last day with sales.
+  // Until the reader picks one, it is the latest month with sales, the
+  // day/week views open on the last day with sales, and the year view on
+  // that month's year.
   const { data: months } = useData(getMonths, [], []);
-  const [reportChoice, setReportChoice] = useState({ kind: 'month', month: null, date: null });
+  const [reportChoice, setReportChoice] = useState({ kind: 'month', month: null, date: null, year: null });
   const reportPeriod = useMemo(() => ({
     kind: reportChoice.kind,
     month: reportChoice.month ?? months[months.length - 1] ?? null,
     date: reportChoice.date ?? meta?.sales_span?.[1] ?? null,
+    year: reportChoice.year ?? months[months.length - 1]?.slice(0, 4) ?? null,
   }), [reportChoice, months, meta]);
   const reportParams = useMemo(() => periodParams(reportPeriod), [reportPeriod]);
   const setReportPeriod = useCallback(change => setReportChoice(p => ({ ...p, ...change })), []);

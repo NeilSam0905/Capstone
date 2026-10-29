@@ -28,7 +28,8 @@ export default function FilterBar({
 }) {
   const { data: suppliers } = useData(
     () => getSuppliers({ forecastable: forecastableSuppliers, period: supplierPeriod }),
-    [forecastableSuppliers, supplierPeriod?.month, supplierPeriod?.start, supplierPeriod?.end], []);
+    [forecastableSuppliers, supplierPeriod?.year, supplierPeriod?.month, supplierPeriod?.start,
+      supplierPeriod?.end], []);
   const { data: categories } = useData(getCategories, [], []);
   const { data: months } = useData(getMonths, [], []);
 

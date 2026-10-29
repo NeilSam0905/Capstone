@@ -10,7 +10,10 @@ of four), so next academic year's workbook needs no code change. Checked:
     step0 and keeps its CSV - instead of writing an empty one;
   - a month in two workbooks is read once, from the newer workbook;
   - the ITEM PRICE column is captured during conversion, so step1 opens no
-    workbook, and an unchanged set of workbooks is not converted again.
+    workbook, and an unchanged set of workbooks is not converted again;
+  - a sheet that numbers its rows down column A is read from column B;
+  - the newest month's blank days at the end (not tallied yet) are left
+    out rather than read as zero sales; an older month's are kept.
 ------------------------------------------------------------------
 """
 import datetime
@@ -129,3 +132,54 @@ def test_a_month_in_two_workbooks_is_read_once_from_the_newer(tmp_path):
     rows = out.read_text().splitlines()[1:]
     assert rows == ["2026-07-01,Test Tote,9,TEST SUPPLIER (CONSIGNMENT)",
                     "2026-07-02,Test Tote,0,TEST SUPPLIER (CONSIGNMENT)"]
+
+
+def month_sheet(wb, title, first_day, days, sold, numbered=False):
+    """A dense month: `days` date columns, the item sold `sold` (one value
+    per day, None for a blank cell) - optionally with a row number in A."""
+    ws = wb.create_sheet(title)
+    dates = [first_day + datetime.timedelta(days=k) for k in range(days)]
+    lead = [None] if numbered else []
+    ws.append(lead + [first_day, *dates, "TOTAL QUANTITY"])
+    ws.append(lead + ["TEST SUPPLIER"])
+    ws.append(([1] if numbered else []) + ["Test Tote", *sold, sum(q or 0 for q in sold)])
+    ws.append(([2] if numbered else []) + ["Test Cap", *sold, sum(q or 0 for q in sold)])
+    ws.append(lead + ["TOTAL"])
+
+
+def converted(tmp_path, wb):
+    path = tmp_path / "TBS.xlsx"
+    wb.save(path)
+    out = tmp_path / "sales.csv"
+    step0.convert(step0.plan_sheets([str(path)])[0], str(out))
+    return [line.split(",") for line in out.read_text().splitlines()[1:]]
+
+
+def test_row_numbers_in_column_a_are_not_item_names(tmp_path):
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    month_sheet(wb, "AUGUST 2026 - TBS", datetime.datetime(2026, 8, 1), 3, [2, None, 4],
+                numbered=True)
+    rows = converted(tmp_path, wb)
+    assert {r[1] for r in rows} == {"Test Tote", "Test Cap"}
+    assert {r[3] for r in rows} == {"TEST SUPPLIER"}
+    assert sum(float(r[2]) for r in rows if r[1] == "Test Tote") == 6
+
+
+def test_the_newest_months_blank_tail_is_not_read_as_zero_sales(tmp_path):
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    # Every day has a column, so both sheets are dense (blank = sold zero).
+    # September is over: its blank last two days are the store shut, real zeros.
+    month_sheet(wb, "SEPTEMBER 2026 - TBS", datetime.datetime(2026, 9, 1), 30,
+                [3] * 28 + [None, None])
+    # October is still being filled in: a 0 typed on the 11th is a tally, the
+    # blank 12th to 31st are days nobody has reached yet.
+    month_sheet(wb, "OCTOBER 2026 - TBS", datetime.datetime(2026, 10, 1), 31,
+                [2] * 9 + [None, 0] + [None] * 20)
+    rows = converted(tmp_path, wb)
+    september = sorted({r[0] for r in rows if r[0].startswith("2026-09")})
+    october = sorted({r[0] for r in rows if r[0].startswith("2026-10")})
+    assert (september[0], september[-1], len(september)) == ("2026-09-01", "2026-09-30", 30)
+    assert (october[0], october[-1], len(october)) == ("2026-10-01", "2026-10-11", 11)
+    assert [r[2] for r in rows if r[0] == "2026-10-10" and r[1] == "Test Tote"] == ["0"]

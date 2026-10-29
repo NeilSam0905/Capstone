@@ -10,7 +10,8 @@ CSV/db paths relative to cwd, not to its own file). Steps run with
 `sys.executable`, so they use whatever interpreter is running this Flask
 process — the same env the rest of the backend already depends on.
 
-step0_convert_sales_with_zeros.py, step4_forecast_model.py and
+step0_convert_sales_with_zeros.py, rebuild_extract_tbs.py (the colour
+legend, which reads rawdata/ as step0 does), step4_forecast_model.py and
 step4c_category_forecast.py are marked optional:
 
 - step0 reads the original TBS tally-sheet workbooks from a local
@@ -110,6 +111,13 @@ STEPS = [
     ("create_schema", "scripts/create_schema.py", "Build database schema", False, 120, "seconds"),
     ("populate_dim_date", "scripts/populate_dim_date.py", "Populate calendar dimension", False, 300, "seconds"),
     ("step0", "scripts/step0_convert_sales_with_zeros.py", "Convert raw tally sheets", True, DEFAULT_TIMEOUT_S, "~30 s, or seconds if no workbook changed"),
+    # The colour legend of every TBS sheet: which days the store marked NO
+    # OPERATION, a class suspension / EVM, an inventory day or a USTET selling
+    # day, into Dim_Day_Status (forecasting/day_status.py). It is what the
+    # Tally Interface's list of closed days reads beside the school calendar.
+    # Optional for the same reason as step0 - it reads rawdata/ - and after
+    # populate_dim_date, which fills the days no sheet covers.
+    ("daystatus", "scripts/rebuild_extract_tbs.py", "Read the tally sheets' colour legend", True, DEFAULT_TIMEOUT_S, "~25 s"),
     ("step1", "scripts/step1_apply_mapping.py", "Apply vocabulary + supplier mapping", False, DEFAULT_TIMEOUT_S, "~5 s"),
     ("allocation", "scripts/proportional_allocation.py", "Allocate price-grouped rows to SKUs", False, DEFAULT_TIMEOUT_S, "~10 s"),
     ("step2", "scripts/step2_load_fact_sales.py", "Load Fact_Sales", False, DEFAULT_TIMEOUT_S, "~30 s"),
@@ -231,6 +239,10 @@ def _summarise_error(step_id, script, stderr, returncode):
                 "(the rawdata/ folder isn't part of the repo). Skipped - the run "
                 "continued from the already-converted sales CSV in data/, which is "
                 "what every later step reads. Nothing is missing from the results.")
+    if step_id == "daystatus" and exc_type == "FileNotFoundError":
+        return ("The raw tally-sheet workbooks aren't on this machine, so their colour "
+                "legend could not be read. Skipped - the closed and suspension days "
+                "read from them before are kept as they were.")
 
     if exc_type in ("ModuleNotFoundError", "ImportError"):
         m = _MISSING_MODULE.search(exc_msg or "")

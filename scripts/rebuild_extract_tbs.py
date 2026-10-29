@@ -46,6 +46,8 @@ Assumptions, stated because they are assumptions
     suppliers through `data/supplier_mapping.csv`, both read-only.
 
 Run:  python scripts/rebuild_extract_tbs.py [--db ustore.db] [--no-db]
+      (the pipeline runs it after step0 as "daystatus", so a workbook added
+      to rawdata/ has its legend read on the next update)
 ------------------------------------------------------------------
 """
 from __future__ import annotations
@@ -168,12 +170,17 @@ def parse_tbs_sheet(ws, sheet, source, vocab, supp, override):
     days = header_dates_with_status(ws, override, value_columns=set(date_cols))
     status_by_date = {d.date: d for d in days}
 
+    # Names are in column A, or in B when A only numbers the rows
+    # (AUGUST 2026 - TBS) - as step0's label_column() decides it.
+    nums, strs, _ = _column_body(ws, row, 1)
+    first_col = 2 if nums > strs else 1
+
     sales, supplier = [], None
     for r in range(row + 1, (ws.max_row or 1) + 1):
-        if is_section_header(ws, r, 1, list(date_cols)):
-            supplier = canon_supplier(ws.cell(r, 1).value, supp)
+        if is_section_header(ws, r, first_col, list(date_cols)):
+            supplier = canon_supplier(ws.cell(r, first_col).value, supp)
             continue
-        raw_item = ws.cell(r, 1).value
+        raw_item = ws.cell(r, first_col).value
         if not isinstance(raw_item, str) or not raw_item.strip():
             continue
         item = canon_item(raw_item, vocab)
@@ -470,8 +477,16 @@ def main():
     print("vocab entries %d | supplier entries %d | curated status overrides %d"
           % (len(vocab), len(supp), len(override)))
 
+    # No workbooks means nothing to read, not an empty calendar: stop before
+    # Dim_Day_Status is replaced, so the days read on an earlier run are kept
+    # (the pipeline reports this as a skip, as it does for step0).
+    workbooks = sorted(p for p in glob.glob(os.path.join(RAW_DIR, "*.xlsx"))
+                       if not os.path.basename(p).startswith("~$"))
+    if not workbooks:
+        raise FileNotFoundError(f"No tally workbooks (.xlsx) found in {RAW_DIR}")
+
     all_sales, all_days, reports, batch, labels = [], [], [], [], {}
-    for path in sorted(glob.glob(os.path.join(RAW_DIR, "*.xlsx"))):
+    for path in workbooks:
         base = os.path.basename(path)
         if BATCH_FILE_HINT in base.upper():
             rows = parse_batch_2023(path, vocab)
