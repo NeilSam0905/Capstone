@@ -1844,19 +1844,6 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
   .hero__title { font-size: 28px; }
 }
 
-/* Overview: the FSN groups as the actions they call for. Each row is a
-   button onto the Classification page. */
-.decisions { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-.decision {
-  display: grid; grid-template-columns: 104px minmax(0, 1fr) auto; align-items: center; gap: 10px;
-  width: 100%; padding: 9px 12px; text-align: left; cursor: pointer;
-  font: inherit; color: inherit; background: var(--card);
-  border: 1px solid var(--line-soft); border-radius: var(--r-sm);
-}
-.decision:hover { background: var(--accent-wash); border-color: var(--accent-line); }
-.decision .tag { justify-self: start; }
-.decision__hint { font-size: 12px; color: var(--text-2); }
-.decision__count { font-size: 18px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
 .overview-order__item { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 /* Overview reorder banner: short tags in place of sentences. */
 .hero__chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
@@ -1892,21 +1879,9 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .stockcheck__item i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
 .stockcheck__item b { color: var(--text); }
 
-/* Count These First: the one line that says why these items matter. */
-.countfirst__why { font-size: 13px; line-height: 1.5; color: var(--text-2); margin-bottom: 10px; }
-.countfirst__why b { color: var(--text); }
-
-/* What to Do With Each Group across the page: the four groups in a row. */
-.decisions--row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.decisions--row .decision {
-  grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "tag count" "hint hint"; align-items: start;
-}
-.decisions--row .decision .tag { grid-area: tag; }
-.decisions--row .decision__count { grid-area: count; }
-.decisions--row .decision__hint { grid-area: hint; }
-@container (max-width: 900px) {
-  .decisions--row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
+/* Top Sellers: the pesos / units switch, with the window beside it. */
+.topsellers__bar { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.period-tabs--sm .period-tab { padding: 4px 11px; font-size: 11.5px; }
 
 /* Overview "What Changed This Month": the change as an arrow and percent,
    green up and red down, with the peso difference under it. */

@@ -829,7 +829,9 @@ def get_overview_performance():
             "total_php": round(total, 2), "n_selling": len(top),
             "n_for_share": n_for_share, "share": TOP_EARNER_SHARE,
             "top10_share": top[min(10, len(top)) - 1]["cum_share"] if top else 0.0,
-            "items": top[:max(n_for_share, 10)],
+            # Every item that sold, not only the top: the Overview ranks the
+            # same list by units as well as pesos, and lists it in full.
+            "items": top,
         },
         "small_sellers": {
             "max_units": SMALL_SELLER_UNITS, "count": len(small),

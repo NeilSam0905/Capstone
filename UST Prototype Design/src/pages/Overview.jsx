@@ -1,48 +1,41 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  getProducts, getMonthlyUnits, getStockPosition, getReorderAlerts, getAdvisories,
-  getDecisionRules, getMeta, getOverviewPerformance,
+  getProducts, getStockPosition, getReorderAlerts, getAdvisories, getMeta, getOverviewPerformance,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
 import { Loading } from '../components/Pending';
-import { LineChart, HBars, StackBar } from '../components/charts';
+import { HBars } from '../components/charts';
 import Modal from '../components/Modal';
 import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
 import InfoTip from '../components/InfoTip';
 import { AdvisoriesPanel, AdvisoriesJump } from '../components/Advisories';
 import { ADVISORIES_ANCHOR, TALLY_TAB_KEY } from '../config';
-import { num, shortMonth, longMonth, usDate, peso, pesoK, FSN_TONE, FSN_LABEL, RULE, RULE_ORDER } from '../lib/format';
+import { num, shortMonth, longMonth, usDate, peso, pesoK, FSN_TONE, FSN_LABEL } from '../lib/format';
 import { ALL_CATEGORIES, ALL_SUPPLIERS } from '../services/dataService';
 
 /* The Overview reads top to bottom from the store as a whole down to the
  * items to order (the adviser's review, Oct 2026):
  *
- *   Sale Overview                    sales value (pesos), latest tallied month
- *   Top 10 Earners                   the items that drive sales, not all 500
- *   Reorder                          the reorder decision, in units
+ *   Sale Overview          three tiles: the change, where it came from, what to check
+ *   Reorder                the reorder decision, in units, with the stock check
+ *   Order These First      the most urgent orders  |  Top Sellers  the items that sell most
+ *   Advisories             upcoming events
  *
  * Pesos tell the story because a unit total across a category adds lanyards
  * to jackets; units stay the measure for ordering, which is what suppliers
- * deliver. Each section ends in something to do, so leading with performance
- * does not turn the page into a report. After them: the advisories and the
- * sales detail behind all of it. */
+ * deliver.
+ *
+ * Kept short on purpose (consultation, Oct 2026: "too much is displayed"):
+ * each card shows at most five rows and every full list opens on a click. The
+ * category table opens from its tile, the uncounted items from the stock
+ * check, and two cards left for the pages that already hold them - the
+ * decision groups (FSN Classification) and the monthly units chart (Demand
+ * Forecast). Top 10 Earners and Best Sellers ranked the same items two ways,
+ * so they are one card with a pesos / units switch. */
 
-const TONE_COLOR = {
-  ok: 'var(--ok)', warn: 'var(--warn)', gold: 'var(--gold)', crit: 'var(--crit)', info: 'var(--info)',
-};
-
-/** What each decision rule asks the store to do, in a line. */
-const RULE_HINT = {
-  keep_stocked: 'Fast-moving: reorder at the reorder point',
-  promote: 'Slow-moving: bundle, reposition, market at events',
-  review_discontinuation: 'Slow two semesters running: keep or drop?',
-  clear_out: 'Never sold: return, mark down or discontinue',
-  discontinued: 'Already marked discontinued',
-};
-
-const ORDER_FIRST_ROWS = 8;
+const SHORT_LIST_ROWS = 5;
 const HERO_LIST_ROWS = 5;
 
 export default function Overview({ filters, setPage, setView, user }) {
@@ -50,14 +43,11 @@ export default function Overview({ filters, setPage, setView, user }) {
   const advisoriesRef = useRef(null);
   const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
     { key: `overview:products:${filters.supplier}|${filters.category}|${filters.dateRange}|${filters.rangeFrom}|${filters.rangeTo}` });
-  const { data: monthly } = useData(() => getMonthlyUnits(filters), [filters], []);
   // The On-hand column in the products modal.
   const { data: stock } = useData(() => getStockPosition(filters), [filters]);
   const { data: alerts } = useData(getReorderAlerts, []);
   const { data: advisories } = useData(getAdvisories, []);
-  const { data: rules } = useData(() => getDecisionRules(), []);
   const { data: perf } = useData(() => getOverviewPerformance(filters), [filters.supplier, filters.category]);
-  const [showAllEarners, setShowAllEarners] = useState(false);
   // The last day any sale was tallied: what every figure on this page rests
   // on, said beside the stock-count month so neither looks current when it
   // is not.
@@ -133,43 +123,15 @@ export default function Overview({ filters, setPage, setView, user }) {
   }, [alertItems, due, revenueOf]);
   const [openGroup, setOpenGroup] = useState(null);
 
-  const ruleCounts = useMemo(() => {
-    const counts = Object.fromEntries(RULE_ORDER.map(k => [k, 0]));
-    (rules?.items ?? []).forEach(i => {
-      if (inView.has(i.product_id) && counts[i.action] !== undefined) counts[i.action]++;
-    });
-    return counts;
-  }, [rules, inView]);
-
   const showSupplier = filters.supplier === ALL_SUPPLIERS;
-  const top10 = useMemo(() => [...products]
-    .sort((a, b) => b.total_units - a.total_units)
-    .slice(0, 10)
-    .map(p => ({
-      name: p.item_name,
-      value: p.total_units,
-      // Whether the best sellers are covered is the question this card
-      // answers, so each bar says where its item stands. The supplier is
-      // only worth showing while the chart spans every supplier.
-      sub: [showSupplier ? p.supplier_name : null, stockStatus(p, alertById.get(p.product_id))]
-        .filter(Boolean).join(' · '),
-    })), [products, showSupplier, alertById]);
-
-  const trend = useMemo(
-    () => monthly.map(m => ({ label: shortMonth(m.month), value: m.units })),
-    [monthly]
-  );
 
   if (loading) return <Loading label="Loading catalogue…" />;
 
   return (
     <div className="stack">
-      <SectionLabel title="Sale Overview" hint="Sales value, latest tallied month" />
+      <SectionLabel title="Sale Overview" hint="Latest tallied month against the month before" />
       <PerformanceStep perf={perf} dueByCategory={dueByCategory} setPage={setPage}
                        alertById={alertById} latestCount={latestCount} recount={recount} />
-
-      <TopEarnersStep perf={perf} showAll={showAllEarners} setShowAll={setShowAllEarners}
-                      alertById={alertById} showSupplier={showSupplier} />
 
       <ReorderHero
         alerts={alerts}
@@ -184,17 +146,14 @@ export default function Overview({ filters, setPage, setView, user }) {
         onShowGroup={setOpenGroup}
       />
 
-      {/* The two things the stock check asks the store to do, side by side:
-          order the items at their reorder point, and count the ones that
-          cannot be checked yet. */}
+      {/* What to order first, beside what sells most - which of those to keep
+          in stock. The uncounted items open from the stock check above. */}
       <div className="grid-2">
         <OrderFirst due={due} showSupplier={showSupplier} setPage={setPage}
                     latestCount={latestCount} recount={recount} />
-        <CountFirst items={stockGroups.uncounted} revenueOf={revenueOf} salesInView={salesInView}
-                    earnerIds={earnerIds} onShowAll={() => setOpenGroup('uncounted')} recount={recount} />
+        <TopSellers perf={perf} alertById={alertById} categoryOf={categoryOf} showSupplier={showSupplier}
+                    onBrowse={() => setProductsOpen(true)} />
       </div>
-
-      <DecisionGroups counts={ruleCounts} setPage={setPage} wide />
 
       {/* Advisories — calendar-contextual, driven by real data. The id is
           what the topbar's Advisories button scrolls to on this page
@@ -202,29 +161,6 @@ export default function Overview({ filters, setPage, setView, user }) {
       <div id={ADVISORIES_ANCHOR} ref={advisoriesRef} style={{ scrollMarginTop: 12 }}>
         <div className="card-h"><span className="section-h">Upcoming Event Advisories</span></div>
         <AdvisoriesPanel advisories={advisories} setPage={setPage} />
-      </div>
-
-      <div className="card-h" style={{ marginBottom: 0 }}>
-        <span className="section-h">Sales Detail</span>
-        <span className="hint">What sold, and when</span>
-      </div>
-      <div className="grid-2">
-        <div className="card card__pad">
-          <div className="card-h">
-            <span className="section-h">Monthly Units Sold</span>
-            <span className="hint">Stock up ahead of the peaks</span>
-          </div>
-          <LineChart data={trend} />
-        </div>
-        <div className="card card__pad">
-          <div className="card-h">
-            <span className="section-h">Best Sellers</span>
-            <button type="button" className="linkish" onClick={() => setProductsOpen(true)}>
-              Browse all products <Icon name="arrow" size={12} />
-            </button>
-          </div>
-          <HBars data={top10} />
-        </div>
       </div>
 
       {/* Overview only: a floating pill that scrolls down to the advisories. */}
@@ -513,6 +449,7 @@ function NextStep({ children }) {
  *  comparison measured record-keeping as much as sales. */
 function PerformanceStep({ perf, dueByCategory, setPage, alertById, latestCount, recount }) {
   const [stoppedOpen, setStoppedOpen] = useState(false);
+  const [catsOpen, setCatsOpen] = useState(false);
   if (!perf) return <div className="card card__pad"><Loading label="Adding up sales…" /></div>;
   if (!perf.available) return <div className="card card__pad"><div className="empty">{perf.reason}</div></div>;
 
@@ -541,9 +478,11 @@ function PerformanceStep({ perf, dueByCategory, setPage, alertById, latestCount,
   }
   if (fell) {
     steps.push(`Check why ${fell.category} fell ${signedMoney(fell.diff)}`
-      + (fell.due ? `: ${num(fell.due)} of its items are at their reorder point, so it may have run out.` : '.'));
+      + (fell.due
+        ? `: ${num(fell.due)} of its items ${fell.due === 1 ? 'is' : 'are'} at the reorder point, so it may have run out.`
+        : '.'));
   }
-  if (!steps.length) steps.push('keep the Top 10 Earners below in stock.');
+  if (!steps.length) steps.push('keep the Top Sellers in stock.');
 
   const curName = monthName(cur.month);
   const prevName = prev ? monthName(prev.month) : 'the month before';
@@ -576,6 +515,8 @@ function PerformanceStep({ perf, dueByCategory, setPage, alertById, latestCount,
                 : '')
             : prev ? `Every category sold the same as in ${prevName}` : 'No sales tallied the month before'}
           icon="chart"
+          onClick={cats.length ? () => setCatsOpen(true) : undefined}
+          linkLabel="See all categories"
         />
         <KPICard
           label={`Sold in ${prevName}, none in ${curName}`}
@@ -603,15 +544,15 @@ function PerformanceStep({ perf, dueByCategory, setPage, alertById, latestCount,
         recount={recount}
       />
 
-      {cats.length > 0 && (
-        <div className="card card__pad">
-          <div className="card-h">
-            <span className="section-h">What Changed This Month</span>
-            <span className="hint">
-              By category{prev ? `, ${longMonth(prev.month)} to ${longMonth(cur.month)}` : ''}
-            </span>
-          </div>
-          <div style={{ overflowX: 'auto' }}>
+      {catsOpen && (
+        <Modal
+          open
+          onClose={() => setCatsOpen(false)}
+          title="What Changed This Month"
+          subtitle={`By category${prev ? `, ${longMonth(prev.month)} to ${longMonth(cur.month)}` : ''}`}
+          width={860}
+        >
+          <div className="modal-grow" style={{ overflowX: 'auto' }}>
             <table className="tbl">
               <thead>
                 <tr>
@@ -638,7 +579,12 @@ function PerformanceStep({ perf, dueByCategory, setPage, alertById, latestCount,
                     )}
                     <td className="num">
                       {c.due > 0
-                        ? <button type="button" className="linkish" onClick={() => setPage?.('reorder')}>{num(c.due)}</button>
+                        ? (
+                          <button type="button" className="linkish"
+                                  onClick={() => { setCatsOpen(false); setPage?.('reorder'); }}>
+                            {num(c.due)}
+                          </button>
+                        )
                         : <span className="nodata">&mdash;</span>}
                     </td>
                   </tr>
@@ -650,7 +596,7 @@ function PerformanceStep({ perf, dueByCategory, setPage, alertById, latestCount,
             {steps.join(' ')}
             {unpriced > 0.001 && <> (Peso figures leave out the {pct1(unpriced * 100)} of units with no price.)</>}
           </NextStep>
-        </div>
+        </Modal>
       )}
     </>
   );
@@ -709,50 +655,128 @@ function StoppedModal({ open, onClose, items, minUnits, prevName, curName, alert
   );
 }
 
-/** Top 10 Earners: the items that make most of the sales value, top 10 first, with
- *  the rest of the 80% one click away. Items that barely sold are named as
- *  left out rather than silently dropped. */
-function TopEarnersStep({ perf, showAll, setShowAll, alertById, showSupplier }) {
+/** Top Sellers: the items that sold most over the last 12 months, top five,
+ *  ranked by pesos (what earns most) or units (what moves fastest). It was two
+ *  cards, Top 10 Earners and Best Sellers, ranking the same items two ways.
+ *  Every item that sold opens on "See all"; the window and the shares are
+ *  behind the (i). */
+function TopSellers({ perf, alertById, categoryOf, showSupplier, onBrowse }) {
+  const [by, setBy] = useState('php');
+  const [allOpen, setAllOpen] = useState(false);
   if (!perf) return <div className="card card__pad"><Loading label="Ranking items by sales…" /></div>;
   if (!perf.available) return <div className="card card__pad"><div className="empty">{perf.reason}</div></div>;
 
-  const t = perf.top, s = perf.small_sellers;
-  const sharePct = Math.round(t.share * 100);
-  const list = showAll ? t.items.slice(0, t.n_for_share) : t.items.slice(0, 10);
-  const rows = list.map(i => ({
+  const t = perf.top;
+  const ranked = by === 'php' ? t.items : [...t.items].sort((a, b) => b.units - a.units);
+  const rows = ranked.slice(0, SHORT_LIST_ROWS).map(i => ({
     name: i.item_name,
-    value: i.php,
-    sub: [`${pct1(i.share * 100)} of sales`, showSupplier ? i.supplier_name : null,
-          stockStatus(i, alertById.get(i.product_id))].filter(Boolean).join(' · '),
+    value: by === 'php' ? i.php : i.units,
+    sub: [showSupplier ? i.supplier_name : null, stockStatus(i, alertById.get(i.product_id))]
+      .filter(Boolean).join(' · '),
   }));
 
   return (
     <div className="card card__pad">
       <div className="card-h">
-        <span className="section-h">
-          {showAll ? `The ${num(t.n_for_share)} Items That Make ${sharePct}% of Sales` : 'Top 10 Earners'}
+        <span className="card-h__title">
+          <span className="section-h">Top Sellers</span>
+          <TopSellersInfo t={t} small={perf.small_sellers} />
         </span>
-        {t.n_for_share > 10 && (
-          <button type="button" className="linkish" onClick={() => setShowAll(!showAll)}>
-            {showAll ? 'Show top 10' : `Show all ${num(t.n_for_share)} (${sharePct}% of sales)`}
+        {t.items.length > SHORT_LIST_ROWS && (
+          <button type="button" className="linkish" onClick={() => setAllOpen(true)}>
+            See all {num(t.items.length)} <Icon name="arrow" size={12} />
           </button>
         )}
       </div>
-      <div className="hint" style={{ marginBottom: 12 }}>
-        {usDate(t.window_start)} – {usDate(t.window_end)}: {pesoK(t.total_php)} in sales. The top 10 made
-        {' '}{pct1(t.top10_share * 100)}; {num(t.n_for_share)} of the {num(t.n_selling)} items that sold
-        made {sharePct}%.
+      <div className="topsellers__bar">
+        <div className="period-tabs period-tabs--sm" role="tablist" aria-label="Rank by">
+          {[['php', 'Sales (₱)'], ['units', 'Units']].map(([k, label]) => (
+            <button key={k} type="button" role="tab" aria-selected={by === k}
+                    className={'period-tab' + (by === k ? ' is-active' : '')} onClick={() => setBy(k)}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="hint">Last 12 months &middot; keep these in stock</span>
       </div>
-      {rows.length ? <HBars data={rows} valueFmt={pesoK} /> : <div className="empty">No priced sales in this window.</div>}
-      <NextStep>
-        keep these items in stock first; the reorder list below shows which need ordering.
-        {s.count > 0 && (
-          <> {num(s.count)} {s.count === 1 ? 'item' : 'items'} sold {s.max_units} or fewer units in these 12
-            months ({pct1(s.share * 100)} of sales) and {s.count === 1 ? 'is' : 'are'} left out here; they
-            stay under Browse all products and Classification.</>
-        )}
-      </NextStep>
+      {rows.length
+        ? <HBars data={rows} valueFmt={by === 'php' ? pesoK : num} />
+        : <div className="empty">No priced sales in this window.</div>}
+      {allOpen && (
+        <TopSellersModal
+          t={t}
+          by={by}
+          onClose={() => setAllOpen(false)}
+          alertById={alertById}
+          categoryOf={categoryOf}
+          onBrowse={onBrowse}
+        />
+      )}
     </div>
+  );
+}
+
+/** The window, the shares and the two rankings, for the (i) by Top Sellers. */
+function TopSellersInfo({ t, small }) {
+  const sharePct = Math.round(t.share * 100);
+  return (
+    <InfoTip label="About Top Sellers" width={380}>
+      <div className="infotip__h">Top Sellers</div>
+      <p>
+        {usDate(t.window_start)} &ndash; {usDate(t.window_end)}: {pesoK(t.total_php)} in sales. The top 10
+        made {pct1(t.top10_share * 100)}; {num(t.n_for_share)} of the {num(t.n_selling)} items that sold
+        made {sharePct}%.
+      </p>
+      <ul className="infotip__bullets">
+        <li><b>Sales (₱)</b>: what each item earned. The items to keep in stock first.</li>
+        <li><b>Units</b>: how many sold. A cheap item can sell many and earn little.</li>
+      </ul>
+      {small.count > 0 && (
+        <p>
+          {num(small.count)} {small.count === 1 ? 'item' : 'items'} sold {small.max_units} or fewer units
+          ({pct1(small.share * 100)} of sales); they are under Browse all products and FSN Classification.
+        </p>
+      )}
+    </InfoTip>
+  );
+}
+
+/** Every item that sold in the window, sortable by units or sales, opened
+ *  sorted the way the card was ranking. */
+function TopSellersModal({ t, by, onClose, alertById, categoryOf, onBrowse }) {
+  const data = (by === 'php' ? t.items : [...t.items].sort((a, b) => b.units - a.units)).map(i => ({
+    ...i,
+    category: i.category ?? categoryOf.get(i.product_id) ?? '—',
+    now: stockStatus(i, alertById.get(i.product_id)) ?? '—',
+  }));
+  const columns = [
+    { key: 'item_name', label: 'Item', strong: true, truncate: true, width: '31%' },
+    { key: 'category', label: 'Category', truncate: true, width: '18%' },
+    { key: 'units', label: 'Units', num: true, width: '11%', render: num },
+    { key: 'php', label: 'Sales', num: true, strong: true, width: '13%', render: v => money(v) },
+    { key: 'share', label: 'Share', num: true, width: '11%', render: v => pct1(v * 100) },
+    { key: 'now', label: 'Now', width: '16%' },
+  ];
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Top Sellers: ${num(t.items.length)} items`}
+      subtitle={`Every item that sold, ${usDate(t.window_start)} – ${usDate(t.window_end)}. `
+        + 'Click Units or Sales to rank by it.'}
+      width={960}
+    >
+      {onBrowse && (
+        <div className="btn-row" style={{ marginBottom: 12 }}>
+          <button className="btn btn--ghost btn--sm" onClick={() => { onClose(); onBrowse(); }}>
+            Browse all products <Icon name="arrow" size={12} />
+          </button>
+        </div>
+      )}
+      <div className="modal-grow">
+        <DataTable columns={columns} data={data} pageSize={10} minWidth={760} />
+      </div>
+    </Modal>
   );
 }
 
@@ -827,73 +851,12 @@ function StockGroupModal({ group, onClose, groups, revenueOf, salesInView, categ
   );
 }
 
-/** The items the stock check cannot see, highest sales first: which to count,
- *  and why - what they sell. The whole list opens from "See all". */
-function CountFirst({ items, revenueOf, salesInView, earnerIds, onShowAll, recount }) {
-  const rows = items.slice(0, ORDER_FIRST_ROWS);
-  const sales = items.reduce((s, a) => s + (revenueOf.get(a.product_id) ?? 0), 0);
-  const share = salesInView ? sales / salesInView : 0;
-  const earners = items.filter(a => earnerIds.has(a.product_id)).length;
-  return (
-    <div className="card card__pad">
-      <div className="card-h">
-        <span className="card-h__title">
-          <span className="section-h">Count These First</span>
-          <CountInfo />
-        </span>
-        {items.length > 0 && (
-          <button type="button" className="linkish" onClick={onShowAll}>
-            See all {num(items.length)} <Icon name="arrow" size={12} />
-          </button>
-        )}
-      </div>
-      {rows.length === 0
-        ? <div className="empty">Every item with a reorder point has an inventory count.</div>
-        : (
-          <>
-            <div className="countfirst__why">
-              Not counted, so they can&rsquo;t be flagged for reorder. They made <b>{money(sales)}</b>,{' '}
-              {pct1(share * 100)} of sales{earners > 0 && <>, including <b>{num(earners)} top earners</b></>}.
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table className="tbl">
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th className="num">Sales</th>
-                    <th aria-label="Top earner" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(a => (
-                    <tr key={a.product_id}>
-                      <td className="strong overview-order__item" title={a.item_name}>{a.item_name}</td>
-                      <td className="num">{money(revenueOf.get(a.product_id) ?? 0)}</td>
-                      <td>{earnerIds.has(a.product_id) && <span className="tag tag--gold">Top earner</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {recount && (
-              <div className="btn-row" style={{ marginTop: 12 }}>
-                <button className="btn btn--ink btn--sm" onClick={recount}>
-                  Count them in the Tally Interface <Icon name="arrow" size={12} />
-                </button>
-              </div>
-            )}
-          </>
-        )}
-    </div>
-  );
-}
-
 /* -------------------------------------------------------------- actions */
 
 /** The first few items to order, most urgent first, with the quantity. The
  *  full list, with how each figure was worked out, is Reorder Alerts. */
 function OrderFirst({ due, showSupplier, setPage, latestCount, recount }) {
-  const rows = due.slice(0, ORDER_FIRST_ROWS);
+  const rows = due.slice(0, SHORT_LIST_ROWS);
   const countMonth = latestCount ? longMonth(latestCount.slice(0, 7)) : null;
   // step5 marks every reorder point provisional while lead times are
   // estimated from the item's name rather than measured deliveries.
@@ -939,11 +902,9 @@ function OrderFirst({ due, showSupplier, setPage, latestCount, recount }) {
           </div>
         )}
       <div className="hint" style={{ marginTop: 10 }}>
-        Least stock cover first.
-        {provisional && <> Quantities are provisional: lead times are estimates
-          {countMonth && <> and stock is as counted in {countMonth}</>}.</>}
+        Most urgent first.
         {recount && rows.length > 0 && (
-          <> Is an item&rsquo;s stock wrong?{' '}
+          <> Stock wrong?{' '}
             <button type="button" className="linkish" onClick={recount}>Recount it</button>.</>
         )}
       </div>
@@ -972,6 +933,9 @@ function OrderInfo() {
         Order nearer the high end for a top earner or a supplier that is often late, nearer the low end when
         shelf space is tight. One number means the item has little or no safety stock, so both ends come out the same.
       </p>
+      <p>
+        Quantities are provisional: lead times are still estimates, and stock is as of the last inventory count.
+      </p>
     </InfoTip>
   );
 }
@@ -979,43 +943,6 @@ function OrderInfo() {
 /** '2026-04' or '2026-04-30' -> 'Apr 2026', short enough for a column heading. */
 function shortMonthYear(iso) {
   return `${shortMonth(iso.slice(0, 7)).split(' ')[0]} ${iso.slice(0, 4)}`;
-}
-
-/** The FSN classes as the actions they call for (backend/decision_rules.py),
- *  so the card says what to do rather than only how items are split. `wide`
- *  lays the groups out in a row, for a card that spans the page. */
-function DecisionGroups({ counts, setPage, wide = false }) {
-  const shown = RULE_ORDER.filter(k => k !== 'discontinued' || counts[k] > 0);
-  const total = shown.reduce((s, k) => s + counts[k], 0);
-  return (
-    <div className="card card__pad">
-      <div className="card-h">
-        <span className="section-h">What to Do With Each Group</span>
-        <button type="button" className="linkish" onClick={() => setPage?.('classification')}>
-          Open Classification <Icon name="arrow" size={12} />
-        </button>
-      </div>
-      <div className={'decisions' + (wide ? ' decisions--row' : '')}>
-        {shown.map(k => (
-          <button key={k} type="button" className="decision" onClick={() => setPage?.('classification')}>
-            <span className={`tag tag--${RULE[k].tone}`}>{RULE[k].label}</span>
-            <span className="decision__hint">{RULE_HINT[k]}</span>
-            <span className="decision__count">{num(counts[k])}</span>
-          </button>
-        ))}
-      </div>
-      <StackBar parts={shown.map(k => ({ value: counts[k], color: TONE_COLOR[RULE[k].tone] }))} />
-      <div className="hint" style={{ textAlign: 'right', marginTop: 6 }}>{num(total)} products</div>
-      {/* Promote + Review together are the Slow class, which is how Power BI
-          and Classification count it. A few never-sold rows are older names of
-          items that still sell under a new one (Names to review). */}
-      <div className="hint" style={{ marginTop: 8 }}>
-        {RULE.promote.label} and {RULE.review_discontinuation.label} together are the Slow-moving
-        items. {RULE.clear_out.label} includes a few older names of items that still sell; check
-        before returning stock.
-      </div>
-    </div>
-  );
 }
 
 /* ------------------------------------------------------------- products */
