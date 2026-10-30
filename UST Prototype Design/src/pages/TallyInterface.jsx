@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useId, useRef } from 'react';
 import {
   addEntry, addEvent, setStoreClosed, getSellableProducts, getRecentEntries,
   getEntriesByDate, getEventLog, getEventLabels, getClosedDates, getMeta,
@@ -241,7 +241,7 @@ export default function TallyInterface({ setView, user, signOut }) {
           <ClosureAndEventCards onSaved={bump} reloadKey={reloadKey} />
         </section>
         <section className="tally-section tone-hvl" hidden={tab !== 'update'} aria-label="Update Analytics">
-          <FullPipelineRun onChanged={bump} />
+          <FullPipelineRun onChanged={bump} attention={needsUpdate(staleness)} />
         </section>
       </div>
     </div>
@@ -270,10 +270,21 @@ function savedTab() {
   return 'sales';
 }
 
+/** True while the dashboard needs an update: the last one failed or was
+ *  stopped, or records are waiting. The Update Analytics tab rings its bell
+ *  and Run Analytics is marked, so it is plain what to click. */
+function needsUpdate(staleness) {
+  return Boolean(staleness?.stale && !staleness.running);
+}
+
 function TallyTabs({ active, onChange, staleness }) {
-  // Update Analytics carries a count while records are waiting for a run.
-  const waiting = staleness?.stale && !staleness.running
-    ? (staleness.interrupted ? '!' : staleness.total_pending || '!') : null;
+  // Update Analytics carries a bell while the dashboard needs an update, with
+  // the number of records waiting when that is the reason.
+  const waiting = needsUpdate(staleness)
+    ? (staleness.interrupted ? null : staleness.total_pending || null) : undefined;
+  const bellTitle = staleness?.interrupted
+    ? 'The last update did not finish - open this tab and click Run Analytics'
+    : 'Records waiting for the next update - open this tab and click Run Analytics';
   return (
     <nav className="tally-tabs" role="tablist" aria-label="Tally sections">
       {SECTIONS.map(s => (
@@ -284,9 +295,11 @@ function TallyTabs({ active, onChange, staleness }) {
           <span className="tally-tab__text">
             <span className="tally-tab__label">
               {s.label}
-              {s.id === 'update' && waiting != null && (
-                <span className="tally-tab__badge" title="Records waiting for the next update">
-                  {typeof waiting === 'number' ? num(waiting) : waiting}
+              {s.id === 'update' && waiting !== undefined && (
+                <span className="tally-tab__badge tally-tab__badge--bell" title={bellTitle}
+                      aria-label={bellTitle}>
+                  <Icon name="bell" size={12} />
+                  {waiting != null && num(waiting)}
                 </span>
               )}
             </span>
@@ -2299,31 +2312,56 @@ function CalendarEndBanner({ meta, goTo }) {
   }
 
   return (
-    <div className="notice notice--info notice--closable" style={{ display: 'flex', gap: 10 }}>
-      <Icon name="cal" size={16} />
-      <button type="button" className="notice__close" onClick={close} aria-label="Close this notice"
+    <Banner tone="info" icon="cal" onClose={close}
+            title={daysLeft >= 0
+              ? `The school calendar is loaded up to ${usDate(end)} — ${daysLeft} day${daysLeft === 1 ? '' : 's'} from now.`
+              : `The school calendar ended on ${usDate(end)}.`}>
+      Tallies after that date still save. From then on the system does not know the school&apos;s
+      holidays, breaks or exam weeks, so record them yourself: mark each closing day and holiday
+      in <TabLink to="calendar" goTo={goTo}>Store Closure / Suspension</TabLink>, flag busy days
+      in <TabLink to="calendar" goTo={goTo}>Flag an Event</TabLink>, and keep doing
+      the <TabLink to="stock" goTo={goTo}>Monthly Inventory Count</TabLink>.
+    </Banner>
+  );
+}
+
+/** Closing the update banner is remembered in this browser for what it said:
+ *  the latest run, whether one is running or failed, and what is waiting. It
+ *  comes back as soon as any of that changes - another run, or a new entry. */
+const STALENESS_DISMISS_KEY = 'tally.stalenessBannerClosed';
+
+function readStalenessDismissed() {
+  try { return localStorage.getItem(STALENESS_DISMISS_KEY); } catch { return null; }
+}
+
+/** A notice with a title that stays, an explanation under it that folds away
+ *  (the title is the toggle), and an X that closes it - the banners at the
+ *  top of the screen and the update's failed / skipped boxes. */
+function Banner({ tone, icon, title, onClose, style, children }) {
+  const [open, setOpen] = useState(true);
+  const bodyId = useId();
+  return (
+    <div className={`notice notice--${tone} notice--closable tally-banner`} style={style}>
+      <div className="tally-banner__head">
+        <Icon name={icon} size={16} />
+        <button type="button" className="tally-banner__toggle" onClick={() => setOpen(o => !o)}
+                aria-expanded={open} aria-controls={bodyId}
+                title={open ? 'Hide the details' : 'Show the details'}>
+          <b>{title}</b>
+          <span className={`tally-banner__chev${open ? ' is-open' : ''}`}><Icon name="chevron" size={14} /></span>
+        </button>
+      </div>
+      <button type="button" className="notice__close" onClick={onClose} aria-label="Close this notice"
               title="Close">
         <Icon name="close" size={14} />
       </button>
-      <div>
-        <b>
-          {daysLeft >= 0
-            ? `The school calendar is loaded up to ${usDate(end)} — ${daysLeft} day${daysLeft === 1 ? '' : 's'} from now.`
-            : `The school calendar ended on ${usDate(end)}.`}
-        </b>
-        <div style={{ marginTop: 4 }}>
-          Tallies after that date still save. From then on the system does not know the school&apos;s
-          holidays, breaks or exam weeks, so record them yourself: mark each closing day and holiday
-          in <TabLink to="calendar" goTo={goTo}>Store Closure / Suspension</TabLink>, flag busy days
-          in <TabLink to="calendar" goTo={goTo}>Flag an Event</TabLink>, and keep doing
-          the <TabLink to="stock" goTo={goTo}>Monthly Inventory Count</TabLink>.
-        </div>
-      </div>
+      <div id={bodyId} className="tally-banner__body" hidden={!open}>{children}</div>
     </div>
   );
 }
 
 function StalenessBanner({ staleness, goTo }) {
+  const [dismissed, setDismissed] = useState(readStalenessDismissed);
   if (!staleness || !staleness.stale) return null;
 
   const { pending = {}, never_run: neverRun, running, interrupted, last_run: lastRun } = staleness;
@@ -2338,62 +2376,54 @@ function StalenessBanner({ staleness, goTo }) {
 
   const what = parts.length ? parts.join(', ').replace(/, ([^,]*)$/, ' and $1') : 'new records';
 
+  const key = [staleness.latest_run_id ?? '', running ? 'running' : interrupted ?? 'stale', ...parts].join('|');
+  if (dismissed === key) return null;
+  function close() {
+    setDismissed(key);
+    try { localStorage.setItem(STALENESS_DISMISS_KEY, key); } catch { /* hidden until reload */ }
+  }
+
   // A run that was stopped or failed part-way is its own kind of stale: no new
   // data is waiting, but the tables are half-rebuilt (step3 may have rewritten
   // fsn_class with step5 never reaching Result_Prescriptive). Say that rather
   // than reporting a pending count of nothing.
   if (interrupted && !running) {
     return (
-      <div className="notice notice--warn" style={{ display: 'flex', gap: 10 }}>
-        <Icon name="alert" size={16} />
-        <div>
-          <b>
-            The last update {interrupted === 'cancelled' ? 'was stopped' : 'failed'} part-way —
-            re-run it.
-          </b>
-          <div style={{ marginTop: 4 }}>
-            Some steps completed and some did not, so FSN classes, forecasts and reorder points may not
-            agree with each other or with the sales data. Run Analytics
-            in <TabLink to="update" goTo={goTo}>Update Analytics</TabLink> to bring them back into step.
-            {parts.length > 0 && <> There {parts.length === 1 ? 'is' : 'are'} also {what} waiting to be
-            folded in.</>}
-          </div>
-        </div>
-      </div>
+      <Banner tone="warn" icon="alert" onClose={close}
+              title={`The last update ${interrupted === 'cancelled' ? 'was stopped' : 'failed'}, please re-run it`}>
+        Some steps completed and some did not, so FSN classes, forecasts and reorder points may not agree
+        with each other or with the sales data. Run Analytics in
+        the <TabLink to="update" goTo={goTo}>Update Analytics tab</TabLink> to fix the issue.
+      </Banner>
     );
   }
 
   return (
-    <div className={`notice ${running ? 'notice--info' : 'notice--warn'}`} style={{ display: 'flex', gap: 10 }}>
-      <Icon name={running ? 'clock' : 'alert'} size={16} />
+    <Banner tone={running ? 'info' : 'warn'} icon={running ? 'clock' : 'alert'} onClose={close}
+            title={running
+              ? 'Updating — the dashboard still shows the previous analytics until it finishes.'
+              : 'Analytics are out of date — run them again.'}>
       <div>
-        <b>
-          {running
-            ? 'Updating — the dashboard still shows the previous analytics until it finishes.'
-            : 'Analytics are out of date — run them again.'}
-        </b>
-        <div style={{ marginTop: 4 }}>
-          {neverRun ? (
-            <>
-              {what} {parts.length === 1 && pending.tally_entries === 1 ? 'is' : 'are'} in the database, but no
-              update has been run for it yet. FSN classes, forecasts and reorder points on the
-              dashboard were not computed from this data.
-            </>
-          ) : (
-            <>
-              {what} recorded since the last completed run
-              {lastRun?.finished_at ? <> on <span className="mono">{usDateTime(lastRun.finished_at)}</span></> : null}.
-              FSN classes, forecasts and reorder points do not include {parts.length > 1 ? 'them' : 'it'} yet.
-            </>
-          )}
-        </div>
-        {!running && (
-          <div style={{ marginTop: 4 }}>
-            Run Analytics in <TabLink to="update" goTo={goTo}>Update Analytics</TabLink> to refresh them.
-          </div>
+        {neverRun ? (
+          <>
+            {what} {parts.length === 1 && pending.tally_entries === 1 ? 'is' : 'are'} in the database, but no
+            update has been run for it yet. FSN classes, forecasts and reorder points on the
+            dashboard were not computed from this data.
+          </>
+        ) : (
+          <>
+            {what} recorded since the last completed run
+            {lastRun?.finished_at ? <> on <span className="mono">{usDateTime(lastRun.finished_at)}</span></> : null}.
+            FSN classes, forecasts and reorder points do not include {parts.length > 1 ? 'them' : 'it'} yet.
+          </>
         )}
       </div>
-    </div>
+      {!running && (
+        <div style={{ marginTop: 4 }}>
+          Run Analytics in the <TabLink to="update" goTo={goTo}>Update Analytics tab</TabLink> to refresh them.
+        </div>
+      )}
+    </Banner>
   );
 }
 
@@ -2415,7 +2445,7 @@ const STEP_TAG = {
   running:   { cls: 'tag--info', label: 'running' },
   cancelled: { cls: 'tag--warn', label: 'stopped' },
   pending:   { cls: '',          label: 'pending' },
-  deselected: { cls: '',         label: 'not run' },
+  deselected: { cls: '',         label: 'Not Ran' },
 };
 
 /** create_schema.py -> step5_prescriptive.py, run and polled from the backend
@@ -2518,7 +2548,11 @@ function WorkbookResult({ result }) {
   );
 }
 
-function FullPipelineRun({ onChanged }) {
+function FullPipelineRun({ onChanged, attention = false }) {
+  // The failed / skipped boxes under the run, closed with their X until the
+  // next run starts.
+  const [closedNotices, setClosedNotices] = useState({});
+  const closeNotice = which => setClosedNotices(c => ({ ...c, [which]: true }));
   const [workbookResult, setWorkbookResult] = useState(null);
   const [pipelineStatus, setPipelineStatus] = useState(null);
   const [starting, setStarting] = useState(false);
@@ -2553,6 +2587,7 @@ function FullPipelineRun({ onChanged }) {
 
   async function start(includeForecast) {
     setPipelineError(null);
+    setClosedNotices({});        // a new run's problems show again
     setStarting(true);
     try {
       const res = await runPipeline({ includeForecast });
@@ -2625,8 +2660,12 @@ function FullPipelineRun({ onChanged }) {
       <WorkbookResult result={workbookResult} />
 
       <div className="run-choices">
-        <button type="button" className="run-choice run-choice--main" onClick={() => start(false)}
-                disabled={running || starting}>
+        <button type="button"
+                className={`run-choice run-choice--main${attention && !running ? ' run-choice--attention' : ''}`}
+                onClick={() => start(false)} disabled={running || starting}>
+          {attention && !running && (
+            <span className="run-choice__flag"><Icon name="bell" size={12} /> Click here</span>
+          )}
           <span className="run-choice__title"><Icon name="zap" size={16} /> Run Analytics</span>
           <span className="run-choice__desc">
             Updates sales, the fast / slow / non-moving groups and the reorder points. Keeps the current
@@ -2679,21 +2718,20 @@ function FullPipelineRun({ onChanged }) {
         </div>
       )}
 
-      {failures.length > 0 && (
-        <div className="notice notice--warn" style={{ marginTop: 12 }}>
-          <b>The update stopped here.</b>
+      {failures.length > 0 && !closedNotices.failures && (
+        <Banner tone="warn" icon="alert" style={{ marginTop: 12 }} onClose={() => closeNotice('failures')}
+                title="The update stopped here.">
           {failures.map(s => <StepProblem key={s.id} step={s} />)}
-        </div>
+        </Banner>
       )}
 
-      {skipped.length > 0 && (
-        <div className="notice notice--info" style={{ marginTop: 12 }}>
-          <b>
-            {skipped.length === 1 ? 'One optional step was' : `${skipped.length} optional steps were`}
-            {' '}skipped. The update finished without {skipped.length === 1 ? 'it' : 'them'}.
-          </b>
+      {skipped.length > 0 && !closedNotices.skipped && (
+        <Banner tone="info" icon="info" style={{ marginTop: 12 }} onClose={() => closeNotice('skipped')}
+                title={skipped.length === 1
+                  ? 'One optional step was skipped. The update finished without it.'
+                  : `${skipped.length} optional steps were skipped. The update finished without them.`}>
           {skipped.map(s => <StepProblem key={s.id} step={s} />)}
-        </div>
+        </Banner>
       )}
 
       {/* Progress, with the step list folded under it, closed by default. A

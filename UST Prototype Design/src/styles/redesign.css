@@ -1795,6 +1795,45 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .notice__close:hover { opacity: 1; background: rgba(0, 0, 0, .06); }
 .notice__close:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; opacity: 1; }
 
+/* The Tally Interface's top banners: the title row folds the explanation
+   away, the X (notice__close) closes the banner. */
+.tally-banner__head { display: flex; align-items: flex-start; gap: 10px; }
+.tally-banner__head > svg { flex: none; margin-top: 1px; }
+.tally-banner__toggle {
+  display: inline-flex; align-items: flex-start; gap: 6px; min-width: 0;
+  padding: 0; margin: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; color: inherit; text-align: left;
+}
+.tally-banner__toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 2px; }
+.tally-banner__chev { display: inline-grid; place-items: center; margin-top: 2px; transition: transform .15s; }
+.tally-banner__chev.is-open { transform: rotate(90deg); }
+.tally-banner__body { margin: 4px 0 0 26px; }
+
+/* The bell on the Update Analytics tab and the mark on Run Analytics: where
+   to click when the dashboard needs an update. */
+.tally-tab__badge--bell { gap: 3px; grid-auto-flow: column; animation: bell-ring 2.4s ease-in-out infinite; }
+@keyframes bell-ring {
+  0%, 70%, 100% { transform: rotate(0); }
+  75% { transform: rotate(-14deg); }
+  80% { transform: rotate(12deg); }
+  85% { transform: rotate(-8deg); }
+  90% { transform: rotate(5deg); }
+}
+.run-choice { position: relative; }
+.run-choice--attention { animation: run-attention 1.8s ease-out infinite; }
+@keyframes run-attention {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tone, var(--hvl)) 55%, transparent); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+.run-choice__flag {
+  position: absolute; top: -10px; right: 12px;
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 800; color: #fff; background: var(--crit);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tally-tab__badge--bell, .run-choice--attention { animation: none; }
+}
+
 /* Scrollbars: gold, like the brand buttons, everywhere in the app. Areas
    with their own sizing above (.scroll, .tally-body, tables, the donut
    legend) keep it and only take the colour; any other scrolling box - a

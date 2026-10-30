@@ -2,8 +2,8 @@
  *
  *  The page keeps what the reader picked as { kind, month, date, year } - a
  *  month ('YYYY-MM') for the month view, a year ('YYYY') for the year view,
- *  a day ('YYYY-MM-DD') for the other two, where a week is the
- *  Monday-to-Sunday week that holds that day. The API takes it as query
+ *  a day ('YYYY-MM-DD') for the other two, where a week is the seven
+ *  days starting on that day. The API takes it as query
  *  params: year=YYYY, month=YYYY-MM, or start= and end=YYYY-MM-DD
  *  (backend/app.py _batch_period). The labels match the ones the PDF and the
  *  sheet print (backend/batch_pdf.py "periods"). */
@@ -21,11 +21,11 @@ const parse = iso => new Date(`${iso}T00:00:00Z`);
 const iso = d => d.toISOString().slice(0, 10);
 const addDays = (s, n) => { const d = parse(s); d.setUTCDate(d.getUTCDate() + n); return iso(d); };
 
-/** The Monday and Sunday of the week holding `day`. */
+/** The week that starts on `day`: it and the six days after it. It used to be
+ *  the Monday-to-Sunday week holding `day`, so picking Tuesday the 8th showed
+ *  the 7th to the 13th - read as the picker choosing the day before. */
 export function weekOf(day) {
-  const back = (parse(day).getUTCDay() + 6) % 7;   // days since Monday
-  const monday = addDays(day, -back);
-  return [monday, addDays(monday, 6)];
+  return [day, addDays(day, 6)];
 }
 
 /** The period as API query params, or null while it has nothing to show. */

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { getBatchReport, getMonths, getMeta, batchReportPdfUrl, batchReportCsvUrl, batchReportXlsxUrl } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
@@ -35,6 +36,10 @@ export default function BatchReport({ filters, period, setPeriod }) {
   const unpricedItems = report.reduce(
     (s, r) => s + r.items.filter(i => i.unit_price_php == null).length, 0
   );
+  // The "no item price" notice closes with its X for the report on show; a
+  // different period or supplier brings it back if it applies there too.
+  const [closedNotice, setClosedNotice] = useState(null);
+  const noticeKey = `${periodSlug(selected)}|${supplier ?? ''}`;
   // Subtotals and the grand total are unit counts, not peso figures. This
   // is an inventory counting tool; unit prices appear only as per-item
   // reference data for supplier remittance.
@@ -93,17 +98,18 @@ export default function BatchReport({ filters, period, setPeriod }) {
               <span className="filter__chev">▾</span>
             </div>
           ) : (
-            // Any day picks its week: the week is the Monday to Sunday that
-            // holds it, named beside the picker so it is clear which one.
+            // In Week, the day picked starts the week: it and the six days
+            // after it, named beside the picker.
             <div className="filter">
               <input type="date" value={period.date ?? ''} min={firstSale} max={lastSale}
-                     aria-label={period.kind === 'week' ? 'A day in the week' : 'Day'}
+                     aria-label={period.kind === 'week' ? 'First day of the week' : 'Day'}
                      onChange={e => e.target.value && setPeriod({ date: e.target.value })} />
             </div>
           )}
           {period.kind === 'week' && selected && (
-            <span className="hint">Mon – Sun, {label}</span>
-          )}        </div>
+            <span className="hint">7 days, {label}</span>
+          )}
+        </div>
         <div className="btn-row">
           {/* Both hit the same server-rendered PDF (backend/batch_pdf.py, fpdf2
              — pure Python, no native dependency, which is what had blocked
@@ -152,9 +158,7 @@ export default function BatchReport({ filters, period, setPeriod }) {
         <div className="card-h" style={{ marginBottom: 0, alignItems: 'flex-start' }}>
           <div>
             <div className="section-title" style={{ fontSize: 16 }}>USTore Batch Sales Report</div>
-            <div className="hint" style={{ marginTop: 4 }}>
-              For UST Purchasing Office and Finance Department — internal supplier remittance reference
-            </div>
+            <div className="hint" style={{ marginTop: 4 }}>For UST Purchasing Office and Finance Department</div>
           </div>
           <div style={{ textAlign: 'right' }}>
             <div className="hint">Period</div>
@@ -172,8 +176,12 @@ export default function BatchReport({ filters, period, setPeriod }) {
         </div>
       ) : (
         <>
-          {unpricedItems > 0 && (
-            <div className="notice notice--warn">
+          {unpricedItems > 0 && closedNotice !== noticeKey && (
+            <div className="notice notice--warn notice--closable">
+              <button type="button" className="notice__close" onClick={() => setClosedNotice(noticeKey)}
+                      aria-label="Close this notice" title="Close">
+                <Icon name="close" size={14} />
+              </button>
               <b>{num(unpricedItems)} line item{unpricedItems === 1 ? '' : 's'}</b> in this period have no item price on
               record, shown as “—” below (no Item Price, no For Remittance figure). Quantities and unit-count subtotals
               are unaffected.
@@ -185,7 +193,16 @@ export default function BatchReport({ filters, period, setPeriod }) {
               <div className="report-supplier"><span>{supplier}</span></div>
               {/* caps at 10 visible rows and scrolls; the header stays put */}
               <div className="report-items">
-                <table className="tbl">
+                {/* Fixed column widths, the same in every supplier's table, so
+                    Quantity / Item Price / For Remittance line up down the page
+                    instead of each table sizing its columns to its own figures. */}
+                <table className="tbl tbl--fixed">
+                  <colgroup>
+                    <col />
+                    <col style={{ width: '16%' }} />
+                    <col style={{ width: '18%' }} />
+                    <col style={{ width: '20%' }} />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th>Item</th>
@@ -198,7 +215,7 @@ export default function BatchReport({ filters, period, setPeriod }) {
                     {items.map(item => (
                       <tr key={item.item_name}>
                         <td className="strong">
-                          <span className="cell-trunc" style={{ '--trunc': '380px' }} title={item.item_name}>
+                          <span className="cell-trunc" title={item.item_name}>
                             {item.item_name}
                           </span>
                         </td>

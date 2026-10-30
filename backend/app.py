@@ -851,7 +851,7 @@ def _batch_period():
     """The report period the request asks for, as (period, error).
 
     ?year=YYYY is a year; ?month=YYYY-MM a month; ?start=&end=YYYY-MM-DD a
-    span of days (one day is start == end, a week Monday to Sunday). The
+    span of days (one day is start == end, a week seven days). The
     period is what batch_pdf.period_span() and the renderers take: the year
     or month string, or the (start, end) pair."""
     start, end = request.args.get("start"), request.args.get("end")

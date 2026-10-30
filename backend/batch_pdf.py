@@ -71,7 +71,7 @@ def short_month(iso_month):
 #
 # A report covers a PERIOD: a month as 'YYYY-MM' (the store's own TBS sheet),
 # a year as 'YYYY', or a span of days as a (start, end) pair of ISO dates -
-# one day is (d, d), a week is Monday to Sunday. Every label the documents
+# one day is (d, d), a week the seven days from the day picked. Every label the documents
 # print is derived here, so the screen's period, the PDF's header and the
 # sheet's tab can never name different things.
 

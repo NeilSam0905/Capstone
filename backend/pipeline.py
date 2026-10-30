@@ -225,7 +225,7 @@ def _last_exception(stderr):
     return None, None
 
 
-def _summarise_error(step_id, script, stderr, returncode):
+def _summarise_error(step_id, script, stderr, returncode, stdout=""):
     """One sentence for the UI. Falls back to the exception line, and then to
     the exit code, so an unrecognised failure still says something specific
     rather than a generic 'it broke'."""
@@ -283,6 +283,18 @@ def _summarise_error(step_id, script, stderr, returncode):
     tail = [ln.strip() for ln in (stderr or "").strip().splitlines() if ln.strip()]
     if tail:
         return tail[-1]
+
+    # Nothing on stderr. The verification gates (step5's, step3's) print
+    # "[FAIL] <check> ..." to stdout and exit 1, so name the checks that failed;
+    # failing that, a FAILED / ABORTING line a script printed to stdout.
+    out = [ln.strip() for ln in (stdout or "").splitlines() if ln.strip()]
+    checks = [re.split(r"\s{2,}", ln[len("[FAIL]"):].strip())[0] for ln in out if ln.startswith("[FAIL]")]
+    if checks:
+        return (f"A check at the end of this step failed: {'; '.join(checks)}. "
+                f"See Technical details for the figures.")
+    said = [ln for ln in out if ln.startswith(("FAILED", "ABORTING"))]
+    if said:
+        return said[-1]
     return f"The step stopped with exit code {returncode} and printed no error."
 
 # ------------------------------------------------------------ process control
@@ -435,10 +447,11 @@ def _run_all():
                         f"want to let it finish."
                     )
                 else:
-                    entry["error"] = _summarise_error(sid, script, stderr, returncode)
+                    entry["error"] = _summarise_error(sid, script, stderr, returncode, stdout)
                 # The frames are kept, just not shown by default - the frontend
-                # puts them behind a "technical details" toggle.
-                entry["error_detail"] = (stderr or "").strip()[-4000:] or None
+                # puts them behind a "technical details" toggle. A step that
+                # printed nothing to stderr gets its stdout tail there instead.
+                entry["error_detail"] = ((stderr or "").strip() or (stdout or "").strip())[-4000:] or None
                 entry["status"] = "skipped" if optional else "error"
                 if not optional:
                     ok_overall = False
@@ -669,7 +682,8 @@ def get_staleness(con):
         total = sum(pending.values())
         return {
             "supported": True, "stale": total > 0 or interrupted is not None, "never_run": True,
-            "running": running, "interrupted": interrupted, "last_run": None,
+            "running": running, "interrupted": interrupted, "latest_run_id": latest["run_id"] if latest else None,
+            "last_run": None,
             "pending": pending, "total_pending": total,
             "reason": "No completed pipeline run has been recorded for this database.",
         }
@@ -694,6 +708,9 @@ def get_staleness(con):
         "never_run": False,
         "running": running,
         "interrupted": interrupted,
+        # The most recent run of any status: the Tally Interface keys a closed
+        # banner on it, so the next run's outcome shows again.
+        "latest_run_id": latest["run_id"] if latest else None,
         "last_run": {
             "run_id": last["run_id"],
             "finished_at": last["finished_at"],
