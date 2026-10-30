@@ -684,6 +684,8 @@ PERFORMANCE_DAILY_DAYS = 90
 TOP_EARNER_WINDOW_DAYS = 365
 TOP_EARNER_SHARE = 0.80          # list items down to this share of sales
 SMALL_SELLER_UNITS = 10          # "sold this many or fewer" = negligible
+STOPPED_MIN_UNITS = 5            # sold this many last month, none this month
+CATEGORY_DRIVERS = 2             # items named behind each category's change
 
 
 def _month_before(month, years=0, months=1):
@@ -706,7 +708,10 @@ def get_overview_performance():
     cannot move it. Supplier / category narrow the sums.
 
     `by_category` splits the latest and previous months by category, so the
-    Overview can say where sales moved rather than only that they did."""
+    Overview can say where sales moved rather than only that they did, and
+    names the items that moved each one most. `stopped_selling` lists the
+    items that sold last month and not once this month: one that suddenly
+    stops has often run out, so they are the ones to check first."""
     c = con()
     cat = catalog.compute_catalog(c)
     supplier = request.args.get("supplier") or None
@@ -729,7 +734,7 @@ def get_overview_performance():
     latest = history_end[:7]
     previous = _month_before(latest)
 
-    daily, monthly, items, by_category = {}, {}, {}, {}
+    daily, monthly, items, by_category, by_item = {}, {}, {}, {}, {}
     units_all = units_priced = 0
     for r in rows:
         pid = r["product_id"]
@@ -739,6 +744,9 @@ def get_overview_performance():
         month = r["day"][:7]
         m = monthly.setdefault(month, {"month": month, "php": 0.0, "units": 0})
         m["units"] += r["units"]
+        if month in (latest, previous):
+            bi = by_item.setdefault(pid, {"units": 0, "previous_units": 0, "php": 0.0, "previous_php": 0.0})
+            bi["units" if month == latest else "previous_units"] += r["units"]
         if r["day"] >= window_start:
             units_all += r["units"]
         if price is None:
@@ -749,6 +757,7 @@ def get_overview_performance():
             name = (by_id.get(pid) or {}).get("category") or "Uncategorised"
             bc = by_category.setdefault(name, {"category": name, "php": 0.0, "previous_php": 0.0})
             bc["php" if month == latest else "previous_php"] += php
+            by_item[pid]["php" if month == latest else "previous_php"] += php
         if r["day"] >= daily_start:
             daily[r["day"]] = daily.get(r["day"], 0.0) + php
         if r["day"] >= window_start:
@@ -781,6 +790,24 @@ def get_overview_performance():
     n_for_share = next((i + 1 for i, t in enumerate(top) if t["cum_share"] >= TOP_EARNER_SHARE), len(top))
     small = [t for t in top if t["units"] <= SMALL_SELLER_UNITS]
 
+    def category_of(pid):
+        return (by_id.get(pid) or {}).get("category") or "Uncategorised"
+
+    def drivers(category, diff):
+        """The items that moved `category` furthest the way it moved."""
+        moved = [(pid, v["php"] - v["previous_php"]) for pid, v in by_item.items()
+                 if category_of(pid) == category]
+        moved = sorted((t for t in moved if t[1] * diff > 0), key=lambda t: -abs(t[1]))
+        return [{"item_name": by_id[pid]["item_name"], "diff": round(d, 2)}
+                for pid, d in moved[:CATEGORY_DRIVERS]]
+
+    stopped = sorted(
+        ({"product_id": pid, "item_name": by_id[pid]["item_name"], "category": category_of(pid),
+          "previous_units": v["previous_units"], "previous_php": round(v["previous_php"], 2)}
+         for pid, v in by_item.items()
+         if v["previous_units"] >= STOPPED_MIN_UNITS and v["units"] == 0),
+        key=lambda s: (-s["previous_php"], -s["previous_units"]))
+
     return jsonify({
         "available": True,
         "history_end": history_end,
@@ -790,8 +817,11 @@ def get_overview_performance():
         "same_month_last_year": month_figure(_month_before(latest, years=1, months=0)),
         "by_category": sorted(
             ({"category": v["category"], "php": round(v["php"], 2),
-              "previous_php": round(v["previous_php"], 2)} for v in by_category.values()),
+              "previous_php": round(v["previous_php"], 2),
+              "drivers": drivers(v["category"], v["php"] - v["previous_php"])}
+             for v in by_category.values()),
             key=lambda v: -v["php"]),
+        "stopped_selling": {"min_units": STOPPED_MIN_UNITS, "items": stopped},
         "daily": [{"date": d, "php": round(daily.get(d, 0.0), 2)} for d in days],
         "priced_unit_share": units_priced / units_all if units_all else None,
         "top": {
@@ -1255,6 +1285,7 @@ def _reorder_items(c):
             item["approaching_rop"] = None
             item["order_up_to_level"] = None
             item["suggested_order_qty"] = None
+            item["suggested_order_min"] = None
             for scen in item["scenarios"].values():
                 scen["exceeds_annual_demand"] = None
             continue
@@ -1285,6 +1316,15 @@ def _reorder_items(c):
         item["order_up_to_level"] = round(target, 1)
         item["suggested_order_qty"] = (
             max(0, int(round(target - stock))) if item["needs_reorder"] else 0
+        )
+        # The same order without the safety stock: what the expected sales
+        # alone would use up. The pair is the range the Overview shows, so a
+        # provisional quantity is not read as exact - the low end if delivery
+        # and sales go as averaged, the high end with the full buffer.
+        ss = item["safety_stock"] or 0.0
+        item["suggested_order_min"] = (
+            min(item["suggested_order_qty"], max(0, int(round(target - ss - stock))))
+            if item["needs_reorder"] else 0
         )
 
         for scen in item["scenarios"].values():

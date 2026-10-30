@@ -5,11 +5,12 @@ import {
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
-import { Loading, PendingValue } from '../components/Pending';
+import { Loading } from '../components/Pending';
 import { LineChart, HBars, StackBar } from '../components/charts';
 import Modal from '../components/Modal';
 import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
+import InfoTip from '../components/InfoTip';
 import { AdvisoriesPanel, AdvisoriesJump } from '../components/Advisories';
 import { ADVISORIES_ANCHOR, TALLY_TAB_KEY } from '../config';
 import { num, shortMonth, longMonth, usDate, peso, pesoK, FSN_TONE, FSN_LABEL, RULE, RULE_ORDER } from '../lib/format';
@@ -90,7 +91,6 @@ export default function Overview({ filters, setPage, setView, user }) {
   [alertItems]);
   const nearRop = alertItems.filter(a => a.approaching_rop).length;
   const counted = alertItems.filter(a => a.current_stock != null);
-  const uncounted = alertItems.length - counted.length;
   const latestCount = counted.reduce((m, a) => (a.stock_as_of && a.stock_as_of > m ? a.stock_as_of : m), '');
 
   const alertById = useMemo(() => new Map(alertItems.map(a => [a.product_id, a])), [alertItems]);
@@ -113,8 +113,25 @@ export default function Overview({ filters, setPage, setView, user }) {
   const earnerIds = useMemo(
     () => new Set(earners.slice(0, top?.n_for_share ?? 0).map(t => t.product_id)), [earners, top]);
   const dueAmongEarners = due.filter(a => earnerIds.has(a.product_id)).length;
-  const top10Uncounted = earners.slice(0, 10)
-    .filter(t => alertById.get(t.product_id)?.current_stock == null).length;
+
+  // Every item with a reorder point, sorted by what its last inventory count
+  // says: the stock check under the reorder banner. Each group opens as a list
+  // (StockGroupModal), highest sales first, so every count leads to the items
+  // behind it and to why they matter.
+  const revenueOf = useMemo(() => new Map(products.map(p => [p.product_id, p.revenue ?? 0])), [products]);
+  const salesInView = useMemo(() => products.reduce((s, p) => s + (p.revenue ?? 0), 0), [products]);
+  const stockGroups = useMemo(() => {
+    const bySales = (a, b) => (revenueOf.get(b.product_id) ?? 0) - (revenueOf.get(a.product_id) ?? 0);
+    const g = { reorder: due, enough: [], unjudged: [], uncounted: [] };
+    alertItems.forEach(a => {
+      if (a.current_stock == null) g.uncounted.push(a);
+      else if (a.needs_reorder === false) g.enough.push(a);
+      else if (a.needs_reorder == null) g.unjudged.push(a);
+    });
+    ['enough', 'unjudged', 'uncounted'].forEach(k => g[k].sort(bySales));
+    return g;
+  }, [alertItems, due, revenueOf]);
+  const [openGroup, setOpenGroup] = useState(null);
 
   const ruleCounts = useMemo(() => {
     const counts = Object.fromEntries(RULE_ORDER.map(k => [k, 0]));
@@ -148,7 +165,8 @@ export default function Overview({ filters, setPage, setView, user }) {
   return (
     <div className="stack">
       <SectionLabel title="Sale Overview" hint="Sales value, latest tallied month" />
-      <PerformanceStep perf={perf} dueByCategory={dueByCategory} setPage={setPage} />
+      <PerformanceStep perf={perf} dueByCategory={dueByCategory} setPage={setPage}
+                       alertById={alertById} latestCount={latestCount} recount={recount} />
 
       <TopEarnersStep perf={perf} showAll={showAllEarners} setShowAll={setShowAllEarners}
                       alertById={alertById} showSupplier={showSupplier} />
@@ -157,47 +175,26 @@ export default function Overview({ filters, setPage, setView, user }) {
         alerts={alerts}
         due={due}
         nearRop={nearRop}
-        counted={counted.length}
-        uncounted={uncounted}
+        groups={stockGroups}
         latestCount={latestCount}
         salesThrough={salesThrough}
         categoryOf={categoryOf}
+        earnersDue={top ? dueAmongEarners : null}
         setPage={setPage}
-        earners={top ? { due: dueAmongEarners, n: top.n_for_share, share: top.share } : null}
+        onShowGroup={setOpenGroup}
       />
 
-      <div className="grid-3">
-        <KPICard
-          label="Top 10 Earners Without a Count"
-          value={top ? `${num(top10Uncounted)} of ${num(Math.min(10, earners.length))}` : <PendingValue />}
-          tone={top10Uncounted > 0 ? 'crit' : 'ok'}
-          sub={top10Uncounted > 0
-            ? 'The items that bring in the most cannot be checked against a reorder point until they are counted. Count these first.'
-            : 'Every top-10 earner has a stock count.'}
-          icon="tag"
-          onClick={top10Uncounted > 0 ? recount ?? undefined : undefined}
-          linkLabel="Count them in the Tally Interface"
-        />
-        <KPICard
-          label="Items Without an Inventory Count"
-          value={alerts?.available ? num(uncounted) : <PendingValue />}
-          tone={uncounted > 0 ? 'crit' : 'ok'}
-          sub={alerts?.available
-            ? `of ${num(alertItems.length)} items with a reorder point. Count them in the Tally Interface (Stock tab → Monthly Inventory Count) so they can be checked.`
-            : alerts?.reason ?? 'Reorder data not yet available'}
-          icon="box"
-        />
-        <NextEventTile
-          advisories={advisories}
-          onOpen={() => advisoriesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-        />
-      </div>
-
-      <div className="grid-2-1">
+      {/* The two things the stock check asks the store to do, side by side:
+          order the items at their reorder point, and count the ones that
+          cannot be checked yet. */}
+      <div className="grid-2">
         <OrderFirst due={due} showSupplier={showSupplier} setPage={setPage}
                     latestCount={latestCount} recount={recount} />
-        <DecisionGroups counts={ruleCounts} setPage={setPage} />
+        <CountFirst items={stockGroups.uncounted} revenueOf={revenueOf} salesInView={salesInView}
+                    earnerIds={earnerIds} onShowAll={() => setOpenGroup('uncounted')} recount={recount} />
       </div>
+
+      <DecisionGroups counts={ruleCounts} setPage={setPage} wide />
 
       {/* Advisories — calendar-contextual, driven by real data. The id is
           what the topbar's Advisories button scrolls to on this page
@@ -239,6 +236,19 @@ export default function Overview({ filters, setPage, setView, user }) {
         products={products}
         stock={stock}
       />
+
+      <StockGroupModal
+        group={openGroup}
+        onClose={() => setOpenGroup(null)}
+        groups={stockGroups}
+        revenueOf={revenueOf}
+        salesInView={salesInView}
+        categoryOf={categoryOf}
+        earnerIds={earnerIds}
+        latestCount={latestCount}
+        setPage={setPage}
+        recount={recount}
+      />
     </div>
   );
 }
@@ -254,11 +264,11 @@ function stockStatus(product, alert) {
 
 /* ----------------------------------------------------------------- hero */
 
-/** The decision, in one look: how many items to reorder, how many units, which
- *  categories need restocking and which suppliers that means calling. The
- *  footnote says how much of the catalogue the answer rests on, because an
- *  item never counted can never show up here however low it runs. */
-function ReorderHero({ alerts, due, nearRop, counted, uncounted, latestCount, salesThrough, categoryOf, setPage, earners }) {
+/** The decision, in one look: how many items to reorder, how many units and
+ *  from how many suppliers, with short tags instead of sentences, and the
+ *  categories and suppliers it means. Under it, the stock check: the one bar
+ *  every count on this banner is a slice of. */
+function ReorderHero({ alerts, due, nearRop, groups, latestCount, salesThrough, categoryOf, earnersDue, setPage, onShowGroup }) {
   const categories = useMemo(() => groupDue(due, a => categoryOf.get(a.product_id)), [due, categoryOf]);
   const suppliers = useMemo(() => groupDue(due, a => a.supplier_name), [due]);
 
@@ -274,17 +284,8 @@ function ReorderHero({ alerts, due, nearRop, counted, uncounted, latestCount, sa
     );
   }
 
-  const units = due.reduce((s, a) => s + (a.suggested_order_qty || 0), 0);
-  const outOfStock = due.filter(a => a.current_stock === 0).length;
-  const footnote = (
-    <div className="hero__foot">
-      {uncounted > 0
-        ? <>Only {num(counted)} of {num(counted + uncounted)} items have an inventory count</>
-        : <>All {num(counted)} items have an inventory count</>}
-      {latestCount && <> (last counted {longMonth(latestCount.slice(0, 7))})</>}.
-      {uncounted > 0 && <> Count the other {num(uncounted)} to include them.</>}
-      {salesThrough && <> Based on sales tallied through {usDate(salesThrough)}.</>}
-    </div>
+  const check = (
+    <StockCheck groups={groups} latestCount={latestCount} salesThrough={salesThrough} onShowGroup={onShowGroup} />
   );
 
   if (due.length === 0) {
@@ -292,16 +293,20 @@ function ReorderHero({ alerts, due, nearRop, counted, uncounted, latestCount, sa
       <section className="card hero is-clear">
         <div className="hero__main">
           <div className="hero__title">No item needs reordering now</div>
-          <div className="hero__sub">
-            {nearRop > 0
-              ? <>{num(nearRop)} {nearRop === 1 ? 'item is' : 'items are'} running low; add {nearRop === 1 ? 'it' : 'them'} to the next order.</>
-              : 'Every counted item still has enough stock.'}
-          </div>
+          {nearRop > 0 && (
+            <div className="hero__chips">
+              <span className="tag tag--warn">{num(nearRop)} running low</span>
+            </div>
+          )}
         </div>
-        {footnote}
+        {check}
       </section>
     );
   }
+
+  const units = due.reduce((s, a) => s + (a.suggested_order_qty || 0), 0);
+  const unitsMin = due.reduce((s, a) => s + orderMin(a), 0);
+  const outOfStock = due.filter(a => a.current_stock === 0).length;
 
   return (
     <section className="card hero">
@@ -310,34 +315,108 @@ function ReorderHero({ alerts, due, nearRop, counted, uncounted, latestCount, sa
           Reorder <b>{num(due.length)} {due.length === 1 ? 'item' : 'items'}</b>
         </div>
         <div className="hero__sub">
-          Order about <b>{num(units)} units</b> across <b>{num(suppliers.length)} {suppliers.length === 1 ? 'supplier' : 'suppliers'}</b>.
-          {outOfStock > 0 && <> <b className="is-crit">{num(outOfStock)}</b> of {outOfStock === 1 ? 'this item has' : 'these items have'} no stock left.</>}
-          {/* Every due item stays in the list: filtering it to the top
-              earners would hide real reorders. This only says where the
-              sales value is among them. */}
-          {earners && (
-            <> {num(earners.due)} of them {earners.due === 1 ? 'is' : 'are'} among the {num(earners.n)} items
-              that make {Math.round(earners.share * 100)}% of sales; the
-              other {num(due.length - earners.due)} are lower-value.</>
+          {range(unitsMin, units)} units from {num(suppliers.length)} {suppliers.length === 1 ? 'supplier' : 'suppliers'}
+        </div>
+        {/* Every due item stays in the list: filtering it to the top earners
+            would hide real reorders. The tags only say what is among them. */}
+        <div className="hero__chips">
+          {outOfStock > 0 && <span className="tag tag--crit">{num(outOfStock)} out of stock</span>}
+          {earnersDue > 0 && (
+            <span className="tag tag--gold" title="Among the items that make 80% of sales">
+              {num(earnersDue)} top {earnersDue === 1 ? 'earner' : 'earners'}
+            </span>
           )}
+          {nearRop > 0 && <span className="tag tag--warn">{num(nearRop)} more running low</span>}
         </div>
         <div className="hero__actions">
           <button type="button" className="btn btn--ink" onClick={() => setPage?.('reorder')}>
             Open Reorder Alerts <Icon name="arrow" size={13} />
           </button>
-          <span className="hint">
-            {nearRop > 0
-              ? `${num(nearRop)} more ${nearRop === 1 ? 'item is' : 'items are'} running low; add ${nearRop === 1 ? 'it' : 'them'} to the next order.`
-              : 'No other counted item is running low.'}
-          </span>
         </div>
       </div>
 
       <HeroList title="Categories" groups={categories} noun={['category', 'categories']} />
       <HeroList title="Suppliers" groups={suppliers} noun={['supplier', 'suppliers']} />
 
-      {footnote}
+      {check}
     </section>
+  );
+}
+
+/** What the last inventory count says about each item with a reorder point.
+ *  Grey and striped for "not counted": an unknown, not a level. */
+const STOCK_GROUPS = [
+  { key: 'reorder',   label: 'Reorder now',          color: 'var(--crit)' },
+  { key: 'enough',    label: 'Enough stock',         color: 'var(--ok)' },
+  { key: 'unjudged',  label: 'Too new to judge',     color: 'var(--warn)' },
+  { key: 'uncounted', label: 'Not counted',
+    color: 'repeating-linear-gradient(135deg, var(--line) 0 5px, var(--line-soft) 5px 10px)' },
+];
+
+/** What "counted" means, for a reader new to the system: the (i) beside the
+ *  stock check and Count These First. */
+function CountInfo() {
+  return (
+    <InfoTip label="What is an inventory count?" width={380}>
+      <div className="infotip__h">What &ldquo;counted&rdquo; means</div>
+      <p>
+        An <b>inventory count</b> is when staff count how many units of an item are actually on the shelf
+        and record it in the Tally Interface (Stock tab &rarr; Monthly Inventory Count).
+      </p>
+      <p>
+        The system compares that number with the item&rsquo;s <b>reorder point</b>, the stock level at which
+        it should be ordered again:
+      </p>
+      <ul className="infotip__bullets">
+        <li><b>Reorder now</b>: the count is at or below the reorder point.</li>
+        <li><b>Enough stock</b>: the count is above it.</li>
+        <li><b>Too new to judge</b>: counted, but the item has too little sales history for a reorder point yet.</li>
+        <li><b>Not counted</b>: no count recorded, so the system cannot tell how many are on hand or whether to reorder.</li>
+      </ul>
+    </InfoTip>
+  );
+}
+
+/** The stock check: one bar for every item with a reorder point, split by
+ *  what its last count says. It is what makes the banner's numbers relate -
+ *  the items to reorder are a slice of the counted ones, and the uncounted
+ *  slice is everything the reorder list cannot see. Each slice, and its
+ *  legend entry, opens the items in it. */
+function StockCheck({ groups, latestCount, salesThrough, onShowGroup }) {
+  const shown = STOCK_GROUPS.filter(s => groups[s.key].length > 0);
+  const total = shown.reduce((n, s) => n + groups[s.key].length, 0);
+  if (!total) return null;
+  return (
+    <div className="stockcheck">
+      <div className="stockcheck__h">
+        <span className="stockcheck__title">
+          <b>Stock check</b><CountInfo /> &middot; {num(total)} items with a reorder point
+        </span>
+        <span className="hint">
+          {latestCount && <>Last counted {longMonth(latestCount.slice(0, 7))}</>}
+          {latestCount && salesThrough && ' · '}
+          {salesThrough && <>sales through {usDate(salesThrough)}</>}
+        </span>
+      </div>
+      <div className="stockcheck__bar">
+        {shown.map(s => (
+          <button key={s.key} type="button" className="stockcheck__seg"
+                  style={{ flexGrow: groups[s.key].length, background: s.color }}
+                  title={`${num(groups[s.key].length)} ${s.label.toLowerCase()}`}
+                  aria-label={`Show the ${num(groups[s.key].length)} items: ${s.label}`}
+                  onClick={() => onShowGroup(s.key)} />
+        ))}
+      </div>
+      <div className="stockcheck__legend">
+        {shown.map(s => (
+          <button key={s.key} type="button" className="stockcheck__item" onClick={() => onShowGroup(s.key)}>
+            <i style={{ background: s.color }} />
+            <b>{num(groups[s.key].length)}</b> {s.label}
+          </button>
+        ))}
+        <span className="hint">Click any part to see the items</span>
+      </div>
+    </div>
   );
 }
 
@@ -346,9 +425,10 @@ function groupDue(due, keyOf) {
   const groups = new Map();
   due.forEach(a => {
     const name = keyOf(a) ?? 'Uncategorised';
-    const g = groups.get(name) ?? { name, items: 0, units: 0 };
+    const g = groups.get(name) ?? { name, items: 0, units: 0, unitsMin: 0 };
     g.items += 1;
     g.units += a.suggested_order_qty || 0;
+    g.unitsMin += orderMin(a);
     groups.set(name, g);
   });
   return [...groups.values()].sort((a, b) => b.units - a.units || b.items - a.items);
@@ -367,7 +447,7 @@ function HeroList({ title, groups, noun }) {
           <li key={g.name} className="hero__row">
             <span className="hero__row-name" title={g.name}>{g.name}</span>
             <span className="hero__row-qty">
-              {num(g.units)} units &middot; {num(g.items)} {g.items === 1 ? 'item' : 'items'}
+              {range(g.unitsMin, g.units)} units &middot; {num(g.items)} {g.items === 1 ? 'item' : 'items'}
             </span>
             <span className="hero__row-bar"><span style={{ width: `${(g.units / max) * 100}%` }} /></span>
           </li>
@@ -394,7 +474,10 @@ const signedPct = p => `${p >= 0 ? '+' : '−'}${Math.abs(Math.round(p * 100))}%
 const pct1 = v => `${v.toFixed(1)}%`;
 /** Pesos, in thousands once they are big enough for it to read well. */
 const money = n => (Math.abs(n) < 10000 ? peso(n) : pesoK(n));
-const signedMoney = n => `${n >= 0 ? '+' : '−'}${money(Math.abs(n))}`;
+// The word joiner keeps the sign on the same line as its figure.
+const signedMoney = n => `${n >= 0 ? '+' : '−'}⁠${money(Math.abs(n))}`;
+/** '2026-07' -> 'July'. */
+const monthName = m => longMonth(m).split(' ')[0];
 
 /** A label over the part of the page it names. */
 function SectionLabel({ title, hint }) {
@@ -415,13 +498,21 @@ function NextStep({ children }) {
  *  before, and where it moved - category by category, with how many items in
  *  each are due for reorder - so every figure points at something to do.
  *
+ *  The three tiles answer one question each, in the order a reader asks them:
+ *  did sales go up or down, where did that come from (the category and the
+ *  items behind it), and what to check - the items that sold last month and
+ *  not once this month, which have often simply run out. A sales total on its
+ *  own ("₱2.38M, so what?") answers none of them, so it is only the detail
+ *  under the change.
+ *
  *  Two things that used to sit here are gone. The daily sales line rose and
  *  fell without saying what to order, and most of its ₱0 days were days with no
  *  tally rather than days with no sales; it moved to Demand Forecast, for
  *  exploring. The same month a year earlier went too: the older months were
  *  tallied on far fewer days (12 in July 2025 against 20 in July 2026), so that
  *  comparison measured record-keeping as much as sales. */
-function PerformanceStep({ perf, dueByCategory, setPage }) {
+function PerformanceStep({ perf, dueByCategory, setPage, alertById, latestCount, recount }) {
+  const [stoppedOpen, setStoppedOpen] = useState(false);
   if (!perf) return <div className="card card__pad"><Loading label="Adding up sales…" /></div>;
   if (!perf.available) return <div className="card card__pad"><div className="empty">{perf.reason}</div></div>;
 
@@ -454,36 +545,70 @@ function PerformanceStep({ perf, dueByCategory, setPage }) {
   }
   if (!steps.length) steps.push('keep the Top 10 Earners below in stock.');
 
+  const curName = monthName(cur.month);
+  const prevName = prev ? monthName(prev.month) : 'the month before';
+  const soFar = perf.latest_month_complete ? '' : ` (through ${usDate(perf.history_end)})`;
+  const moved = mover && mover.diff !== 0 ? mover : null;
+  const stopped = perf.stopped_selling?.items ?? [];
+  const stoppedPhp = stopped.reduce((s, i) => s + i.previous_php, 0);
+  const stoppedNames = stopped.slice(0, 2).map(i => i.item_name).join(', ')
+    + (stopped.length > 2 ? ` and ${num(stopped.length - 2)} more` : '');
+
   return (
     <>
-      <div className="grid-2">
+      <div className="grid-3">
         <KPICard
-          label={`Sales, ${longMonth(cur.month)}`}
-          value={pesoK(cur.php)}
-          sub={`${num(cur.units)} units · latest tallied month`
-            + (perf.latest_month_complete ? '' : `, through ${usDate(perf.history_end)}`)}
+          label={prev ? `Sales, ${prevName} to ${curName}` : `Sales, ${longMonth(cur.month)}`}
+          value={vsPrev == null ? pesoK(cur.php) : signedPct(vsPrev)}
+          tone={vsPrev == null ? undefined : vsPrev >= 0 ? 'ok' : 'crit'}
+          sub={prev
+            ? `${pesoK(prev.php)} in ${prevName}, ${pesoK(cur.php)} in ${curName}${soFar}`
+            : `No sales tallied the month before${soFar}`}
           icon="trend"
         />
         <KPICard
-          label={prev ? `vs ${longMonth(prev.month)}` : 'vs the month before'}
-          value={vsPrev == null ? '—' : signedPct(vsPrev)}
-          tone={vsPrev == null ? undefined : vsPrev >= 0 ? 'ok' : 'crit'}
-          sub={prev
-            ? `${pesoK(prev.php)} the month before`
-              + (mover && mover.diff !== 0
-                ? ` · biggest ${mover.diff < 0 ? 'drop' : 'rise'}: ${mover.category} (${signedMoney(mover.diff)})`
+          label={moved ? `Category that ${moved.diff < 0 ? 'fell' : 'grew'} most` : 'Nothing changed'}
+          value={moved ? moved.category : '—'}
+          sub={moved
+            ? `${signedMoney(moved.diff)}`
+              + (moved.drivers?.length
+                ? `, mostly ${moved.drivers.map(d => `${d.item_name} (${signedMoney(d.diff)})`).join(' and ')}`
                 : '')
-            : 'No sales tallied the month before'}
+            : prev ? `Every category sold the same as in ${prevName}` : 'No sales tallied the month before'}
           icon="chart"
         />
+        <KPICard
+          label={`Sold in ${prevName}, none in ${curName}`}
+          value={stopped.length ? `${num(stopped.length)} ${stopped.length === 1 ? 'item' : 'items'}` : 'None'}
+          tone={stopped.length ? 'crit' : undefined}
+          sub={stopped.length
+            ? `${money(stoppedPhp)} of sales in ${prevName}. Did they run out? ${stoppedNames}`
+            : `Every item that sold ${perf.stopped_selling?.min_units ?? 5} or more in ${prevName} sold again.`}
+          icon="alert"
+          onClick={stopped.length ? () => setStoppedOpen(true) : undefined}
+          linkLabel="See the items"
+        />
       </div>
+
+      <StoppedModal
+        open={stoppedOpen}
+        onClose={() => setStoppedOpen(false)}
+        items={stopped}
+        minUnits={perf.stopped_selling?.min_units}
+        prevName={prevName}
+        curName={curName}
+        alertById={alertById}
+        latestCount={latestCount}
+        setPage={setPage}
+        recount={recount}
+      />
 
       {cats.length > 0 && (
         <div className="card card__pad">
           <div className="card-h">
             <span className="section-h">What Changed This Month</span>
             <span className="hint">
-              By category{prev ? `, ${longMonth(cur.month)} against ${longMonth(prev.month)}` : ''}
+              By category{prev ? `, ${longMonth(prev.month)} to ${longMonth(cur.month)}` : ''}
             </span>
           </div>
           <div style={{ overflowX: 'auto' }}>
@@ -491,8 +616,8 @@ function PerformanceStep({ perf, dueByCategory, setPage }) {
               <thead>
                 <tr>
                   <th>Category</th>
-                  <th className="num">{longMonth(cur.month)}</th>
                   {prev && <th className="num">{longMonth(prev.month)}</th>}
+                  <th className="num">{longMonth(cur.month)}</th>
                   {prev && <th className="num">Change</th>}
                   <th className="num">Items to reorder</th>
                 </tr>
@@ -501,8 +626,8 @@ function PerformanceStep({ perf, dueByCategory, setPage }) {
                 {cats.map(c => (
                   <tr key={c.category}>
                     <td className="strong">{c.category}</td>
-                    <td className="num strong">{money(c.php)}</td>
                     {prev && <td className="num">{money(c.previous_php)}</td>}
+                    <td className="num strong">{money(c.php)}</td>
                     {prev && (
                       <td className={`num change-cell${c.diff > 0 ? ' is-up' : c.diff < 0 ? ' is-down' : ''}`}>
                         {c.pct == null
@@ -528,6 +653,59 @@ function PerformanceStep({ perf, dueByCategory, setPage }) {
         </div>
       )}
     </>
+  );
+}
+
+/** The items that sold last month and not once this month, biggest seller
+ *  first, with where each stands now: one that suddenly stops selling has
+ *  often run out, so this is the list to check the shelf against. */
+function StoppedModal({ open, onClose, items, minUnits, prevName, curName, alertById, latestCount, setPage, recount }) {
+  if (!open) return null;
+  const total = items.reduce((s, i) => s + i.previous_php, 0);
+  const countMonth = latestCount ? shortMonthYear(latestCount) : null;
+
+  const nowOf = a => {
+    if (!a) return { text: 'No reorder point', rank: 3 };
+    if (a.needs_reorder) return { text: `Reorder ${range(orderMin(a), a.suggested_order_qty)}`, rank: 0, crit: true };
+    if (a.current_stock == null) return { text: 'Not counted', rank: 1 };
+    return { text: `${num(a.current_stock)} on hand${countMonth ? ` (${countMonth})` : ''}`, rank: 2 };
+  };
+  const columns = [
+    { key: 'item_name', label: 'Item', strong: true, truncate: true, width: '32%' },
+    { key: 'category', label: 'Category', truncate: true, width: '18%' },
+    { key: 'previous_units', label: `Sold in ${prevName}`, num: true, width: '14%', render: num },
+    { key: 'previous_php', label: `Sales in ${prevName}`, num: true, width: '14%', render: v => money(v) },
+    { key: 'rank', label: 'Now', width: '22%',
+      render: (_, r) => (r.now.crit ? <span className="tag tag--crit">{r.now.text}</span> : r.now.text) },
+  ];
+  const rows = items.map(i => {
+    const now = nowOf(alertById.get(i.product_id));
+    return { ...i, now, rank: now.rank, rowKey: `st${i.product_id}` };
+  });
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Sold in ${prevName}, none in ${curName}: ${num(items.length)} ${items.length === 1 ? 'item' : 'items'}`}
+      subtitle={`Each sold ${minUnits ?? 5} or more in ${prevName}, ${money(total)} in all, then none in ${curName}. `
+        + 'An item that suddenly stops selling has often run out: check the shelf, then reorder or count it.'}
+      width={960}
+    >
+      <div className="btn-row" style={{ marginBottom: 12 }}>
+        <button className="btn btn--ink btn--sm" onClick={() => { onClose(); setPage?.('reorder'); }}>
+          Open Reorder Alerts <Icon name="arrow" size={12} />
+        </button>
+        {recount && (
+          <button className="btn btn--ghost btn--sm" onClick={() => { onClose(); recount(); }}>
+            Count them in the Tally Interface <Icon name="arrow" size={12} />
+          </button>
+        )}
+      </div>
+      <div className="modal-grow">
+        <DataTable columns={columns} data={rows} pageSize={10} minWidth={760} />
+      </div>
+    </Modal>
   );
 }
 
@@ -578,41 +756,135 @@ function TopEarnersStep({ perf, showAll, setShowAll, alertById, showSupplier }) 
   );
 }
 
-/* ---------------------------------------------------------------- tiles */
+/* ------------------------------------------------------------ stock check */
 
-/** The next dated advisory (enrollment, exams, a break, an event) that has
- *  not ended yet: what the store should plan the next order around. */
-function NextEventTile({ advisories, onOpen }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const next = (advisories?.advisories ?? [])
-    .filter(a => a.date_range && a.date_range[1] >= today)
-    .sort((a, b) => a.date_range[0].localeCompare(b.date_range[0]))[0];
+/** What each stock-check group is, in a line, for the list it opens. */
+const GROUP_TEXT = {
+  reorder:   'At or below their reorder point at the last count.',
+  enough:    'Above their reorder point at the last count.',
+  unjudged:  'Counted, but with too little sales history for a reorder point yet.',
+  uncounted: 'No inventory count, so the system cannot tell whether they are running low.',
+};
 
-  if (!next) {
-    return (
-      <KPICard
-        label="Next on the Calendar"
-        value={advisories ? 'Nothing flagged' : <PendingValue />}
-        sub="No enrollment, exam week, break or event in the advisories"
-        icon="cal"
-      />
-    );
-  }
+/** The items in one stock-check group, highest sales first: which items a
+ *  count is made of, what they sold (why they matter), and the one thing to
+ *  do about them. */
+function StockGroupModal({ group, onClose, groups, revenueOf, salesInView, categoryOf, earnerIds, latestCount, setPage, recount }) {
+  if (!group) return null;
+  const meta = STOCK_GROUPS.find(s => s.key === group);
+  const items = groups[group] ?? [];
+  const sales = items.reduce((s, a) => s + (revenueOf.get(a.product_id) ?? 0), 0);
+  const share = salesInView ? sales / salesInView : 0;
+  const countMonth = latestCount ? shortMonthYear(latestCount) : null;
 
-  // "Exams scheduled 12/14/2026 to 12/20/2026. Past exam weeks sold about the
-  // same per day as regular days; restock as usual." - the dates are on the
-  // tile already, so only the advice after the first sentence is kept.
-  const advice = next.description.split(/(?<=\.)\s+/).slice(1).join(' ') || next.description;
-  const [from, to] = next.date_range;
+  const last = group === 'reorder'
+    ? { key: 'suggested_order_qty', label: <>Order <OrderInfo /></>, num: true, strong: true, width: '13%',
+        render: (v, a) => range(orderMin(a), v) }
+    : group === 'uncounted'
+      ? { key: 'top', label: '', width: '12%', render: v => (v ? <span className="tag tag--gold">Top earner</span> : null) }
+      : { key: 'current_stock', label: countMonth ? `On hand (${countMonth})` : 'On hand', num: true, width: '12%', render: num };
+  const columns = [
+    { key: 'item_name', label: 'Item', strong: true, truncate: true, width: '34%' },
+    { key: 'category', label: 'Category', truncate: true, width: '18%' },
+    { key: 'supplier_name', label: 'Supplier', truncate: true, width: '22%' },
+    { key: 'sales', label: 'Sales', num: true, width: '14%', render: v => money(v) },
+    last,
+  ];
+  const rows = items.map(a => ({
+    ...a,
+    category: categoryOf.get(a.product_id) ?? '—',
+    sales: revenueOf.get(a.product_id) ?? 0,
+    top: earnerIds.has(a.product_id),
+    rowKey: `sg${a.product_id}`,
+  }));
+
   return (
-    <KPICard
-      label="Next on the Calendar"
-      value={next.title.replace(/\s+Upcoming$/i, '')}
-      sub={`${usDate(from)}${to !== from ? ` – ${usDate(to)}` : ''} · ${advice}`}
-      icon="cal"
-      onClick={onOpen}
-      linkLabel="See advisories"
-    />
+    <Modal
+      open
+      onClose={onClose}
+      title={`${meta.label}: ${num(items.length)} ${items.length === 1 ? 'item' : 'items'}`}
+      subtitle={`${GROUP_TEXT[group]} They made ${money(sales)}, ${pct1(share * 100)} of sales.`}
+      width={960}
+    >
+      {group === 'reorder' && (
+        <div className="btn-row" style={{ marginBottom: 12 }}>
+          <button className="btn btn--ink btn--sm" onClick={() => { onClose(); setPage?.('reorder'); }}>
+            Open Reorder Alerts <Icon name="arrow" size={12} />
+          </button>
+        </div>
+      )}
+      {group === 'uncounted' && recount && (
+        <div className="btn-row" style={{ marginBottom: 12 }}>
+          <button className="btn btn--ink btn--sm" onClick={() => { onClose(); recount(); }}>
+            Count them in the Tally Interface <Icon name="arrow" size={12} />
+          </button>
+        </div>
+      )}
+      <div className="modal-grow">
+        <DataTable columns={columns} data={rows} pageSize={10} minWidth={760} />
+      </div>
+    </Modal>
+  );
+}
+
+/** The items the stock check cannot see, highest sales first: which to count,
+ *  and why - what they sell. The whole list opens from "See all". */
+function CountFirst({ items, revenueOf, salesInView, earnerIds, onShowAll, recount }) {
+  const rows = items.slice(0, ORDER_FIRST_ROWS);
+  const sales = items.reduce((s, a) => s + (revenueOf.get(a.product_id) ?? 0), 0);
+  const share = salesInView ? sales / salesInView : 0;
+  const earners = items.filter(a => earnerIds.has(a.product_id)).length;
+  return (
+    <div className="card card__pad">
+      <div className="card-h">
+        <span className="card-h__title">
+          <span className="section-h">Count These First</span>
+          <CountInfo />
+        </span>
+        {items.length > 0 && (
+          <button type="button" className="linkish" onClick={onShowAll}>
+            See all {num(items.length)} <Icon name="arrow" size={12} />
+          </button>
+        )}
+      </div>
+      {rows.length === 0
+        ? <div className="empty">Every item with a reorder point has an inventory count.</div>
+        : (
+          <>
+            <div className="countfirst__why">
+              Not counted, so they can&rsquo;t be flagged for reorder. They made <b>{money(sales)}</b>,{' '}
+              {pct1(share * 100)} of sales{earners > 0 && <>, including <b>{num(earners)} top earners</b></>}.
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th className="num">Sales</th>
+                    <th aria-label="Top earner" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(a => (
+                    <tr key={a.product_id}>
+                      <td className="strong overview-order__item" title={a.item_name}>{a.item_name}</td>
+                      <td className="num">{money(revenueOf.get(a.product_id) ?? 0)}</td>
+                      <td>{earnerIds.has(a.product_id) && <span className="tag tag--gold">Top earner</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {recount && (
+              <div className="btn-row" style={{ marginTop: 12 }}>
+                <button className="btn btn--ink btn--sm" onClick={recount}>
+                  Count them in the Tally Interface <Icon name="arrow" size={12} />
+                </button>
+              </div>
+            )}
+          </>
+        )}
+    </div>
   );
 }
 
@@ -648,7 +920,9 @@ function OrderFirst({ due, showSupplier, setPage, latestCount, recount }) {
                   <th className="num" title={countMonth ? `Stock as last counted, ${countMonth}` : undefined}>
                     On hand{countMonth && <span className="th-sub">as of {shortMonthYear(latestCount)}</span>}
                   </th>
-                  <th className="num">Order{provisional && <span className="th-sub">provisional</span>}</th>
+                  <th className="num">
+                    Order <OrderInfo />{provisional && <span className="th-sub">provisional</span>}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -657,7 +931,7 @@ function OrderFirst({ due, showSupplier, setPage, latestCount, recount }) {
                     <td className="strong overview-order__item" title={a.item_name}>{a.item_name}</td>
                     {showSupplier && <td className="overview-order__supplier">{a.supplier_name}</td>}
                     <td className="num">{num(a.current_stock)}</td>
-                    <td className="num strong">{num(a.suggested_order_qty)}</td>
+                    <td className="num strong">{range(orderMin(a), a.suggested_order_qty)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -665,7 +939,7 @@ function OrderFirst({ due, showSupplier, setPage, latestCount, recount }) {
           </div>
         )}
       <div className="hint" style={{ marginTop: 10 }}>
-        Least stock cover first. Each order covers the supplier&rsquo;s lead time plus 30 days of sales.
+        Least stock cover first.
         {provisional && <> Quantities are provisional: lead times are estimates
           {countMonth && <> and stock is as counted in {countMonth}</>}.</>}
         {recount && rows.length > 0 && (
@@ -677,14 +951,40 @@ function OrderFirst({ due, showSupplier, setPage, latestCount, recount }) {
   );
 }
 
+/** The low end of an item's order: the backend's quantity without the safety
+ *  stock. Falls back to the full quantity, a range of one. */
+const orderMin = a => a.suggested_order_min ?? a.suggested_order_qty ?? 0;
+
+/** 'lo–hi', or one number when the two meet. */
+const range = (lo, hi) => (lo === hi ? num(hi) : `${num(lo)}–${num(hi)}`);
+
+/** Why the order is a range and which end to pick: the (i) beside "Order". */
+function OrderInfo() {
+  return (
+    <InfoTip label="Why is the order a range?" width={380}>
+      <div className="infotip__h">Why a range</div>
+      <p>The order is an estimate, so it is shown from low to high:</p>
+      <ul className="infotip__bullets">
+        <li><b>Low</b>: enough for the expected sales until the delivery arrives, plus 30 days, less what is on hand.</li>
+        <li><b>High</b>: the same, plus the item&rsquo;s <b>safety stock</b>, extra kept in case the delivery is late or sales jump.</li>
+      </ul>
+      <p>
+        Order nearer the high end for a top earner or a supplier that is often late, nearer the low end when
+        shelf space is tight. One number means the item has little or no safety stock, so both ends come out the same.
+      </p>
+    </InfoTip>
+  );
+}
+
 /** '2026-04' or '2026-04-30' -> 'Apr 2026', short enough for a column heading. */
 function shortMonthYear(iso) {
   return `${shortMonth(iso.slice(0, 7)).split(' ')[0]} ${iso.slice(0, 4)}`;
 }
 
 /** The FSN classes as the actions they call for (backend/decision_rules.py),
- *  so the card says what to do rather than only how items are split. */
-function DecisionGroups({ counts, setPage }) {
+ *  so the card says what to do rather than only how items are split. `wide`
+ *  lays the groups out in a row, for a card that spans the page. */
+function DecisionGroups({ counts, setPage, wide = false }) {
   const shown = RULE_ORDER.filter(k => k !== 'discontinued' || counts[k] > 0);
   const total = shown.reduce((s, k) => s + counts[k], 0);
   return (
@@ -695,7 +995,7 @@ function DecisionGroups({ counts, setPage }) {
           Open Classification <Icon name="arrow" size={12} />
         </button>
       </div>
-      <div className="decisions">
+      <div className={'decisions' + (wide ? ' decisions--row' : '')}>
         {shown.map(k => (
           <button key={k} type="button" className="decision" onClick={() => setPage?.('classification')}>
             <span className={`tag tag--${RULE[k].tone}`}>{RULE[k].label}</span>

@@ -1858,6 +1858,56 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .decision__hint { font-size: 12px; color: var(--text-2); }
 .decision__count { font-size: 18px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
 .overview-order__item { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+/* Overview reorder banner: short tags in place of sentences. */
+.hero__chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.hero__chips .tag { font-size: 11px; padding: 3px 9px; }
+
+/* The stock check under the banner: one bar for every item with a reorder
+   point, split by what its last count says; each slice and legend entry opens
+   its items. */
+.stockcheck { grid-column: 1 / -1; border-top: 1px solid var(--line-soft); padding-top: 14px; }
+.stockcheck__h {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap;
+  font-size: 13px; color: var(--text-2);
+}
+.stockcheck__h b { color: var(--text); }
+.stockcheck__title { display: inline-flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+/* A card title with an (i) beside it. */
+.card-h__title { display: inline-flex; align-items: center; gap: 4px; }
+.infotip__bullets { margin: 0; padding-left: 18px; }
+.infotip__bullets li { margin-bottom: 4px; }
+.stockcheck__bar { display: flex; gap: 3px; height: 16px; margin: 10px 0; }
+.stockcheck__seg {
+  flex-basis: 0; min-width: 8px; padding: 0; border: none; border-radius: 4px; cursor: pointer;
+  transition: filter .12s, transform .12s;
+}
+.stockcheck__seg:hover { filter: brightness(.9); transform: scaleY(1.2); }
+.stockcheck__seg:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.stockcheck__legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; }
+.stockcheck__item {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 0; border: none; background: none;
+  font: inherit; font-size: 12.5px; color: var(--text-2); cursor: pointer;
+}
+.stockcheck__item:hover { color: var(--text); text-decoration: underline; }
+.stockcheck__item i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.stockcheck__item b { color: var(--text); }
+
+/* Count These First: the one line that says why these items matter. */
+.countfirst__why { font-size: 13px; line-height: 1.5; color: var(--text-2); margin-bottom: 10px; }
+.countfirst__why b { color: var(--text); }
+
+/* What to Do With Each Group across the page: the four groups in a row. */
+.decisions--row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.decisions--row .decision {
+  grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "tag count" "hint hint"; align-items: start;
+}
+.decisions--row .decision .tag { grid-area: tag; }
+.decisions--row .decision__count { grid-area: count; }
+.decisions--row .decision__hint { grid-area: hint; }
+@container (max-width: 900px) {
+  .decisions--row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* Overview "What Changed This Month": the change as an arrow and percent,
    green up and red down, with the peso difference under it. */
 .tbl tbody td.change-cell { font-weight: 700; }

@@ -16,7 +16,11 @@ const MARGIN = 12;  // kept clear of the window's edges
  *  is no room below, and is kept inside the window.
  *
  *  `text` puts a visible label beside the (i), for a tip that stands in for a
- *  whole section rather than explaining the word next to it. */
+ *  whole section rather than explaining the word next to it.
+ *
+ *  Clicks stop at the tip, so an (i) in a sortable column heading or a
+ *  clickable row opens its explanation and does nothing else. React passes a
+ *  portal's events up to its parent components too, hence the panel as well. */
 export default function InfoTip({ label = 'More information', text, width = 340, children }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
@@ -74,13 +78,14 @@ export default function InfoTip({ label = 'More information', text, width = 340,
         aria-label={text ? undefined : label}
         aria-expanded={open}
         aria-controls={open ? id : undefined}
-        onClick={() => setOpen(o => !o)}
+        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
       >
         {text}
         <Icon name="info" size={15} />
       </button>
       {open && createPortal(
-        <div id={id} ref={popRef} role="dialog" aria-label={label} className="infotip__pop">
+        <div id={id} ref={popRef} role="dialog" aria-label={label} className="infotip__pop"
+             onClick={e => e.stopPropagation()}>
           {children}
         </div>,
         document.body,
