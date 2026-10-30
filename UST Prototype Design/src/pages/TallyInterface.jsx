@@ -2335,8 +2335,9 @@ function readStalenessDismissed() {
 }
 
 /** A notice with a title that stays, an explanation under it that folds away
- *  (the title is the toggle), and an X that closes it - the banners at the
- *  top of the screen and the update's failed / skipped boxes. */
+ *  (the arrow beside the X), and an X that closes it - the banners at the top
+ *  of the screen and the update's failed / skipped boxes. The title is plain
+ *  content, not the toggle, so it can hold a link to another tab. */
 function Banner({ tone, icon, title, onClose, style, children }) {
   const [open, setOpen] = useState(true);
   const bodyId = useId();
@@ -2344,13 +2345,14 @@ function Banner({ tone, icon, title, onClose, style, children }) {
     <div className={`notice notice--${tone} notice--closable tally-banner`} style={style}>
       <div className="tally-banner__head">
         <Icon name={icon} size={16} />
-        <button type="button" className="tally-banner__toggle" onClick={() => setOpen(o => !o)}
-                aria-expanded={open} aria-controls={bodyId}
-                title={open ? 'Hide the details' : 'Show the details'}>
-          <b>{title}</b>
-          <span className={`tally-banner__chev${open ? ' is-open' : ''}`}><Icon name="chevron" size={14} /></span>
-        </button>
+        <b>{title}</b>
       </div>
+      <button type="button" className="tally-banner__toggle" onClick={() => setOpen(o => !o)}
+              aria-expanded={open} aria-controls={bodyId}
+              aria-label={open ? 'Hide the details' : 'Show the details'}
+              title={open ? 'Hide the details' : 'Show the details'}>
+        <span className={`tally-banner__chev${open ? ' is-open' : ''}`}><Icon name="chevron" size={14} /></span>
+      </button>
       <button type="button" className="notice__close" onClick={onClose} aria-label="Close this notice"
               title="Close">
         <Icon name="close" size={14} />
@@ -2401,8 +2403,9 @@ function StalenessBanner({ staleness, goTo }) {
   return (
     <Banner tone={running ? 'info' : 'warn'} icon={running ? 'clock' : 'alert'} onClose={close}
             title={running
-              ? 'Updating — the dashboard still shows the previous analytics until it finishes.'
-              : 'Analytics are out of date — run them again.'}>
+              ? 'Dashboard is currently updating please wait for it to finish.'
+              : <>Analytics are out of date please run it again on <TabLink to="update" goTo={goTo}>Update
+                Analytics tab</TabLink> to refresh them.</>}>
       <div>
         {neverRun ? (
           <>
@@ -2418,11 +2421,6 @@ function StalenessBanner({ staleness, goTo }) {
           </>
         )}
       </div>
-      {!running && (
-        <div style={{ marginTop: 4 }}>
-          Run Analytics in the <TabLink to="update" goTo={goTo}>Update Analytics tab</TabLink> to refresh them.
-        </div>
-      )}
     </Banner>
   );
 }
@@ -2620,9 +2618,12 @@ function FullPipelineRun({ onChanged, attention = false }) {
   // numerator, so a forecast-less run reads 9/9 rather than stalling at 9/10.
   const scheduled = steps.filter(s => s.status !== 'deselected');
   const total = scheduled.length;
-  const settled = scheduled.filter(s => ['done', 'skipped', 'error', 'cancelled'].includes(s.status)).length;
+  // Only steps that got through count: done, or an optional step skipped on
+  // purpose. A failed or stopped step does not, so an update that fails on its
+  // last step reads 13 of 14 (93%), never a finished-looking 100%.
+  const completed = scheduled.filter(s => ['done', 'skipped'].includes(s.status)).length;
   const current = steps.find(s => s.status === 'running');
-  const pct = total ? Math.round((settled / total) * 100) : 0;
+  const pct = total ? Math.round((completed / total) * 100) : 0;
   const failures = steps.filter(s => s.status === 'error' && s.error);
   const skipped = steps.filter(s => s.status === 'skipped' && s.error);
   // The backend streams each step's stdout line by line (backend/pipeline.py
@@ -2661,7 +2662,7 @@ function FullPipelineRun({ onChanged, attention = false }) {
 
       <div className="run-choices">
         <button type="button"
-                className={`run-choice run-choice--main${attention && !running ? ' run-choice--attention' : ''}`}
+                className="run-choice"
                 onClick={() => start(false)} disabled={running || starting}>
           {attention && !running && (
             <span className="run-choice__flag"><Icon name="bell" size={12} /> Click here</span>
@@ -2688,7 +2689,7 @@ function FullPipelineRun({ onChanged, attention = false }) {
               <div className="run-status__row">
                 <span className="run-status__text">
                   <b>Updating<span className="loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></b>
-                  {' '}{settled} of {total} steps done
+                  {' '}{completed} of {total} steps done
                   {/* Before the first step the backend restores the data files
                       from vault/ (pipeline.py's _run_all), which can take a few
                       seconds with no step running - name it, so 0% isn't read
@@ -2742,7 +2743,10 @@ function FullPipelineRun({ onChanged, attention = false }) {
           <span className="run-details__chev"><Icon name="chevron" size={14} /></span>
           <span className="run-details__label">Progress</span>
           <span className="progress run-details__bar">
-            <span className="progress__fill" style={{ width: `${pct}%` }} />
+            <span className={'progress__fill'
+                    + (finished === 'done' ? ' progress__fill--done' : '')
+                    + (finished === 'error' ? ' progress__fill--failed' : '')}
+                  style={{ width: `${pct}%` }} />
           </span>
           <span className="run-details__pct">{pct}%</span>
         </summary>

@@ -226,9 +226,9 @@ def _last_exception(stderr):
 
 
 def _summarise_error(step_id, script, stderr, returncode, stdout=""):
-    """One sentence for the UI. Falls back to the exception line, and then to
-    the exit code, so an unrecognised failure still says something specific
-    rather than a generic 'it broke'."""
+    """One sentence for the UI. Falls back to the exception line, then to what
+    the step printed, and only then to a plain "stopped due to an error" - the
+    exit code is not shown, it means nothing to the staff reading this."""
     exc_type, exc_msg = _last_exception(stderr)
 
     # step0 without the client workbooks: the single most common "failure" in
@@ -273,7 +273,7 @@ def _summarise_error(step_id, script, stderr, returncode, stdout=""):
     if exc_type == "SystemExit":
         # A script calling sys.exit("message") - the message is already written
         # for a person, since these scripts exit that way deliberately.
-        return exc_msg or f"The step stopped itself (exit code {returncode})."
+        return exc_msg or "The step stopped itself."
 
     if exc_type:
         return f"{exc_type}: {exc_msg}" if exc_msg else exc_type
@@ -295,7 +295,7 @@ def _summarise_error(step_id, script, stderr, returncode, stdout=""):
     said = [ln for ln in out if ln.startswith(("FAILED", "ABORTING"))]
     if said:
         return said[-1]
-    return f"The step stopped with exit code {returncode} and printed no error."
+    return "The step stopped due to an error."
 
 # ------------------------------------------------------------ process control
 

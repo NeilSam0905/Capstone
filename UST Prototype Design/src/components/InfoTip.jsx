@@ -18,10 +18,13 @@ const MARGIN = 12;  // kept clear of the window's edges
  *  `text` puts a visible label beside the (i), for a tip that stands in for a
  *  whole section rather than explaining the word next to it.
  *
+ *  `link` makes words in a sentence the button instead, underlined and with
+ *  no (i) - "1 Item" in the Batch Sales Report opens the list of which.
+ *
  *  Clicks stop at the tip, so an (i) in a sortable column heading or a
  *  clickable row opens its explanation and does nothing else. React passes a
  *  portal's events up to its parent components too, hence the panel as well. */
-export default function InfoTip({ label = 'More information', text, width = 340, children }) {
+export default function InfoTip({ label = 'More information', text, link, width = 340, children }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
   const popRef = useRef(null);
@@ -74,14 +77,14 @@ export default function InfoTip({ label = 'More information', text, width = 340,
       <button
         ref={btnRef}
         type="button"
-        className={'infotip__btn' + (text ? ' infotip__btn--text' : '') + (open ? ' is-open' : '')}
-        aria-label={text ? undefined : label}
+        className={(link ? 'infotip__link' : 'infotip__btn' + (text ? ' infotip__btn--text' : ''))
+          + (open ? ' is-open' : '')}
+        aria-label={text || link ? undefined : label}
         aria-expanded={open}
         aria-controls={open ? id : undefined}
         onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
       >
-        {text}
-        <Icon name="info" size={15} />
+        {link ?? <>{text}<Icon name="info" size={15} /></>}
       </button>
       {open && createPortal(
         <div id={id} ref={popRef} role="dialog" aria-label={label} className="infotip__pop"

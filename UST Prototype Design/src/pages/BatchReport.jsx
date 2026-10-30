@@ -3,6 +3,7 @@ import { getBatchReport, getMonths, getMeta, batchReportPdfUrl, batchReportCsvUr
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import Icon from '../components/Icon';
+import InfoTip from '../components/InfoTip';
 import { peso, num, longMonth, usDate } from '../lib/format';
 import { PERIOD_KINDS, periodParams, periodLabel, periodSlug } from '../lib/reportPeriod';
 import { ALL_SUPPLIERS } from '../services/dataService';
@@ -33,9 +34,12 @@ export default function BatchReport({ filters, period, setPeriod }) {
     []
   );
 
-  const unpricedItems = report.reduce(
-    (s, r) => s + r.items.filter(i => i.unit_price_php == null).length, 0
-  );
+  // The lines with no unit price on record, with their supplier - listed in
+  // a tip opened from the notice's count.
+  const unpriced = report.flatMap(r => r.items
+    .filter(i => i.unit_price_php == null)
+    .map(i => ({ ...i, supplier: r.supplier })));
+  const unpricedItems = unpriced.length;
   // The "no item price" notice closes with its X for the report on show; a
   // different period or supplier brings it back if it applies there too.
   const [closedNotice, setClosedNotice] = useState(null);
@@ -182,9 +186,24 @@ export default function BatchReport({ filters, period, setPeriod }) {
                       aria-label="Close this notice" title="Close">
                 <Icon name="close" size={14} />
               </button>
-              <b>{num(unpricedItems)} line item{unpricedItems === 1 ? '' : 's'}</b> in this period have no item price on
-              record, shown as “—” below (no Item Price, no For Remittance figure). Quantities and unit-count subtotals
-              are unaffected.
+              <InfoTip label="Items with no price" width={460}
+                       link={`${num(unpricedItems)} Item${unpricedItems === 1 ? '' : 's'}`}>
+                <div className="infotip__h">No item price on record</div>
+                <p>{label}{supplier ? ` · ${supplier}` : ''}: shown as “—” in Item Price and For Remittance.</p>
+                <div className="infotip__list-head infotip__list--wide">
+                  <span>Item</span><span>Supplier</span><span>Units</span>
+                </div>
+                <ul className="infotip__list infotip__list--wide">
+                  {unpriced.map(i => (
+                    <li key={`${i.supplier}|${i.product_id ?? i.item_name}`}>
+                      <span className="infotip__list-name" title={i.item_name}>{i.item_name}</span>
+                      <span className="infotip__list-name" title={i.supplier}>{i.supplier}</span>
+                      <span className="infotip__list-num">{num(i.quantity)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </InfoTip> in this period
+              {unpricedItems === 1 ? ' has' : ' have'} no item price on record, it is shown as “—” below.
             </div>
           )}
 

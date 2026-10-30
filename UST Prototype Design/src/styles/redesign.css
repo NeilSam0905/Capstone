@@ -898,8 +898,12 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 }
 .progress__fill {
   height: 100%; background: var(--accent); border-radius: 100px;
-  transition: width .3s ease;
+  transition: width .3s ease, background .3s ease;
 }
+/* A run that finished with every step done turns the bar green; one that
+   stopped on a failed step, red. */
+.progress__fill--done { background: var(--ok); }
+.progress__fill--failed { background: var(--crit); }
 .pipeline-steps {
   display: flex; flex-direction: column; gap: 2px;
   border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden;
@@ -1762,7 +1766,6 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
   text-decoration: underline; text-underline-offset: 2px;
 }
 .tab-link:hover { color: var(--text); }
-
 @container (max-width: 760px) {
   .tally-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tally-tab.is-active::after { display: none; }
@@ -1795,17 +1798,20 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .notice__close:hover { opacity: 1; background: rgba(0, 0, 0, .06); }
 .notice__close:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; opacity: 1; }
 
-/* The Tally Interface's top banners: the title row folds the explanation
-   away, the X (notice__close) closes the banner. */
+/* The Tally Interface's banners: the arrow beside the X folds the
+   explanation away, the X (notice__close) closes the banner. */
+.tally-banner.notice--closable { padding-right: 70px; }
 .tally-banner__head { display: flex; align-items: flex-start; gap: 10px; }
 .tally-banner__head > svg { flex: none; margin-top: 1px; }
 .tally-banner__toggle {
-  display: inline-flex; align-items: flex-start; gap: 6px; min-width: 0;
-  padding: 0; margin: 0; border: 0; background: none; cursor: pointer;
-  font: inherit; color: inherit; text-align: left;
+  position: absolute; top: 7px; right: 36px; width: 26px; height: 26px;
+  display: grid; place-items: center; padding: 0; cursor: pointer;
+  background: none; border: 0; border-radius: var(--r-xs); color: inherit; opacity: .7;
+  transition: opacity .12s, background .12s;
 }
-.tally-banner__toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 2px; }
-.tally-banner__chev { display: inline-grid; place-items: center; margin-top: 2px; transition: transform .15s; }
+.tally-banner__toggle:hover { opacity: 1; background: rgba(0, 0, 0, .06); }
+.tally-banner__toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; opacity: 1; }
+.tally-banner__chev { display: inline-grid; place-items: center; transition: transform .15s; }
 .tally-banner__chev.is-open { transform: rotate(90deg); }
 .tally-banner__body { margin: 4px 0 0 26px; }
 
@@ -1820,18 +1826,24 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
   90% { transform: rotate(5deg); }
 }
 .run-choice { position: relative; }
-.run-choice--attention { animation: run-attention 1.8s ease-out infinite; }
-@keyframes run-attention {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tone, var(--hvl)) 55%, transparent); }
-  100% { box-shadow: 0 0 0 10px transparent; }
-}
 .run-choice__flag {
   position: absolute; top: -10px; right: 12px;
   display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
   font-size: 11px; font-weight: 800; color: #fff; background: var(--crit);
+  animation: flag-shake 2.4s ease-in-out infinite;
+}
+/* A short shake, then still for most of the cycle, so it catches the eye
+   without being restless. */
+@keyframes flag-shake {
+  0%, 70%, 100% { transform: translateX(0) rotate(0); }
+  74% { transform: translateX(-3px) rotate(-4deg); }
+  78% { transform: translateX(3px) rotate(4deg); }
+  82% { transform: translateX(-2px) rotate(-3deg); }
+  86% { transform: translateX(2px) rotate(2deg); }
+  90% { transform: translateX(-1px) rotate(0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .tally-tab__badge--bell, .run-choice--attention { animation: none; }
+  .tally-tab__badge--bell, .run-choice__flag { animation: none; }
 }
 
 /* Scrollbars: gold, like the brand buttons, everywhere in the app. Areas
@@ -1975,6 +1987,20 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .infotip__btn--text:hover, .infotip__btn--text.is-open {
   color: var(--ink); background: var(--accent); filter: brightness(.94);
 }
+/* As words in a sentence (InfoTip `link`): underlined, in the sentence's own
+   colour, bold. */
+.infotip__link {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-weight: 800; color: inherit;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.infotip__link:hover, .infotip__link.is-open { text-decoration-thickness: 2px; }
+.infotip__link:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 2px; }
+/* A tip's list with a wider middle column (Batch Sales Report: item,
+   supplier, units). */
+.infotip__list-head.infotip__list--wide, .infotip__list--wide li {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 48px;
+}
 
 /* What this means (Forecast): the label with its (i) on the left, the action
    on the right. */
@@ -2022,10 +2048,6 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
   font-size: 15px; font-weight: 800; color: var(--tone-deep, var(--hvl));
 }
 .run-choice__desc { font-size: 12.5px; line-height: 1.45; color: var(--text-2); }
-.run-choice--main { background: var(--tone, var(--hvl)); border-color: var(--tone, var(--hvl)); }
-.run-choice--main .run-choice__title { color: #fff; }
-.run-choice--main .run-choice__desc { color: rgba(255, 255, 255, .88); }
-.run-choice--main:hover:not(:disabled) { background: var(--tone, var(--hvl)); filter: brightness(.92); }
 
 .run-status { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
 .run-status__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
