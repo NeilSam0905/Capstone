@@ -27,9 +27,9 @@
                 }
               },
               "queryRef": "Dim_Product.supplier_name",
-              "nativeQueryRef": "Supplier Name",
+              "nativeQueryRef": "Supplier",
               "active": true,
-              "displayName": "Supplier Name"
+              "displayName": "Supplier"
             },
             {
               "field": {
@@ -43,8 +43,9 @@
                 }
               },
               "queryRef": "Dim_Product.item_name",
-              "nativeQueryRef": "item_name",
-              "active": false
+              "nativeQueryRef": "Item",
+              "active": false,
+              "displayName": "Item"
             }
           ]
         },
@@ -76,7 +77,8 @@
                 }
               },
               "queryRef": "Fact_Sales.Line Total (ref)",
-              "nativeQueryRef": "Line Total (ref)",
+              "nativeQueryRef": "Sales Value (reference)",
+              "displayName": "Sales Value (reference)",
               "format": "\"₱\"#,0.00;-\"₱\"#,0.00;\"₱\"#,0.00"
             }
           ]
@@ -86,16 +88,16 @@
         "sort": [
           {
             "field": {
-              "Column": {
+              "Measure": {
                 "Expression": {
                   "SourceRef": {
-                    "Entity": "Dim_Product"
+                    "Entity": "Fact_Sales"
                   }
                 },
-                "Property": "supplier_name"
+                "Property": "Units Sold"
               }
             },
-            "direction": "Ascending"
+            "direction": "Descending"
           }
         ]
       }
@@ -196,50 +198,6 @@
           }
         }
       ],
-      "columnWidth": [
-        {
-          "properties": {
-            "value": {
-              "expr": {
-                "Literal": {
-                  "Value": "138.2458339968524D"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "Fact_Sales.Line Total (ref)"
-          }
-        },
-        {
-          "properties": {
-            "value": {
-              "expr": {
-                "Literal": {
-                  "Value": "105.57343123104798D"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "Fact_Sales.Units Sold"
-          }
-        },
-        {
-          "properties": {
-            "value": {
-              "expr": {
-                "Literal": {
-                  "Value": "1016.0425675674403D"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "Dim_Product.supplier_name"
-          }
-        }
-      ],
       "columnTotal": [
         {
           "properties": {
@@ -250,6 +208,42 @@
                 }
               }
             }
+          }
+        }
+      ],
+      "columnHeaders": [
+        {
+          "properties": {
+            "autoSizeColumnWidth": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "columnAdjustment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'growToFit'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnFormatting": [
+        {
+          "properties": {
+            "labelPrecision": {
+              "expr": {
+                "Literal": {
+                  "Value": "0L"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Fact_Sales.Line Total (ref)"
           }
         }
       ]

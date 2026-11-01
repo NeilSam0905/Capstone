@@ -92,5 +92,23 @@
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "2a1eff80c6d96375c0d5",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Dim_Date"
+              }
+            },
+            "Property": "semester_id"
+          }
+        },
+        "type": "Categorical"
+      }
+    ]
   }
 }

@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.6.0/schema.json",
   "name": "f7fe0fe313a7294d1c28",
   "position": {
-    "x": 386.09406952965236,
-    "y": 425.35787321063395,
+    "x": 0.6494165398274987,
+    "y": 425.36783358701166,
     "z": 7000,
-    "height": 294.47852760736197,
-    "width": 748.62985685071578,
+    "height": 294.83510908168444,
+    "width": 1134.5306950786403,
     "tabOrder": 7000
   },
   "visual": {
@@ -46,9 +46,9 @@
                 }
               },
               "queryRef": "Dim_Product.supplier_name",
-              "nativeQueryRef": "Supplier Name",
+              "nativeQueryRef": "Supplier",
               "active": true,
-              "displayName": "Supplier Name"
+              "displayName": "Supplier"
             }
           ]
         },
@@ -265,6 +265,19 @@
             }
           }
         }
+      ],
+      "columnHeaders": [
+        {
+          "properties": {
+            "columnAdjustment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'growToFit'"
+                }
+              }
+            }
+          }
+        }
       ]
     },
     "visualContainerObjects": {
@@ -294,7 +307,14 @@
             "text": {
               "expr": {
                 "Literal": {
-                  "Value": "'Cross-Month View'"
+                  "Value": "'Units Sold per Supplier (Month-by-Month)'"
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'center'"
                 }
               }
             }

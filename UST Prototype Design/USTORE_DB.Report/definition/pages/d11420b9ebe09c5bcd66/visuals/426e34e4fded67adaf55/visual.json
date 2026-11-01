@@ -3,11 +3,11 @@
   "name": "426e34e4fded67adaf55",
   "position": {
     "x": 670.13670886075954,
-    "y": 419.93073417721524,
-    "z": 2000,
-    "height": 300.07088607594937,
+    "y": 405.71139240506329,
+    "z": 0,
+    "height": 314.32911392405066,
     "width": 609.86329113924046,
-    "tabOrder": 2000
+    "tabOrder": 0
   },
   "visual": {
     "visualType": "tableEx",
@@ -27,8 +27,8 @@
                 }
               },
               "queryRef": "Dim_Product.item_name",
-              "nativeQueryRef": "Item Name",
-              "displayName": "Item Name"
+              "nativeQueryRef": "Item",
+              "displayName": "Item"
             },
             {
               "field": {
@@ -88,7 +88,7 @@
                     "Entity": "Dim_Product"
                   }
                 },
-                "Property": "item_name"
+                "Property": "supplier_name"
               }
             },
             "direction": "Ascending"
@@ -133,13 +133,27 @@
             "value": {
               "expr": {
                 "Literal": {
-                  "Value": "178.68731338289183D"
+                  "Value": "153.36493996298438D"
                 }
               }
             }
           },
           "selector": {
             "metadata": "Dim_Product.supplier_name"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "104.40506329113924D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Dim_Product.entry_date"
           }
         }
       ],
@@ -150,6 +164,19 @@
               "expr": {
                 "Literal": {
                   "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnHeaders": [
+        {
+          "properties": {
+            "columnAdjustment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'growToFit'"
                 }
               }
             }
@@ -171,7 +198,7 @@
             "text": {
               "expr": {
                 "Literal": {
-                  "Value": "'Non-Moving Items'"
+                  "Value": "'Items with no Sales'"
                 }
               }
             },
@@ -197,6 +224,26 @@
             }
           }
         }
+      ],
+      "subTitle": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "''"
+                }
+              }
+            }
+          }
+        }
       ]
     },
     "drillFilterOtherVisuals": true
@@ -204,7 +251,7 @@
   "filterConfig": {
     "filters": [
       {
-        "name": "f9062342584908452c73",
+        "name": "09787e100e2d3791554c",
         "field": {
           "Column": {
             "Expression": {
@@ -212,7 +259,79 @@
                 "Entity": "Dim_Product"
               }
             },
-            "Property": "fsn_class"
+            "Property": "payment_status"
+          }
+        },
+        "type": "Categorical",
+        "filter": {
+          "Version": 2,
+          "From": [
+            {
+              "Name": "d",
+              "Entity": "Dim_Product",
+              "Type": 0
+            }
+          ],
+          "Where": [
+            {
+              "Condition": {
+                "Not": {
+                  "Expression": {
+                    "In": {
+                      "Expressions": [
+                        {
+                          "Column": {
+                            "Expression": {
+                              "SourceRef": {
+                                "Source": "d"
+                              }
+                            },
+                            "Property": "payment_status"
+                          }
+                        }
+                      ],
+                      "Values": [
+                        [
+                          {
+                            "Literal": {
+                              "Value": "'PAID'"
+                            }
+                          }
+                        ]
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "objects": {
+          "general": [
+            {
+              "properties": {
+                "isInvertedSelectionMode": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "true"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "2eb71091ea5431ccd208",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Dim_Product"
+              }
+            },
+            "Property": "Group"
           }
         },
         "type": "Categorical",
@@ -237,7 +356,7 @@
                             "Source": "d"
                           }
                         },
-                        "Property": "fsn_class"
+                        "Property": "Group"
                       }
                     }
                   ],
@@ -245,7 +364,7 @@
                     [
                       {
                         "Literal": {
-                          "Value": "'NON'"
+                          "Value": "'Clear out'"
                         }
                       }
                     ]
@@ -255,65 +374,7 @@
             }
           ]
         },
-        "howCreated": "User",
-        "objects": {
-          "general": [
-            {
-              "properties": {}
-            }
-          ]
-        }
-      },
-      {
-        "name": "09787e100e2d3791554c",
-        "field": {
-          "Column": {
-            "Expression": {
-              "SourceRef": {
-                "Entity": "Dim_Product"
-              }
-            },
-            "Property": "payment_status"
-          }
-        },
-        "type": "Advanced",
-        "filter": {
-          "Version": 2,
-          "From": [
-            {
-              "Name": "d",
-              "Entity": "Dim_Product",
-              "Type": 0
-            }
-          ],
-          "Where": [
-            {
-              "Condition": {
-                "Not": {
-                  "Expression": {
-                    "Contains": {
-                      "Left": {
-                        "Column": {
-                          "Expression": {
-                            "SourceRef": {
-                              "Source": "d"
-                            }
-                          },
-                          "Property": "payment_status"
-                        }
-                      },
-                      "Right": {
-                        "Literal": {
-                          "Value": "'PAID'"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        }
+        "howCreated": "User"
       }
     ]
   }

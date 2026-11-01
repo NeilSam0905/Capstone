@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.6.0/schema.json",
   "name": "d04dce2f9e8887fd4377",
   "position": {
-    "x": 776.43666323377965,
+    "x": 626.15859938208041,
     "y": 110.07209062821833,
     "z": 8000,
     "height": 299.89701338825955,
-    "width": 390.19567456230692,
+    "width": 653.8414006179197,
     "tabOrder": 8000
   },
   "visual": {
@@ -23,27 +23,52 @@
                       "Entity": "Dim_Date"
                     }
                   },
-                  "Property": "calendar_date"
-                }
-              },
-              "queryRef": "Dim_Date.calendar_date",
-              "nativeQueryRef": "Upcoming Date",
-              "displayName": "Upcoming Date"
-            },
-            {
-              "field": {
-                "Column": {
-                  "Expression": {
-                    "SourceRef": {
-                      "Entity": "Dim_Date"
-                    }
-                  },
                   "Property": "day_type"
                 }
               },
               "queryRef": "Dim_Date.day_type",
-              "nativeQueryRef": "Day Type",
-              "displayName": "Day Type"
+              "nativeQueryRef": "Period",
+              "displayName": "Period"
+            },
+            {
+              "field": {
+                "Aggregation": {
+                  "Expression": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "Dim_Date"
+                        }
+                      },
+                      "Property": "calendar_date"
+                    }
+                  },
+                  "Function": 3
+                }
+              },
+              "queryRef": "Dim_Date.calendar_date",
+              "nativeQueryRef": "Start Date",
+              "displayName": "Start Date"
+            },
+            {
+              "field": {
+                "Aggregation": {
+                  "Expression": {
+                    "Column": {
+                      "Expression": {
+                        "SourceRef": {
+                          "Entity": "Dim_Date"
+                        }
+                      },
+                      "Property": "calendar_date"
+                    }
+                  },
+                  "Function": 4
+                }
+              },
+              "queryRef": "Dim_Date.calendar_date1",
+              "nativeQueryRef": "Latest calendar_date",
+              "displayName": "End Date"
             },
             {
               "field": {
@@ -57,7 +82,23 @@
                 }
               },
               "queryRef": "Dim_Date.Stock By",
-              "nativeQueryRef": "Stock By"
+              "nativeQueryRef": "Stock up By",
+              "displayName": "Stock up By"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Sales"
+                    }
+                  },
+                  "Property": "Vs Regular Day"
+                }
+              },
+              "queryRef": "Fact_Sales.Vs Regular Day",
+              "nativeQueryRef": "Usual sales vs. Regular Day",
+              "displayName": "Usual sales vs. Regular Day"
             }
           ]
         }
@@ -72,10 +113,10 @@
                     "Entity": "Dim_Date"
                   }
                 },
-                "Property": "calendar_date"
+                "Property": "day_type"
               }
             },
-            "direction": "Ascending"
+            "direction": "Descending"
           }
         ]
       }
@@ -94,47 +135,23 @@
           }
         }
       ],
-      "columnWidth": [
+      "columnHeaders": [
         {
           "properties": {
-            "value": {
+            "autoSizeColumnWidth": {
               "expr": {
                 "Literal": {
-                  "Value": "113.92640271226243D"
+                  "Value": "true"
+                }
+              }
+            },
+            "columnAdjustment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'growToFit'"
                 }
               }
             }
-          },
-          "selector": {
-            "metadata": "Dim_Date.calendar_date"
-          }
-        },
-        {
-          "properties": {
-            "value": {
-              "expr": {
-                "Literal": {
-                  "Value": "123.8650637704284D"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "Dim_Date.day_type"
-          }
-        },
-        {
-          "properties": {
-            "value": {
-              "expr": {
-                "Literal": {
-                  "Value": "131.07004150222787D"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "Dim_Date.Stock By"
           }
         }
       ]
@@ -153,7 +170,7 @@
             "text": {
               "expr": {
                 "Literal": {
-                  "Value": "'Upcoming Periods: Stock Dates'"
+                  "Value": "'Upcoming Periods'"
                 }
               }
             },
@@ -229,7 +246,7 @@
                         [
                           {
                             "Literal": {
-                              "Value": "'Sem break'"
+                              "Value": "'Regular day'"
                             }
                           }
                         ],
@@ -237,13 +254,6 @@
                           {
                             "Literal": {
                               "Value": "'Store closed'"
-                            }
-                          }
-                        ],
-                        [
-                          {
-                            "Literal": {
-                              "Value": "'Regular day'"
                             }
                           }
                         ]
@@ -339,10 +349,30 @@
               }
             }
           ]
-        }
+        },
+        "howCreated": "User"
       },
       {
-        "name": "53a389efbc0469cdc679",
+        "name": "d645619c600440010a83",
+        "field": {
+          "Aggregation": {
+            "Expression": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "Dim_Date"
+                  }
+                },
+                "Property": "calendar_date"
+              }
+            },
+            "Function": 3
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "08d06dd019362a9a521a",
         "field": {
           "Measure": {
             "Expression": {
@@ -351,6 +381,39 @@
               }
             },
             "Property": "Stock By"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "6cce3b274340ee5a1107",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Fact_Sales"
+              }
+            },
+            "Property": "Vs Regular Day"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "becf653b89707c4c6369",
+        "field": {
+          "Aggregation": {
+            "Expression": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "Dim_Date"
+                  }
+                },
+                "Property": "calendar_date"
+              }
+            },
+            "Function": 4
           }
         },
         "type": "Advanced"

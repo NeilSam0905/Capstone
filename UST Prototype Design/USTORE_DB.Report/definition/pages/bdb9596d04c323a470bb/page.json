@@ -1,7 +1,7 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.0.0/schema.json",
   "name": "bdb9596d04c323a470bb",
-  "displayName": "Calendar",
+  "displayName": "Busy Periods",
   "displayOption": "FitToPage",
   "height": 720,
   "width": 1280,
@@ -19,5 +19,22 @@
         }
       }
     ]
-  }
+  },
+  "visualInteractions": [
+    {
+      "source": "00793a43cc67ee5b05a8",
+      "target": "d04dce2f9e8887fd4377",
+      "type": "NoFilter"
+    },
+    {
+      "source": "42abe4b3c490414e85aa",
+      "target": "d04dce2f9e8887fd4377",
+      "type": "NoFilter"
+    },
+    {
+      "source": "42abe4b3c490414e85aa",
+      "target": "28977aa6269297116481",
+      "type": "NoFilter"
+    }
+  ]
 }

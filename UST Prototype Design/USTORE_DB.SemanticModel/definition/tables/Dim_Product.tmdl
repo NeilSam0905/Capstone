@@ -97,12 +97,17 @@ table Dim_Product
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	column entry_date
-		dataType: string
+		dataType: dateTime
+		formatString: mmmm yyyy
 		lineageTag: 5e7a8d94-31ad-4467-af6e-f72bc8662fc9
 		summarizeBy: none
 		sourceColumn: entry_date
 
 		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isDateTimeCustom":true}
 
 	column is_active
 		dataType: double
@@ -149,6 +154,17 @@ table Dim_Product
 
 		annotation SummarizationSetBy = Automatic
 
+	column Group
+		dataType: string
+		lineageTag: 1946c00b-08f5-47d2-b615-98e26ea87d3d
+		summarizeBy: none
+		sourceColumn: Group
+		sortByColumn: fsn_sort
+
+		changedProperty = SortByColumn
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Dim_Product = m
 		mode: import
 		source =
@@ -160,9 +176,11 @@ table Dim_Product
 				    #"Replaced Value1" = Table.ReplaceValue(#"Replaced Value",null,"UNASSIGNED",Replacer.ReplaceValue,{"supplier_name"}),
 				    #"Replaced Value2" = Table.ReplaceValue(#"Replaced Value1","F","FAST",Replacer.ReplaceValue,{"fsn_class"}),
 				    #"Replaced Value3" = Table.ReplaceValue(#"Replaced Value2","S","SLOW",Replacer.ReplaceValue,{"fsn_class"}),
-				    #"Replaced Value4" = Table.ReplaceValue(#"Replaced Value3","N","NON",Replacer.ReplaceValue,{"fsn_class"})
+				    #"Replaced Value4" = Table.ReplaceValue(#"Replaced Value3","N","NON",Replacer.ReplaceValue,{"fsn_class"}),
+				    #"Added Conditional Column1" = Table.AddColumn(#"Replaced Value4", "Group", each if [fsn_class] = "FAST" then "Keep in stock" else if [fsn_class] = "SLOW" then "Promote" else if [fsn_class] = "NON" then "Clear out" else "Unclassified"),
+				    #"Changed Type" = Table.TransformColumnTypes(#"Added Conditional Column1",{{"entry_date", type date}})
 				in
-				    #"Replaced Value4"
+				    #"Changed Type"
 
 	annotation PBI_NavigationStepName = Navigation
 

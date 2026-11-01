@@ -1,16 +1,16 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.6.0/schema.json",
-  "name": "01b8859ad94f51b62fbb",
+  "name": "ffc7ebceda8ebec39905",
   "position": {
-    "x": 844.47594936708856,
-    "y": 104.99240506329114,
+    "x": 670.13670886075954,
+    "y": 100.45569620253164,
     "z": 9000,
-    "height": 300.07088607594937,
-    "width": 435.52405063291138,
+    "height": 305,
+    "width": 609.86329113924046,
     "tabOrder": 9000
   },
   "visual": {
-    "visualType": "lineClusteredColumnComboChart",
+    "visualType": "clusteredBarChart",
     "query": {
       "queryState": {
         "Category": {
@@ -50,25 +50,6 @@
               "nativeQueryRef": "Units Sold"
             }
           ]
-        },
-        "Y2": {
-          "projections": [
-            {
-              "field": {
-                "Measure": {
-                  "Expression": {
-                    "SourceRef": {
-                      "Entity": "Fact_Sales"
-                    }
-                  },
-                  "Property": "Cum % Units"
-                }
-              },
-              "queryRef": "Fact_Sales.Cum % Units",
-              "nativeQueryRef": "Cumulative Share",
-              "displayName": "Cumulative Share"
-            }
-          ]
         }
       },
       "sortDefinition": {
@@ -94,7 +75,7 @@
       "categoryAxis": [
         {
           "properties": {
-            "concatenateLabels": {
+            "showAxisTitle": {
               "expr": {
                 "Literal": {
                   "Value": "false"
@@ -107,37 +88,10 @@
       "valueAxis": [
         {
           "properties": {
-            "secStart": {
-              "expr": {
-                "Literal": {
-                  "Value": "0D"
-                }
-              }
-            },
-            "secEnd": {
-              "expr": {
-                "Literal": {
-                  "Value": "1D"
-                }
-              }
-            },
-            "alignZeros": {
+            "showAxisTitle": {
               "expr": {
                 "Literal": {
                   "Value": "false"
-                }
-              }
-            }
-          }
-        }
-      ],
-      "legend": [
-        {
-          "properties": {
-            "position": {
-              "expr": {
-                "Literal": {
-                  "Value": "'BottomCenter'"
                 }
               }
             }
@@ -152,22 +106,6 @@
                 "color": {
                   "expr": {
                     "ThemeDataColor": {
-                      "ColorId": 8,
-                      "Percent": 0.4
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        {
-          "properties": {
-            "fill": {
-              "solid": {
-                "color": {
-                  "expr": {
-                    "ThemeDataColor": {
                       "ColorId": 1,
                       "Percent": 0
                     }
@@ -175,9 +113,6 @@
                 }
               }
             }
-          },
-          "selector": {
-            "metadata": "Fact_Sales.Cum % Units"
           }
         }
       ]
@@ -189,7 +124,14 @@
             "text": {
               "expr": {
                 "Literal": {
-                  "Value": "'Top-Selling Items and Cumulative Share of Units'"
+                  "Value": "'Top 10 Best Selling Items'"
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'center'"
                 }
               }
             }
@@ -202,45 +144,98 @@
   "filterConfig": {
     "filters": [
       {
-        "name": "5a69a26e404107230daa",
+        "name": "cd2b1c421c21c2769c87",
         "field": {
-          "Measure": {
+          "Column": {
             "Expression": {
               "SourceRef": {
-                "Entity": "Fact_Sales"
+                "Entity": "Dim_Product"
               }
             },
-            "Property": "Units Sold"
+            "Property": "item_name"
           }
         },
-        "type": "Advanced",
+        "type": "TopN",
         "filter": {
           "Version": 2,
           "From": [
             {
-              "Name": "f",
-              "Entity": "Fact_Sales",
+              "Name": "subquery",
+              "Expression": {
+                "Subquery": {
+                  "Query": {
+                    "Version": 2,
+                    "From": [
+                      {
+                        "Name": "d",
+                        "Entity": "Dim_Product",
+                        "Type": 0
+                      },
+                      {
+                        "Name": "f",
+                        "Entity": "Fact_Sales",
+                        "Type": 0
+                      }
+                    ],
+                    "Select": [
+                      {
+                        "Column": {
+                          "Expression": {
+                            "SourceRef": {
+                              "Source": "d"
+                            }
+                          },
+                          "Property": "item_name"
+                        },
+                        "Name": "field"
+                      }
+                    ],
+                    "OrderBy": [
+                      {
+                        "Direction": 2,
+                        "Expression": {
+                          "Measure": {
+                            "Expression": {
+                              "SourceRef": {
+                                "Source": "f"
+                              }
+                            },
+                            "Property": "Units Sold"
+                          }
+                        }
+                      }
+                    ],
+                    "Top": 10
+                  }
+                }
+              },
+              "Type": 2
+            },
+            {
+              "Name": "d",
+              "Entity": "Dim_Product",
               "Type": 0
             }
           ],
           "Where": [
             {
               "Condition": {
-                "Comparison": {
-                  "ComparisonKind": 1,
-                  "Left": {
-                    "Measure": {
-                      "Expression": {
-                        "SourceRef": {
-                          "Source": "f"
-                        }
-                      },
-                      "Property": "Units Sold"
+                "In": {
+                  "Expressions": [
+                    {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Source": "d"
+                          }
+                        },
+                        "Property": "item_name"
+                      }
                     }
-                  },
-                  "Right": {
-                    "Literal": {
-                      "Value": "0L"
+                  ],
+                  "Table": {
+                    "SourceRef": {
+                      "Source": "subquery"
                     }
                   }
                 }

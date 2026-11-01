@@ -13,7 +13,7 @@ table Dim_Date
 		formatString: 0
 		lineageTag: 6f85acc5-e9d5-4273-9075-7c343f022067
 
-	measure 'Stock By' = MIN(Dim_Date[calendar_date]) - 18
+	measure 'Stock By' = IF([Vs Regular Day] >= 0.1, MIN(Dim_Date[calendar_date]) - 18)
 		formatString: Short Date
 		lineageTag: 0739ff23-6738-4383-8498-5fcb97bb614e
 
@@ -175,6 +175,22 @@ table Dim_Date
 		lineageTag: 7183c5ff-8b78-4181-98b6-181024468a98
 		summarizeBy: sum
 		sourceColumn: day_num
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Month Label' = ```
+			
+			   VAR LastSale =
+			       MAXX(FILTER(Fact_Sales, Fact_Sales[quantity_sold] > 0), RELATED(Dim_Date[calendar_date]))
+			   VAR LatestMonth = DATE(YEAR(LastSale), MONTH(LastSale), 1)
+			   RETURN
+			       IF(Dim_Date[Month] = LatestMonth, "Latest month", FORMAT(Dim_Date[Month], "mmm yyyy"))
+			```
+		lineageTag: 2f2acc60-fb33-41d5-9840-3049c9364a25
+		summarizeBy: none
+		sortByColumn: Month
+
+		changedProperty = SortByColumn
 
 		annotation SummarizationSetBy = Automatic
 

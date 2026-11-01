@@ -4,10 +4,10 @@
   "position": {
     "x": 55.736708860759492,
     "y": 23.331645569620253,
-    "z": 6000,
+    "z": 4000,
     "height": 58.329113924050631,
-    "width": 263.12911392405061,
-    "tabOrder": 5000
+    "width": 302.66329113924053,
+    "tabOrder": 3000
   },
   "visual": {
     "visualType": "textbox",
@@ -19,7 +19,7 @@
               {
                 "textRuns": [
                   {
-                    "value": "FSN Classification",
+                    "value": "Product Movement",
                     "textStyle": {
                       "fontSize": "24pt"
                     }

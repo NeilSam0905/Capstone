@@ -27,7 +27,8 @@
                 }
               },
               "queryRef": "Fact_Sales.Unpriced Units",
-              "nativeQueryRef": "Unpriced Units"
+              "nativeQueryRef": "Unpriced Units",
+              "displayName": "Unpriced Units"
             }
           ]
         }
@@ -58,7 +59,7 @@
             "text": {
               "expr": {
                 "Literal": {
-                  "Value": "'Unpriced Units'"
+                  "Value": "'Units with no Price'"
                 }
               }
             },
@@ -190,6 +191,13 @@
               "expr": {
                 "Literal": {
                   "Value": "true"
+                }
+              }
+            },
+            "horizontalAlignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'center'"
                 }
               }
             }

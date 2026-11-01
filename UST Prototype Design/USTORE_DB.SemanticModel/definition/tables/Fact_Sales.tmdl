@@ -8,7 +8,7 @@ table Fact_Sales
 		annotation PBI_FormatHint = {"isDecimal":true}
 
 	measure 'Line Total (ref)' = CALCULATE(SUMX(Fact_Sales, Fact_Sales[quantity_sold] * RELATED(Dim_Product[unit_price_php])), Fact_Sales[transaction_type] = "sale")
-		formatString: #,0.00\ "₱";-#,0.00\ "₱";#,0.00\ "₱"
+		formatString: #,0\ "₱";-#,0\ "₱";#,0\ "₱"
 		lineageTag: 3f286580-88e5-40e8-963e-e5bd0e1e31ff
 
 		annotation PBI_FormatHint = {"currencyCulture":"es-PH"}
@@ -62,6 +62,27 @@ table Fact_Sales
 		lineageTag: 303b2043-ab32-4df4-93ee-04a7698d1ce0
 
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Top Sellers Headline' = ```
+			
+			   VAR Items = [Fast]
+			   VAR Share = [Fast Unit Share]
+			   RETURN
+			       IF(ISBLANK(Items), "No top sellers in this selection",
+			          FORMAT(Items, "0") & " items made " & FORMAT(Share, "0%") & " of sales")
+			```
+		lineageTag: 1e6100aa-d082-4133-ba35-d303b9677ea5
+
+	measure 'Vs Regular Day' = ```
+			
+			   VAR PeriodAvg = CALCULATE([Avg Daily Units], REMOVEFILTERS(Dim_Date[calendar_date]))
+			   VAR RegularAvg = CALCULATE([Avg Daily Units], REMOVEFILTERS(Dim_Date), Dim_Date[day_type] = "Regular day")
+			   RETURN DIVIDE(PeriodAvg, RegularAvg) - 1
+			```
+		formatString: +0%; -0%; 0%
+		lineageTag: 5a990f40-d6dc-4abe-b6c0-5634ebe2cd5e
+
+		annotation PBI_FormatHint = {"isCustom":true}
 
 	column sale_id
 		dataType: double
@@ -187,6 +208,16 @@ table Fact_Sales
 		sourceColumn: entered_by
 
 		annotation SummarizationSetBy = Automatic
+
+	column correction_id
+		dataType: double
+		lineageTag: 9952194c-cade-4629-b536-5eab6aeeff5e
+		summarizeBy: sum
+		sourceColumn: correction_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	partition Fact_Sales = m
 		mode: import

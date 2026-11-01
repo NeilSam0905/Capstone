@@ -23,33 +23,15 @@
                       "Entity": "Dim_Date"
                     }
                   },
-                  "Property": "Month"
+                  "Property": "Month Label"
                 }
               },
-              "queryRef": "Dim_Date.Month",
-              "nativeQueryRef": "Month",
+              "queryRef": "Dim_Date.Month Label",
+              "nativeQueryRef": "Month Label",
               "active": true
             }
           ]
         }
-      },
-      "sortDefinition": {
-        "sort": [
-          {
-            "field": {
-              "Column": {
-                "Expression": {
-                  "SourceRef": {
-                    "Entity": "Dim_Date"
-                  }
-                },
-                "Property": "Month"
-              }
-            },
-            "direction": "Ascending"
-          }
-        ],
-        "isDefaultSort": true
       }
     },
     "objects": {
@@ -72,7 +54,7 @@
             "text": {
               "expr": {
                 "Literal": {
-                  "Value": "'Month Filter'"
+                  "Value": "'Heatmap Month'"
                 }
               }
             }
@@ -87,6 +69,47 @@
                 "Literal": {
                   "Value": "1D"
                 }
+              }
+            },
+            "filter": {
+              "filter": {
+                "Version": 2,
+                "From": [
+                  {
+                    "Name": "d",
+                    "Entity": "Dim_Date",
+                    "Type": 0
+                  }
+                ],
+                "Where": [
+                  {
+                    "Condition": {
+                      "In": {
+                        "Expressions": [
+                          {
+                            "Column": {
+                              "Expression": {
+                                "SourceRef": {
+                                  "Source": "d"
+                                }
+                              },
+                              "Property": "Month Label"
+                            }
+                          }
+                        ],
+                        "Values": [
+                          [
+                            {
+                              "Literal": {
+                                "Value": "'Latest month'"
+                              }
+                            }
+                          ]
+                        ]
+                      }
+                    }
+                  }
+                ]
               }
             }
           }
@@ -107,5 +130,23 @@
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "21325b7e061aa5a17e09",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Dim_Date"
+              }
+            },
+            "Property": "Month Label"
+          }
+        },
+        "type": "Categorical"
+      }
+    ]
   }
 }

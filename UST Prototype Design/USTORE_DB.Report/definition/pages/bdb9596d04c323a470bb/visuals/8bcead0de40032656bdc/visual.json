@@ -260,6 +260,19 @@
         {
           "properties": {}
         }
+      ],
+      "columnHeaders": [
+        {
+          "properties": {
+            "columnAdjustment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'growToFit'"
+                }
+              }
+            }
+          }
+        }
       ]
     },
     "visualContainerObjects": {
@@ -276,7 +289,7 @@
             "text": {
               "expr": {
                 "Literal": {
-                  "Value": "'Sales Calendar Heatmap'"
+                  "Value": "'Weekly Sales'"
                 }
               }
             },
@@ -305,5 +318,51 @@
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "058ee1c3eb0445188a60",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Dim_Date"
+              }
+            },
+            "Property": "day_name"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "8fcf325e28601157d816",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Dim_Date"
+              }
+            },
+            "Property": "week_start"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "51f49fc030a58ae53312",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Fact_Sales"
+              }
+            },
+            "Property": "Units Sold"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }

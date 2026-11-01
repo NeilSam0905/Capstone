@@ -19,5 +19,12 @@
         }
       }
     ]
-  }
+  },
+  "visualInteractions": [
+    {
+      "source": "26dc2e65988839e6f966",
+      "target": "f7fe0fe313a7294d1c28",
+      "type": "NoFilter"
+    }
+  ]
 }

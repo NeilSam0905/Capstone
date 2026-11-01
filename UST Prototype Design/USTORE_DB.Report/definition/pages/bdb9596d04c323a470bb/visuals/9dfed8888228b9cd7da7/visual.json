@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.6.0/schema.json",
   "name": "9dfed8888228b9cd7da7",
   "position": {
-    "x": 49.734151329243353,
-    "y": 22.903885480572598,
+    "x": 49.4335736354274,
+    "y": 23.069001029866119,
     "z": 2000,
-    "height": 58.241308793456035,
-    "width": 452.18813905930472,
+    "height": 58.002059732234812,
+    "width": 223.43975283213183,
     "tabOrder": 1000
   },
   "visual": {
@@ -19,7 +19,7 @@
               {
                 "textRuns": [
                   {
-                    "value": "Academic Calendar & Demand",
+                    "value": "Busy Periods",
                     "textStyle": {
                       "fontSize": "24pt"
                     }
