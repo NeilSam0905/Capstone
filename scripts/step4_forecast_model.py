@@ -256,6 +256,7 @@ from forecasting.shape import day_shape, load_calendar as load_shape_calendar
 from forecasting.topdown import topdown_tsb_fit_predict
 from forecasting import synthetic_history as sh
 from order_types import add_known_orders, known_orders, walk_in_only  # noqa: E402
+import forecast_options  # noqa: E402  (scripts/forecast_options.py - the --compare tables)
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ustore.db")
 
@@ -641,6 +642,10 @@ def main():
     ap.add_argument("--no-synthetic", action="store_true",
                     help="train on real sales only (default: also the 2023 synthetic "
                          "history in Fact_Sales_Synthetic, when loaded)")
+    ap.add_argument("--compare", action="store_true",
+                    help="write into the comparison tables under this model's name "
+                         "(scripts/forecast_options.py), leaving Result_Forecast and "
+                         "Result_Forecast_Metrics - which the rest of the dashboard reads - untouched")
     args = ap.parse_args()
     model_type = args.model
     make_model, model_desc = MODELS[model_type]
@@ -789,6 +794,17 @@ def main():
     forecast_df, known_units = add_known_orders(forecast_df, known_orders(con), "product_id")
     if known_units:
         print(f"Known upcoming orders added to the item forecasts: {known_units:.0f} units")
+
+    if args.compare:
+        # A model for the Demand Forecast page's comparison only: its own rows
+        # in the comparison tables, replaced in one transaction.
+        forecast_options.write_compare(con, forecast_options.ITEM, model_type,
+                                       forecast_df.to_dict("records"), metrics_df.to_dict("records"))
+        con.commit()
+        con.close()
+        print(f"Wrote {len(forecast_df)} {model_type} rows to the comparison tables "
+              f"({forecast_options.COMPARE_TABLES[forecast_options.ITEM][0]}).")
+        return
 
     # Clear + refill in one transaction: on failure SQLite rolls back to the
     # previous run's forecasts rather than to nothing.

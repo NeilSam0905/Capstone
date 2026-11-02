@@ -67,18 +67,20 @@ const UNFILTERED = {
  *   - reorder and powerbi take no topbar filters at all. Reorder is a
  *     stock-position decision about every item, and the Power BI report
  *     carries its own slicers.
- *   - forecast is the ONLY page with no topbar category filter. Category is
- *     now the primary axis of that screen, chosen in the page itself, so a
- *     second selector in the topbar could only disagree with the one the user
- *     is looking at - and would empty the page under them by excluding the
- *     very category they had just selected. Overview and Classification keep
- *     theirs: there category is a refinement of what is shown, not the
- *     subject of it.
+ *   - forecast has no topbar category filter. Category is the primary axis
+ *     of that screen, chosen in the page itself, so a second selector in the
+ *     topbar could only disagree with the one the user is looking at - and
+ *     would empty the page under them by excluding the very category they
+ *     had just selected. Classification keeps its: there category is a
+ *     refinement of what is shown, not the subject of it.
+ *   - overview takes none: it is the whole store at a glance, and the one
+ *     ranking worth narrowing, Top Sellers, carries its own Filter button
+ *     (supplier, category and period) inside the card.
  *   - 'customRange' adds "Custom Range" (From/To months) to the date range.
  *     A page without it that inherits a custom range sees "All Time" instead,
  *     since its topbar could neither show nor clear the months. */
 const PAGE_FILTERS = {
-  overview:       ['dateRange', 'customRange', 'supplier', 'category'],
+  overview:       [],
   classification: ['dateRange', 'supplier', 'category'],
   forecast:       ['supplier'],
   reorder:        [],

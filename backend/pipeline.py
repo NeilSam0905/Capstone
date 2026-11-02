@@ -99,6 +99,8 @@ TAIL_LINES = 40
 # performance targets: the generous ones are for steps whose real runtime is
 # minutes. Everything in the pipeline finishes in seconds to ~2 minutes.
 DEFAULT_TIMEOUT_S = 15 * 60
+# step4d runs both forecast scripts once per model, Prophet among them.
+COMPARISON_TIMEOUT_S = 45 * 60
 # step4 used to need a budget measured in hours, because it fit a Prophet
 # model per Fast SKU with mcmc_samples=1000. It is a rolling mean over the
 # same series again - no sampler, no per-SKU refit cost - so the default
@@ -143,6 +145,12 @@ STEPS = [
     ("synthetic2023", "scripts/load_synthetic_2023.py", "Load 2023 synthetic training history", True, DEFAULT_TIMEOUT_S, "seconds"),
     ("step4", "scripts/step4_forecast_model.py", "Forecast demand by item", True, DEFAULT_TIMEOUT_S, "~10 s"),
     ("step4c", "scripts/step4c_category_forecast.py", "Forecast demand by category", True, DEFAULT_TIMEOUT_S, "~15 s"),
+    # Every other model the Demand Forecast page offers, into the comparison
+    # tables only that page reads (scripts/forecast_options.py). Optional and
+    # skippable with step4: a failure here leaves the comparison short, and
+    # touches nothing the reorder points or any other page use.
+    ("step4d", "scripts/step4d_forecast_comparison.py", "Forecast with every model, for comparison",
+     True, COMPARISON_TIMEOUT_S, "~8 min (Prophet is most of it)"),
     ("step5a", "scripts/step5a_set_lead_times.py", "Set supplier lead times", False, DEFAULT_TIMEOUT_S, "~5 s"),
     ("step4b", "scripts/step4b_policy_forecast.py", "Publish the policy rate + interval", False, DEFAULT_TIMEOUT_S, "~10 s"),
     ("step5", "scripts/step5_prescriptive.py", "Compute ROP / EOQ / safety stock", False, DEFAULT_TIMEOUT_S, "~10 s"),
@@ -158,7 +166,7 @@ STEPS = [
 #
 # It runs AFTER step5a because the interval is measured at each SKU's own
 # lead-time horizon, and step5a is what sets lead times.
-SKIPPABLE = {"step4"}
+SKIPPABLE = {"step4", "step4d"}
 
 _lock = threading.Lock()
 _cancel_requested = threading.Event()

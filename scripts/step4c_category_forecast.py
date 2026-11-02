@@ -177,12 +177,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from forecasting.baselines import rolling_mean_fit_predict
+from forecasting.intermittent import tsb_fit_predict
 from forecasting.evaluate import make_folds, walk_forward_evaluate
 from forecasting.history import trim_to_history
 from forecasting.calendar_adjust import calendar_capped_fit_predict, load_day_types
 from forecasting.shape import day_shape, load_calendar
 from forecasting import synthetic_history as sh
 from order_types import add_known_orders, known_orders, walk_in_only  # noqa: E402
+import forecast_options  # noqa: E402  (scripts/forecast_options.py - the --compare tables)
 
 DB_PATH = os.path.join(ROOT, "ustore.db")
 
@@ -199,13 +201,37 @@ VALIDATION_METHOD = "walk_forward_30d_aggregate"
 # Every entry is the SAME callable the benchmarks score under that name. Each
 # factory takes a ctx dict; the calendar-adjusted one needs ctx["day_types"]
 # (forecasting/calendar_adjust.py), aligned to the category series' index.
+def _make_prophet(ctx):
+    """Prophet on the category's daily series, with Dim_Date's calendar flags
+    as regressors: the same model step4_forecast_model.py offers for items
+    (its _make_prophet), bound to this script's index.
+
+    The index is extended HORIZON days past the last observation so the
+    production window gets its real calendar flags, not zero-filled ones.
+    Selectable for comparison (--model prophet); it lost to the trailing
+    averages on this harness (scripts/compare_category_forecast_methods.py),
+    which is why it is not the default. ~1 minute for every category."""
+    from forecasting.prophet_model import load_calendar as prophet_calendar, prophet_fit_predict
+    idx = ctx["index"]
+    ext = idx.append(pd.date_range(idx[-1] + pd.Timedelta(days=1), periods=HORIZON, freq="D"))
+    return prophet_fit_predict(ext, prophet_calendar(ctx["con"], ext), "prophet")
+
+
 MODELS = {
     "RM6_6month_180d+calendar": lambda ctx: calendar_capped_fit_predict(
         rolling_mean_fit_predict(180), ctx["day_types"]),
     "RM6_6month_180d": lambda ctx: rolling_mean_fit_predict(180),
     "RM3_3month_90d": lambda ctx: rolling_mean_fit_predict(90),
     "rolling_mean_30": lambda ctx: rolling_mean_fit_predict(30),
+    # TSB with step4_forecast_model.py's settings (alpha = beta = 0.1), so
+    # "TSB" means the same model for a category as for an item.
+    "tsb": lambda ctx: tsb_fit_predict(0.1, 0.1),
+    "prophet": _make_prophet,
 }
+# Models that draw their own day-by-day curve. Their 30-day total is the sum
+# of the 30 days and the days keep that curve; every other model is a flat
+# level, spread by --shape.
+CURVE_MODELS = {"prophet"}
 # The 6-month average, lowered when the school calendar shows quieter days
 # ahead (see the docstring and scripts/test_calendar_adjustment.py).
 DEFAULT_MODEL = "RM6_6month_180d+calendar"
@@ -378,6 +404,10 @@ def main():
     ap.add_argument("--no-synthetic", action="store_true",
                     help="train on real sales only (default: also the 2023 synthetic "
                          "history in Fact_Sales_Synthetic, when loaded)")
+    ap.add_argument("--compare", action="store_true",
+                    help="write into the comparison tables under this model's name "
+                         "(scripts/forecast_options.py), leaving Result_Category_Forecast and its "
+                         "metrics - which the rest of the dashboard reads - untouched")
     args = ap.parse_args()
     model_type = args.model
 
@@ -387,7 +417,9 @@ def main():
     real_start = series.index[0]
     series, n_pre, gap = extend_with_synthetic(con, series, use=not args.no_synthetic)
     cal = load_calendar(con)
-    model = MODELS[model_type]({"day_types": load_day_types(con, series.index, HORIZON)})
+    model = MODELS[model_type]({"day_types": load_day_types(con, series.index, HORIZON),
+                                "index": series.index, "con": con})
+    curve = model_type in CURVE_MODELS
 
     snapshot_date = history_end.strftime("%Y-%m-%d")
     dates = pd.date_range(history_end + pd.Timedelta(days=1), periods=HORIZON, freq="D")
@@ -406,8 +438,11 @@ def main():
           f"{history_end.date()} -> {n_padding} trailing padding days excluded "
           f"from fitting and validation.")
     print(f"Forecast window: {dates[0].date()} .. {dates[-1].date()}")
-    print(f"Day-by-day shape: {args.shape}"
-          + ("" if args.shape == "flat" else " (the 30-day total is unchanged; see the docstring)"))
+    if curve:
+        print("Day-by-day shape: the model's own curve")
+    else:
+        print(f"Day-by-day shape: {args.shape}"
+              + ("" if args.shape == "flat" else " (the 30-day total is unchanged; see the docstring)"))
     if n_missing_cal:
         print(f"NOTE: {n_missing_cal} forecast day(s) are past the end of Dim_Date - their "
               f"calendar flags are treated as 0.")
@@ -417,12 +452,20 @@ def main():
     for cat in series.columns:
         v = series[cat].to_numpy(float)
         metrics, reason = validate(cat, v, model, model_type)
-        level = float(np.asarray(model(v, HORIZON), dtype=float).ravel()[0])
-        total = level * HORIZON
-        # The no-data gap goes in as NaN: Prophet skips missing days.
-        weights, used = day_shape(args.shape, np.where(gap, np.nan, v), series.index, cal, dates)
+        out = np.asarray(model(v, HORIZON), dtype=float).ravel()
+        if curve:
+            # Its own curve: no negative days, the total is their sum.
+            days = np.clip(out[:HORIZON], 0.0, None)
+            total = float(days.sum())
+        else:
+            total = float(out[0]) * HORIZON
+        if curve and total > 0:
+            weights, used = days / total, "model"
+        else:
+            # The no-data gap goes in as NaN: Prophet skips missing days.
+            weights, used = day_shape(args.shape, np.where(gap, np.nan, v), series.index, cal, dates)
         shape_used[cat] = (used, float(weights.max() * HORIZON), float(weights.min() * HORIZON))
-        row_model = model_type if used == "flat" else f"{model_type}+{used}_shape"
+        row_model = model_type if used in ("flat", "model") else f"{model_type}+{used}_shape"
 
         # Each day carries its share of the 30-day total, and its share of the
         # typical 30-day miss (RMSE): an even split reproduces the old flat band.
@@ -440,7 +483,7 @@ def main():
             ))
         if metrics:
             metric_rows.append(dict(forecast_category=cat, snapshot_date=snapshot_date, **metrics))
-        report.append(dict(category=cat, per_day=level, total_30d=total,
+        report.append(dict(category=cat, per_day=total / HORIZON, total_30d=total,
                            mae=metrics["mae"] if metrics else np.nan,
                            naive_mae=metrics["naive_mae"] if metrics else np.nan,
                            mase=metrics["mase"] if metrics else np.nan,
@@ -463,7 +506,14 @@ def main():
     if known_units:
         print(f"Known upcoming orders added to the category forecasts: {known_units:.0f} units")
 
-    if not args.no_db_write:
+    if not args.no_db_write and args.compare:
+        # A model for the Demand Forecast page's comparison only: its own rows
+        # in the comparison tables, replaced in one transaction.
+        create_result_tables(con)              # the comparison tables copy their columns
+        forecast_options.write_compare(con, forecast_options.CATEGORY, model_type,
+                                       forecast_df.to_dict("records"), metrics_df.to_dict("records"))
+        con.commit()
+    elif not args.no_db_write:
         create_result_tables(con)
         # Clear + refill in one transaction, matching step4: on failure SQLite
         # rolls back to the previous run rather than to nothing.
@@ -525,9 +575,14 @@ def main():
         "a category is missing forecast days"
     print("\n[PASS] no negative forecasts; every category has exactly "
           f"{HORIZON} forecast days; each 30-day total unchanged by the shape")
-    print("[dry run - database not modified]" if args.no_db_write else
-          f"Wrote {len(forecast_df)} rows to Result_Category_Forecast and "
-          f"{len(metrics_df)} to Result_Category_Forecast_Metrics")
+    if args.no_db_write:
+        print("[dry run - database not modified]")
+    elif args.compare:
+        print(f"Wrote {len(forecast_df)} {model_type} rows to the comparison tables "
+              f"({forecast_options.COMPARE_TABLES[forecast_options.CATEGORY][0]}).")
+    else:
+        print(f"Wrote {len(forecast_df)} rows to Result_Category_Forecast and "
+              f"{len(metrics_df)} to Result_Category_Forecast_Metrics")
     return 0
 
 

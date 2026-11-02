@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getProducts, getStockPosition, getReorderAlerts, getAdvisories, getMeta, getOverviewPerformance,
+  getSuppliers, getCategories,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
@@ -61,8 +62,8 @@ export default function Overview({ filters, setPage, setView, user }) {
     setView('tally');
   } : null;
 
-  // Everything below follows the topbar's supplier and category: an item
-  // counts only if the filtered product list holds it.
+  // The Overview has no topbar filters (App.jsx PAGE_FILTERS), so this is
+  // every product; Top Sellers narrows itself with its own Filter button.
   const inView = useMemo(() => new Set(products.map(p => p.product_id)), [products]);
 
   // Every item that gets a reorder point (Fast and Slow), as /api/reorder has
@@ -151,8 +152,7 @@ export default function Overview({ filters, setPage, setView, user }) {
       <div className="grid-2">
         <OrderFirst due={due} showSupplier={showSupplier} setPage={setPage}
                     latestCount={latestCount} recount={recount} />
-        <TopSellers perf={perf} alertById={alertById} categoryOf={categoryOf} showSupplier={showSupplier}
-                    onBrowse={() => setProductsOpen(true)} />
+        <TopSellers alertById={alertById} categoryOf={categoryOf} onBrowse={() => setProductsOpen(true)} />
       </div>
 
       {/* Advisories — calendar-contextual, driven by real data. The id is
@@ -655,16 +655,54 @@ function StoppedModal({ open, onClose, items, minUnits, prevName, curName, alert
   );
 }
 
-/** Top Sellers: the items that sold most over the last 12 months, top five,
- *  ranked by pesos (what earns most) or units (what moves fastest). It was two
- *  cards, Top 10 Earners and Best Sellers, ranking the same items two ways.
- *  Every item that sold opens on "See all"; the window and the shares are
- *  behind the (i). */
-function TopSellers({ perf, alertById, categoryOf, showSupplier, onBrowse }) {
+/** The Top Sellers card's own filter (the Overview has no topbar filters).
+ *  Periods are the backend's TOP_EARNER_RANGES. */
+const TOP_RANGES = ['This Month', 'Last 3 Months', 'Last 6 Months', 'Last 12 Months', 'All Time'];
+const TOP_DEFAULT = { supplier: ALL_SUPPLIERS, category: ALL_CATEGORIES, range: 'Last 12 Months' };
+
+/** Top Sellers: the items that sold most, top five, ranked by pesos (what
+ *  earns most) or units (what moves fastest). It was two cards, Top 10
+ *  Earners and Best Sellers, ranking the same items two ways. Every item that
+ *  sold opens on "See all"; the window and the shares are behind the (i).
+ *
+ *  Its Filter button narrows it by supplier, category and period - the
+ *  filters the Overview's topbar used to carry. Unfiltered it asks for exactly
+ *  what the page already loaded (same URL, so the cached answer), which is
+ *  the last 12 months store-wide. */
+function TopSellers({ alertById, categoryOf, onBrowse }) {
   const [by, setBy] = useState('php');
   const [allOpen, setAllOpen] = useState(false);
+  const [tf, setTf] = useState(TOP_DEFAULT);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const { data: perf } = useData(
+    () => getOverviewPerformance(tf, tf.range === TOP_DEFAULT.range ? undefined : tf.range),
+    [tf.supplier, tf.category, tf.range]);
+  const active = [tf.range !== TOP_DEFAULT.range && tf.range,
+    tf.supplier !== ALL_SUPPLIERS && tf.supplier,
+    tf.category !== ALL_CATEGORIES && tf.category].filter(Boolean);
+  const showSupplier = tf.supplier === ALL_SUPPLIERS;
+
+  const filterButton = (
+    <button type="button" className="btn btn--ghost btn--sm" onClick={() => setFilterOpen(true)}>
+      <Icon name="filter" size={13} /> Filter
+      {active.length > 0 && <span className="tag tag--info" style={{ marginLeft: 2 }}>{active.length}</span>}
+    </button>
+  );
+  const filterModal = filterOpen && (
+    <TopSellersFilter value={tf} onApply={v => { setTf(v); setFilterOpen(false); }}
+                      onClose={() => setFilterOpen(false)} />
+  );
+
   if (!perf) return <div className="card card__pad"><Loading label="Ranking items by sales…" /></div>;
-  if (!perf.available) return <div className="card card__pad"><div className="empty">{perf.reason}</div></div>;
+  if (!perf.available) {
+    return (
+      <div className="card card__pad">
+        <div className="card-h"><span className="section-h">Top Sellers</span>{filterButton}</div>
+        <div className="empty">{perf.reason}</div>
+        {filterModal}
+      </div>
+    );
+  }
 
   const t = perf.top;
   const ranked = by === 'php' ? t.items : [...t.items].sort((a, b) => b.units - a.units);
@@ -682,12 +720,16 @@ function TopSellers({ perf, alertById, categoryOf, showSupplier, onBrowse }) {
           <span className="section-h">Top Sellers</span>
           <TopSellersInfo t={t} small={perf.small_sellers} />
         </span>
-        {t.items.length > SHORT_LIST_ROWS && (
-          <button type="button" className="linkish" onClick={() => setAllOpen(true)}>
-            See all {num(t.items.length)} <Icon name="arrow" size={12} />
-          </button>
-        )}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
+          {t.items.length > SHORT_LIST_ROWS && (
+            <button type="button" className="linkish" onClick={() => setAllOpen(true)}>
+              See all {num(t.items.length)} <Icon name="arrow" size={12} />
+            </button>
+          )}
+          {filterButton}
+        </span>
       </div>
+      {filterModal}
       <div className="topsellers__bar">
         <div className="period-tabs period-tabs--sm" role="tablist" aria-label="Rank by">
           {[['php', 'Sales (₱)'], ['units', 'Units']].map(([k, label]) => (
@@ -697,11 +739,13 @@ function TopSellers({ perf, alertById, categoryOf, showSupplier, onBrowse }) {
             </button>
           ))}
         </div>
-        <span className="hint">Last 12 months &middot; keep these in stock</span>
+        <span className="hint">
+          {[tf.range, ...active.filter(a => a !== tf.range)].join(' · ')} &middot; keep these in stock
+        </span>
       </div>
       {rows.length
         ? <HBars data={rows} valueFmt={by === 'php' ? pesoK : num} />
-        : <div className="empty">No priced sales in this window.</div>}
+        : <div className="empty">No priced sales for this filter.</div>}
       {allOpen && (
         <TopSellersModal
           t={t}
@@ -713,6 +757,40 @@ function TopSellers({ perf, alertById, categoryOf, showSupplier, onBrowse }) {
         />
       )}
     </div>
+  );
+}
+
+/** The Top Sellers filter: period, supplier and category, applied together
+ *  on Apply so the card is not re-ranked at every pick. Mounted only while
+ *  open, so a cancelled edit leaves the filter in force untouched. */
+function TopSellersFilter({ value, onApply, onClose }) {
+  const [draft, setDraft] = useState(value);
+  const { data: suppliers } = useData(() => getSuppliers(), [], []);
+  const { data: categories } = useData(getCategories, [], []);
+  const set = (k, v) => setDraft(d => ({ ...d, [k]: v }));
+  const field = (key, label, options) => (
+    <div className="field">
+      <label htmlFor={`ts-${key}`}>{label}</label>
+      <select id={`ts-${key}`} value={draft[key]} onChange={e => set(key, e.target.value)}>
+        {(options.includes(draft[key]) ? options : [draft[key], ...options])
+          .map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+  return (
+    <Modal open onClose={onClose} width={460} title="Filter Top Sellers"
+           subtitle="Narrow the ranking to one period, supplier or category.">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {field('range', 'Period', TOP_RANGES)}
+        {field('supplier', 'Supplier', suppliers)}
+        {field('category', 'Category', categories)}
+      </div>
+      <div className="btn-row" style={{ marginTop: 16 }}>
+        <button className="btn btn--ink btn--sm" onClick={() => onApply(draft)}>Apply</button>
+        <button className="btn btn--ghost btn--sm" onClick={() => onApply(TOP_DEFAULT)}>Reset</button>
+        <button className="btn btn--ghost btn--sm" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
   );
 }
 

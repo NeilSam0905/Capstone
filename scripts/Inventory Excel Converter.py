@@ -142,8 +142,14 @@ def col_of(header_row, *targets):
     return None
 
 
-def parse_header_block(rows, i):
-    """Given rows[i] is a header row (has a PRICE cell), return (schema, first_data_row_idx)."""
+def parse_header_block(rows, i, prev=None):
+    """Given rows[i] is a header row (has a PRICE cell), return (schema, first_data_row_idx).
+
+    `prev` is the schema of the block above on the same sheet. A block whose
+    header has no QUANTITY label keeps that block's quantity column: from
+    September 2026 the Non-Apparel sheets' second block lost its QUANTITY and
+    DELIVERY labels while the counts stayed in the same column, and without
+    this every item in that block read as uncounted."""
     header = rows[i]
     price_col = col_of(header, "PRICE")
     no_col = price_col - 1 if price_col and price_col > 0 else None
@@ -158,6 +164,8 @@ def parse_header_block(rows, i):
         key = clean(c).upper().rstrip(".")
         if key in keywords and keywords[key] is None:
             keywords[key] = idx
+    if keywords["QUANTITY"] is None and prev is not None:
+        keywords["QUANTITY"] = prev.get("qty")
 
     schema = {"no": no_col, "item": item_col, "price": price_col,
                "opex": keywords["OPEX"], "pictures": keywords["PICTURES"],
@@ -219,7 +227,7 @@ def convert_sheet(ws_rows, sheet_name, out_rows):
         row = ws_rows[i]
         is_header = any(clean(c).upper() == "PRICE" for c in row) and any(clean(c).upper() == "ITEM" for c in row)
         if is_header:
-            schema, next_i = parse_header_block(ws_rows, i)
+            schema, next_i = parse_header_block(ws_rows, i, schema)
             group_no, group_item, group_price = "", "", None
             i = next_i  # skips the LOC layout's SIZE/QUANTITY sub-header row too
             continue

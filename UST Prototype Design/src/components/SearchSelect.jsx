@@ -9,8 +9,12 @@ import { useState, useRef, useEffect, useMemo, useId } from 'react';
  * hold one of its options, so it looks and behaves like the `.filter` selects
  * beside it until it is opened.
  *
- * `options` is [{ value, label }]. The search matches anywhere in the label,
- * ignoring case. `emptyLabel` is shown while nothing is picked. `variant`
+ * `options` is [{ value, label, disabled?, title? }]. A disabled option is
+ * listed, greyed out, and cannot be picked; `title` is shown on hover (a
+ * native <option> shows neither reliably). The search matches anywhere in the
+ * label, ignoring case; `searchable={false}` leaves the search box out, for a
+ * list short enough to read at a glance. `emptyLabel` is shown while nothing
+ * is picked. `variant`
  * "field" sizes it like the `.field` inputs of a form (the tally cards)
  * instead of like a topbar filter; `invalid` gives it the error border.
  *
@@ -20,7 +24,7 @@ import { useState, useRef, useEffect, useMemo, useId } from 'react';
  */
 export default function SearchSelect({
   id, value, options, onChange, minWidth = 200, placeholder = 'Search…',
-  emptyLabel = '', variant, invalid = false,
+  emptyLabel = '', variant, invalid = false, searchable = true,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -47,10 +51,10 @@ export default function SearchSelect({
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  // Opening puts the cursor in the search box (see openPanel for the
-  // highlight).
+  // Opening puts the cursor in the search box, or on the list when there is
+  // none, so the arrow keys work at once (see openPanel for the highlight).
   useEffect(() => {
-    if (open) input.current?.focus();
+    if (open) (input.current ?? list.current)?.focus();
   }, [open]);
 
   function openPanel() {
@@ -69,6 +73,7 @@ export default function SearchSelect({
   }
 
   function pick(o) {
+    if (o.disabled) return;
     onChange(o.value);
     close();
   }
@@ -106,26 +111,33 @@ export default function SearchSelect({
 
       {open && (
         <div className="sselect__panel">
-          <input
-            ref={input}
-            type="search"
-            className="sselect__search"
-            placeholder={placeholder}
-            value={query}
-            role="combobox"
-            aria-expanded="true"
-            aria-controls={listId}
-            aria-autocomplete="list"
-            onChange={e => { setQuery(e.target.value); setActive(0); }}
-            onKeyDown={onKeyDown}
-          />
-          <ul className="sselect__list" id={listId} role="listbox" ref={list}>
+          {searchable && (
+            <input
+              ref={input}
+              type="search"
+              className="sselect__search"
+              placeholder={placeholder}
+              value={query}
+              role="combobox"
+              aria-expanded="true"
+              aria-controls={listId}
+              aria-autocomplete="list"
+              onChange={e => { setQuery(e.target.value); setActive(0); }}
+              onKeyDown={onKeyDown}
+            />
+          )}
+          <ul className={`sselect__list${searchable ? '' : ' sselect__list--plain'}`} id={listId}
+              role="listbox" ref={list} tabIndex={searchable ? undefined : -1}
+              onKeyDown={searchable ? undefined : onKeyDown}>
             {matches.map((o, i) => (
               <li
                 key={o.value}
                 role="option"
                 aria-selected={o.value === value}
-                className={`sselect__opt${i === active ? ' is-active' : ''}${o.value === value ? ' is-selected' : ''}`}
+                aria-disabled={o.disabled || undefined}
+                title={o.title}
+                className={`sselect__opt${i === active ? ' is-active' : ''}${o.value === value ? ' is-selected' : ''}`
+                  + (o.disabled ? ' is-disabled' : '')}
                 onMouseEnter={() => setActive(i)}
                 onMouseDown={e => { e.preventDefault(); pick(o); }}
               >{o.label}</li>

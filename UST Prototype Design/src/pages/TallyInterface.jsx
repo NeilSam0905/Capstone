@@ -34,9 +34,9 @@ const ENTRY_KINDS = [
   { value: 'SALE',           label: 'Sale (Walk In)',
     hint: 'Units sold to a customer at the counter.' },
   { value: 'SALE:bulk',      label: 'Sale (Bulk/Organization)',
-    hint: 'One large order (an organisation, an office). Kept out of the forecasts, which predict everyday sales.' },
+    hint: 'One large order (an organisation, an office).' },
   { value: 'SALE:pre_order', label: 'Sale (Pre-Order)',
-    hint: 'Collected against an order placed earlier. Kept out of the forecasts, which predict everyday sales.' },
+    hint: 'Collected against an order placed earlier.' },
   { value: 'DAMAGED',  label: 'DAMAGED',  hint: 'Units removed as damaged or unsellable.' },
   { value: 'PROMO',    label: 'PROMO',    hint: 'Units released for a promotion or giveaway.' },
   { value: 'TRANSFER', label: 'TRANSFER', hint: 'Units moved to another storage location.' },
@@ -101,14 +101,16 @@ function ImportButton({ onImport, onDone, label = 'Import CSV / Excel', hint, ti
     if (!file) return;
     setBusy(true);
     setResult(null);
+    let out;
     try {
-      setResult(await onImport(file));
+      out = await onImport(file);
     } catch (err) {
-      setResult({ ok: false, error: err.message });
+      out = { ok: false, error: err.message };
     } finally {
       setBusy(false);
     }
-    onDone?.();
+    setResult(out);
+    onDone?.(out);
   }
 
   return (
@@ -135,11 +137,14 @@ function ImportResult({ result }) {
     );
   }
   const { imported = 0, updated = 0, rejected = [], rejected_total = 0, rows_read = 0,
-          held = 0, held_names: heldNames = [] } = result;
+          held = 0, held_names: heldNames = [], no_count: noCount = [], no_count_total = 0 } = result;
   const clean = rejected_total === 0;
   return (
     <div className={`notice notice--${clean ? 'ok' : 'warn'}`} style={{ marginTop: 12 }}>
-      <b>{clean ? 'Imported' : 'Imported with problems'}:</b>{' '}
+      <b>{clean ? 'Imported' : 'Imported with problems'}</b>
+      {/* The inventory report goes into its latest month with counts, which
+          is not necessarily the month the card was set to. */}
+      {result.month && <> into <b>{longMonth(result.month)}</b></>}:{' '}
       {num(rows_read)} row{rows_read === 1 ? '' : 's'} read · {num(imported)} added
       {updated > 0 && <> · {num(updated)} updated</>}
       {held > 0 && <> · <b>{num(held)} waiting</b></>}
@@ -164,11 +169,23 @@ function ImportResult({ result }) {
               ? ` of ${num(rejected_total)}` : ''})
           </summary>
           <ul className="date-list" style={{ marginTop: 8 }}>
-            {rejected.map(r => (
-              <li key={r.row}>
-                <b>Row {r.row}</b>{r.item ? ` — ${r.item}` : ''}: {r.reason}
+            {rejected.map((r, i) => (
+              <li key={r.row ?? `r${i}`}>
+                {r.row != null ? <><b>Row {r.row}</b>{r.item ? ` — ${r.item}` : ''}</> : <b>{r.item}</b>}
+                : {r.reason}
               </li>
             ))}
+          </ul>
+        </details>
+      )}
+      {noCount.length > 0 && (
+        <details style={{ marginTop: 8 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 12.5 }}>
+            {num(no_count_total)} item{no_count_total === 1 ? ' has' : 's have'} no figure
+            for {longMonth(result.month)} on the sheet (N/A or blank), so their counts were left as they were
+          </summary>
+          <ul className="date-list" style={{ marginTop: 8 }}>
+            {noCount.map(name => <li key={name}>{name}</li>)}
           </ul>
         </details>
       )}
@@ -192,6 +209,7 @@ export default function TallyInterface({ setView, user, signOut }) {
   // exactly what makes the analytics stale, and a finished pipeline run is
   // what clears it. Both already call bump().
   const { data: staleness } = useData(getPipelineStaleness, [reloadKey]);
+  const { data: review } = useData(getNamesToReview, [reloadKey], null);
   const [tab, setTab] = useState(savedTab);
   const goTo = useCallback(next => {
     setTab(next);
@@ -221,9 +239,11 @@ export default function TallyInterface({ setView, user, signOut }) {
         {connectionError && <ErrorBanner error={connectionError} />}
         <CalendarEndBanner meta={meta} goTo={goTo} />
         <StalenessBanner staleness={staleness} goTo={goTo} />
-        <NamesToReview products={products} reloadKey={reloadKey} onChanged={bump} />
+        {/* On the Stock tab the card itself is right there. */}
+        {tab !== 'stock' && <NamesBanner review={review} goTo={goTo} />}
 
-        <TallyTabs active={tab} onChange={goTo} staleness={staleness} />
+        <TallyTabs active={tab} onChange={goTo} staleness={staleness}
+                   namesWaiting={review?.names?.length ?? 0} />
 
         {/* Every section stays mounted and is only hidden, so switching tab
             never loses a half-filled form. */}
@@ -234,6 +254,7 @@ export default function TallyInterface({ setView, user, signOut }) {
           <EntriesByDate reloadKey={reloadKey} />
         </section>
         <section className="tally-section tone-ok" hidden={tab !== 'stock'} aria-label="Stock">
+          <NamesToReview data={review} products={products} onChanged={bump} />
           <MonthlyInventoryCount products={products} onSaved={bump} />
           <RestockDeliveries products={products} reloadKey={reloadKey} />
         </section>
@@ -277,14 +298,16 @@ function needsUpdate(staleness) {
   return Boolean(staleness?.stale && !staleness.running);
 }
 
-function TallyTabs({ active, onChange, staleness }) {
+function TallyTabs({ active, onChange, staleness, namesWaiting = 0 }) {
   // Update Analytics carries a bell while the dashboard needs an update, with
-  // the number of records waiting when that is the reason.
+  // the number of records waiting when that is the reason. Stock carries one
+  // with the number of item names waiting under Names to review.
   const waiting = needsUpdate(staleness)
     ? (staleness.interrupted ? null : staleness.total_pending || null) : undefined;
   const bellTitle = staleness?.interrupted
     ? 'The last update did not finish - open this tab and click Run Analytics'
     : 'Records waiting for the next update - open this tab and click Run Analytics';
+  const namesTitle = `${namesWaiting} item name${namesWaiting === 1 ? '' : 's'} to settle under Names to review`;
   return (
     <nav className="tally-tabs" role="tablist" aria-label="Tally sections">
       {SECTIONS.map(s => (
@@ -300,6 +323,13 @@ function TallyTabs({ active, onChange, staleness }) {
                       aria-label={bellTitle}>
                   <Icon name="bell" size={12} />
                   {waiting != null && num(waiting)}
+                </span>
+              )}
+              {s.id === 'stock' && namesWaiting > 0 && (
+                <span className="tally-tab__badge tally-tab__badge--bell" title={namesTitle}
+                      aria-label={namesTitle}>
+                  <Icon name="bell" size={12} />
+                  {num(namesWaiting)}
                 </span>
               )}
             </span>
@@ -353,10 +383,12 @@ function evidence(n) {
  *  Each answer adds one line to the controlled vocabulary — nothing is
  *  written without someone choosing it, including "strong" suggestions.
  *  A sheet name takes effect at the next pipeline run; held import rows are
- *  added at once. The card is hidden when there is nothing to settle. */
-function NamesToReview({ products, reloadKey, onChanged }) {
-  const { data } = useData(getNamesToReview, [reloadKey], null);
-  const [busy, setBusy] = useState(null);            // raw_name being saved, or '*' for the batch
+ *  added at once. The card is hidden when there is nothing to settle.
+ *
+ *  Lives on the Stock tab, folded shut; NamesBanner points the other tabs at
+ *  it. `data` is getNamesToReview(), read once by the page for both. */
+function NamesToReview({ data, products, onChanged }) {
+  const [busy, setBusy] = useState(null);           // raw_name being saved, or '*' for the batch
   const [choosing, setChoosing] = useState(null);    // { raw_name, product_id } while picking an item
   const [creating, setCreating] = useState(null);    // { raw_name, category, supplier_name } for an import-only name
   const [message, setMessage] = useState(null);      // { ok, text }
@@ -413,22 +445,30 @@ function NamesToReview({ products, reloadKey, onChanged }) {
   }
 
   return (
-    <div className="card card__pad card--names-review tone-warn">
-      <div className="card-h">
+    <details className="card card__pad card--names-review tone-warn collapse collapse--card">
+      <summary>
         <CardTitle icon="tag">
           Names to review
           {names.length > 0 && <span className="tag tag--warn">{num(names.length)}</span>}
         </CardTitle>
-        {strong.length > 1 && (
-          <button className="btn btn--ghost btn--sm" disabled={busy != null} onClick={() => setConfirmAll(true)}>
-            <Icon name="check" size={13} /> Review {num(strong.length)} strong suggestions
-          </button>
-        )}
-      </div>
+        <span className="hint">
+          {names.length > 0
+            ? `${num(names.length)} name${names.length === 1 ? '' : 's'} to settle`
+            : `${num(awaiting.length)} settled, waiting for the next update`}
+        </span>
+      </summary>
+
       {names.length > 0 && (
-        <div className="hint" style={{ marginTop: -4, marginBottom: 12 }}>
-          These item names are not in the item list yet. Say which item each one is, or that it is a new
-          item; the answer is remembered, so a name is only ever asked about once.
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: 12, flexWrap: 'wrap', margin: '12px 0' }}>
+          <span className="hint">
+            These item names are not in the item list yet. Please select one of the choices below.
+          </span>
+          {strong.length > 1 && (
+            <button className="btn btn--ghost btn--sm" disabled={busy != null} onClick={() => setConfirmAll(true)}>
+              <Icon name="check" size={13} /> Review {num(strong.length)} strong suggestions
+            </button>
+          )}
         </div>
       )}
 
@@ -526,7 +566,7 @@ function NamesToReview({ products, reloadKey, onChanged }) {
       )}
 
       {awaiting.length > 0 && (
-        <details className="collapse" style={{ marginTop: names.length ? 16 : 0 }}>
+        <details className="collapse" style={{ marginTop: names.length ? 16 : 12 }}>
           <summary>
             <span className="section-h">Settled, waiting for the next update</span>
             <span className="hint">{num(awaiting.length)} name{awaiting.length === 1 ? '' : 's'}</span>
@@ -560,7 +600,7 @@ function NamesToReview({ products, reloadKey, onChanged }) {
           <button className="btn btn--ghost btn--sm" onClick={() => setConfirmAll(false)}>Cancel</button>
         </div>
       </Modal>
-    </div>
+    </details>
   );
 }
 
@@ -628,8 +668,7 @@ function SalesTally({ products, onSaved, recent, recentLoading }) {
                   title="Change or remove an entry already recorded">
             <Icon name="cal" size={13} /> Edit entries
           </button>
-          <ImportButton onImport={importTallyEntries} onDone={onSaved}
-                        hint="Date · Item · Total Quantity · Order Type (optional)" />
+          <ImportButton onImport={importTallyEntries} onDone={onSaved} />
         </span>
       </div>
       {editing && <EditTallyModal onClose={closeEditor} onSaved={onSaved} />}
@@ -754,17 +793,12 @@ function UpcomingOrders({ products, reloadKey }) {
       <summary>
         <CardTitle icon="calPlus">Upcoming Bulk Orders</CardTitle>
         <span className="hint">
-          {upcoming.length === 0 ? 'none recorded'
+          {upcoming.length === 0 ? 'None Recorded'
             : `${num(upcoming.length)} coming · ${num(upcoming.reduce((s, o) => s + o.quantity, 0))} units`}
         </span>
       </summary>
 
-      <div className="hint" style={{ margin: '10px 0 12px' }}>
-        An organisation order or pre-order you already know about. The forecasts add it on its date, on top of
-        everyday sales. When it is collected, tally it as <b>Sale (Bulk/Organization)</b> or <b>Sale (Pre-Order)</b>.
-      </div>
-
-      <div className="form-grid">
+      <div className="form-grid" style={{ marginTop: 12 }}>
         <div className="col-2">
           <Field label="Item" error={errors.product_id}>
             <ItemPicker items={products} value={form.product_id} invalid={!!errors.product_id}
@@ -916,15 +950,23 @@ function MonthlyInventoryCount({ products, onSaved }) {
           </button>
           <ImportButton
             onImport={file => importInventoryCounts(file, month)}
-            onDone={() => { setReloadKey(k => k + 1); onSaved?.(); }}
-            title={`Columns: Item · Units On Hand — imported into ${longMonth(month)}`}
+            onDone={res => {
+              // Show the month the file went into: for the inventory report
+              // that is its latest month with counts, not the one picked here.
+              if (res?.ok && res.month) setMonth(res.month);
+              setReloadKey(k => k + 1);
+              onSaved?.();
+            }}
+            title={`The store's inventory report goes into its latest month with counts; `
+                   + `a sheet with Item · Units On Hand goes into ${longMonth(month)}`}
           />
         </span>
       </div>
-      <div className="hint" style={{ marginTop: -4, marginBottom: 12 }}>
-        {data?.workbook_month && <>Latest Inventory Data: {longMonth(data.workbook_month)} · </>}
-        Import columns: Item · Units On Hand → {longMonth(month)}
-      </div>
+      {(data?.latest_month || data?.workbook_month) && (
+        <div className="hint" style={{ marginTop: -4, marginBottom: 12 }}>
+          Latest Inventory Data: {longMonth(data.latest_month || data.workbook_month)}
+        </div>
+      )}
 
       <AddItemModal
         open={addOpen}
@@ -996,7 +1038,7 @@ function MonthlyInventoryCount({ products, onSaved }) {
         <summary>
           <span className="section-h">Counted in {longMonth(month)}</span>
           <span className="hint">
-            {counts.length === 0 ? 'nothing counted yet' :
+            {counts.length === 0 ? 'Nothing Counted Yet' :
               `${num(counts.length)} item${counts.length === 1 ? '' : 's'} · ${num(data.total_units)} units`}
           </span>
         </summary>
@@ -1464,10 +1506,17 @@ function RestockDeliveries({ products, reloadKey }) {
   };
 
   async function save() {
+    // Both dates are required here: a restock is recorded once it has
+    // arrived. The server still takes an open order (the "On the way" list
+    // and its Arrived button keep working for those already recorded).
+    if (!form.delivered_on) {
+      setErrors(e => ({ ...e, delivered_on: 'Pick the date it arrived.' }));
+      return;
+    }
     const r = await addRestock(form);
     if (!r.ok) { setErrors(r.errors || {}); return; }
     setErrors({});
-    setMessage(`Recorded a restock from ${form.supplier_name}${form.delivered_on ? '' : ' — mark it delivered when it arrives'}.`);
+    setMessage(`Recorded a restock from ${form.supplier_name}.`);
     setForm({ supplier_name: form.supplier_name, ordered_on: '', delivered_on: '', note: '' });
     reload();
   }
@@ -1490,8 +1539,7 @@ function RestockDeliveries({ products, reloadKey }) {
         <CardTitle icon="box">Restock Deliveries</CardTitle>
       </div>
       <div className="hint" style={{ marginTop: -4, marginBottom: 12 }}>
-        Record when each restock was ordered and when it arrived. After {minDeliveries} deliveries from a
-        supplier, its real delivery time replaces the estimated lead time in the reorder points.
+        Record when each restock was ordered and when it arrived.
       </div>
 
       <div className="form-grid">
@@ -1504,7 +1552,7 @@ function RestockDeliveries({ products, reloadKey }) {
                  className={errors.ordered_on ? 'is-err' : ''}
                  onChange={e => set('ordered_on', e.target.value)} />
         </Field>
-        <Field label="Delivered on" error={errors.delivered_on} hint="Leave empty if it has not arrived yet">
+        <Field label="Delivered on" error={errors.delivered_on}>
           <input type="date" value={form.delivered_on} max={today()}
                  className={errors.delivered_on ? 'is-err' : ''}
                  onChange={e => set('delivered_on', e.target.value)} />
@@ -2362,6 +2410,31 @@ function Banner({ tone, icon, title, onClose, style, children }) {
   );
 }
 
+const NAMES_DISMISS_KEY = 'tally.namesBannerClosed';
+
+/** Points the other tabs at Names to review, which sits folded on the Stock
+ *  tab. Closing it holds until the number of names to settle changes. */
+function NamesBanner({ review, goTo }) {
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem(NAMES_DISMISS_KEY); } catch { return null; }
+  });
+  const n = review?.names?.length ?? 0;
+  const key = String(n);
+  if (n === 0 || dismissed === key) return null;
+  function close() {
+    setDismissed(key);
+    try { localStorage.setItem(NAMES_DISMISS_KEY, key); } catch { /* hidden until reload */ }
+  }
+  return (
+    <Banner tone="warn" icon="alert" onClose={close}
+            title={`${num(n)} item name${n === 1 ? ' needs' : 's need'} review, please settle ${n === 1 ? 'it' : 'them'}`}>
+      These names from the tally sheets or imported files are not in the item list yet, so their sales and
+      counts are not tied to an item. Settle them under Names to review in
+      the <TabLink to="stock" goTo={goTo}>Stock tab</TabLink> to fix the issue.
+    </Banner>
+  );
+}
+
 function StalenessBanner({ staleness, goTo }) {
   const [dismissed, setDismissed] = useState(readStalenessDismissed);
   if (!staleness || !staleness.stale) return null;
@@ -2677,7 +2750,7 @@ function FullPipelineRun({ onChanged, attention = false }) {
           <span className="run-choice__title"><Icon name="trend" size={16} /> Run Forecast</span>
           <span className="run-choice__desc">
             Everything in Run Analytics, plus a fresh forecast of each fast-selling item for the next 30
-            days.
+            days, made with every model so they can be compared on the Demand Forecast page.
           </span>
         </button>
       </div>

@@ -262,3 +262,87 @@ def test_add_tally_workbook(api):
     assert sorted(p.name for p in rawdata.glob("*.xlsx")) == ["USTore TBS A.Y. 2026-2027.xlsx",
                                                               "tally_import_copy.xlsx"]
     assert Path(rawdata / "tally_import_copy.xlsx").read_bytes() == aug
+
+
+def shift_month(months):
+    """(year, month) `months` from this month, so the report below stays
+    'past, present and future' whenever the suite runs."""
+    t = datetime.date.today()
+    y, m = divmod(t.year * 12 + t.month - 1 + months, 12)
+    return y, m + 1
+
+
+def report_sheets(months, apparel, non_apparel):
+    """The two monthly sheets of the store's inventory report for one month.
+    `apparel` rows are (no, price, item, size, qty); `non_apparel` is two
+    blocks of (no, price, item, classification, qty), the second with the
+    header that lost its QUANTITY label (September 2026 onwards)."""
+    y, m = shift_month(months)
+    name = datetime.date(y, m, 1).strftime("%B").upper()
+    title = f"{name} {y} INVENTORY"
+    first, second = non_apparel
+    return [
+        (f"{title}  FOR APPAREL"[:31], [[title + " FOR APPAREL"],
+                                        ["NO.", "PRICE", "ITEM", "SIZE", "QUANTITY", "PICTURES"], *apparel]),
+        (f"{title} FOR NON-APPAREL"[:31], [[title + " FOR NON-APPAREL"],
+                                           ["NO.", "PRICE", "ITEM", "CLASSIFICATION", "QUANTITY", "OPEX", "PICTURES"],
+                                           *first,
+                                           [None, "PRICE", "ITEM", None, None, "OPEX", "PICTURES"],
+                                           *second]),
+    ]
+
+
+def report_bytes(sheets):
+    wb = openpyxl.Workbook()
+    wb.active.title = "MAIN STORAGE"
+    wb.active.append(["DATE: 11/09/2024"])
+    for title, rows in sheets:
+        ws = wb.create_sheet(title)
+        for row in rows:
+            ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def upload_bytes(api, path, data, name, **form):
+    return api.post(path, data={"file": (io.BytesIO(data), name), **form}, content_type="multipart/form-data")
+
+
+def test_inventory_report_imports_its_latest_month_with_counts(api):
+    data = report_bytes(
+        report_sheets(-2, [(1, 150, "Lanyard", "S", 100)], ([], []))
+        + report_sheets(-1,
+                        [(1, 150, "Lanyard", "S", 3), (None, None, None, "M", 4),
+                         (2, 120, "UST VL LANYARD W/ PRINT", "S", 2)],
+                        ([(1, 150, "Lanyard", "Blue", 1)],
+                         [(2, 50, "Tiger Headband (2 Designs)", None, 5),
+                          (3, 50, "Black Eco Bag", None, "N/A"),
+                          (4, 300, "Mystery Mug", None, 6)]))
+        + report_sheets(0, [(1, 150, "Lanyard", "S", None)], ([], []))            # laid out, not counted yet
+        + report_sheets(1, [(1, 150, "Lanyard", "S", 999)], ([], [])))            # a month still to come
+    y, m = shift_month(-1)
+    month = f"{y}-{m:02d}"
+
+    body = upload_bytes(api, "/api/inventory/import", data, "USTORE INVENTORY REPORT.xlsx",
+                        month=f"{shift_month(0)[0]}-{shift_month(0)[1]:02d}").get_json()
+    assert body["ok"] and body["source"] == "inventory_report" and body["month"] == month
+    assert (body["imported"], body["updated"], body["held"], body["rejected_total"]) == (2, 0, 1, 0)
+    assert body["held_names"] == [{"name": "Mystery Mug", "rows": 1}]
+    assert body["no_count"] == ["Black Eco Bag"]
+    # Lanyard: two sizes, its sheet name, and the non-apparel block, added up.
+    assert query(api, "SELECT product_id, count_month, quantity FROM Inventory_Count ORDER BY product_id") \
+        == [(1, month, 10), (2, month, 5)]
+    assert query(api, "SELECT raw_name, count_month, quantity FROM Pending_Import_Row") == [("Mystery Mug", month, 6)]
+    assert api.get(f"/api/inventory?month={month}").get_json()["latest_month"] == month
+
+    again = upload_bytes(api, "/api/inventory/import", data, "USTORE INVENTORY REPORT.xlsx").get_json()
+    assert (again["imported"], again["updated"]) == (0, 2)                     # a re-import corrects
+    assert query(api, "SELECT COUNT(*) FROM Inventory_Count") == [(2,)]
+
+
+def test_inventory_report_with_no_counts_is_refused(api):
+    data = report_bytes(report_sheets(0, [(1, 150, "Lanyard", "S", None)], ([], [])))
+    r = upload_bytes(api, "/api/inventory/import", data, "USTORE INVENTORY REPORT.xlsx")
+    assert r.status_code == 400 and "no counts" in r.get_json()["error"]
+    assert query(api, "SELECT COUNT(*) FROM Inventory_Count") == [(0,)]

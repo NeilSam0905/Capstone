@@ -46,6 +46,8 @@ import names                  # after pipeline: it needs scripts/ on sys.path
 import order_types            # scripts/order_types.py
 import calendar_extent        # scripts/calendar_extent.py
 import tally_corrections       # scripts/tally_corrections.py
+import inventory_report       # reads with scripts/Inventory Excel Converter.py
+import forecast_models
 
 app = Flask(__name__)
 auth.configure(app)
@@ -66,9 +68,19 @@ if _vault_note:
 RAWDATA_DIR = Path(__file__).resolve().parent.parent / "rawdata"
 
 # An import is a whole workbook, so the JSON-sized default is far too small,
-# but an unbounded upload is a trivial way to fill the disk. The largest file
-# in rawdata/ today is ~2 MB.
-app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+# but an unbounded upload is a trivial way to fill the disk. The store's
+# inventory report carries a photo of every item and is ~185 MB (it was
+# 131 MB in 2026-04), so the cap leaves room for it to keep growing.
+# UST Prototype Design/src/services/dataService.js checks the same figure
+# before sending: over the cap, the server closes the connection mid-upload
+# and the browser reports only that it could not reach the server.
+MAX_UPLOAD_MB = 256
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+
+
+@app.errorhandler(413)
+def _too_large(_exc):
+    return jsonify({"ok": False, "error": f"That file is over the {MAX_UPLOAD_MB} MB upload limit."}), 413
 
 
 def _safe_name(name):
@@ -682,6 +694,11 @@ def get_monthly_units():
 # and the window its top earners are ranked over.
 PERFORMANCE_DAILY_DAYS = 90
 TOP_EARNER_WINDOW_DAYS = 365
+# The Top Sellers card's own Period filter (?top_range=). Trailing days back
+# from the last tallied sale, like the default window; "This Month" is the
+# latest tallied month and "All Time" has no start (handled in the route).
+TOP_EARNER_RANGES = {"This Month": None, "Last 3 Months": 91, "Last 6 Months": 183,
+                     "Last 12 Months": TOP_EARNER_WINDOW_DAYS, "All Time": None}
 TOP_EARNER_SHARE = 0.80          # list items down to this share of sales
 SMALL_SELLER_UNITS = 10          # "sold this many or fewer" = negligible
 STOPPED_MIN_UNITS = 5            # sold this many last month, none this month
@@ -712,6 +729,9 @@ def get_overview_performance():
     names the items that moved each one most. `stopped_selling` lists the
     items that sold last month and not once this month: one that suddenly
     stops has often run out, so they are the ones to check first."""
+    top_range = request.args.get("top_range") or "Last 12 Months"
+    if top_range not in TOP_EARNER_RANGES:
+        return jsonify({"available": False, "reason": f"Unknown period {top_range!r}."}), 400
     c = con()
     cat = catalog.compute_catalog(c)
     supplier = request.args.get("supplier") or None
@@ -729,9 +749,14 @@ def get_overview_performance():
         return jsonify({"available": False, "reason": "No sales have been tallied yet."})
     history_end = max(r["day"] for r in rows)
     end = date.fromisoformat(history_end)
-    window_start = (end - timedelta(days=TOP_EARNER_WINDOW_DAYS - 1)).isoformat()
     daily_start = (end - timedelta(days=PERFORMANCE_DAILY_DAYS - 1)).isoformat()
     latest = history_end[:7]
+    if top_range == "This Month":
+        window_start = f"{latest}-01"
+    elif top_range == "All Time":
+        window_start = min(r["day"] for r in rows)
+    else:
+        window_start = (end - timedelta(days=TOP_EARNER_RANGES[top_range] - 1)).isoformat()
     previous = _month_before(latest)
 
     daily, monthly, items, by_category, by_item = {}, {}, {}, {}, {}
@@ -825,7 +850,7 @@ def get_overview_performance():
         "daily": [{"date": d, "php": round(daily.get(d, 0.0), 2)} for d in days],
         "priced_unit_share": units_priced / units_all if units_all else None,
         "top": {
-            "window_start": window_start, "window_end": history_end,
+            "window_start": window_start, "window_end": history_end, "range": top_range,
             "total_php": round(total, 2), "n_selling": len(top),
             "n_for_share": n_for_share, "share": TOP_EARNER_SHARE,
             "top10_share": top[min(10, len(top)) - 1]["cum_share"] if top else 0.0,
@@ -1358,7 +1383,9 @@ def get_inventory_counts():
     first, joined to the product name so the table needs no second call.
 
     Also returns `workbook_month`: the last month the historical inventory
-    workbook covers. The interface shows it so whoever is counting can see
+    workbook covers, and `latest_month`: the last month either it or the
+    counts recorded here cover (an imported inventory report lands in the
+    counts). The interface shows the latest so whoever is counting can see
     where the existing data stops and what they are extending."""
     month = request.args.get("month") or ""
     if not validation.ISO_MONTH_RE.match(month):
@@ -1376,11 +1403,14 @@ def get_inventory_counts():
         r["supplier_name"] = r["supplier_name"] or catalog.UNATTRIBUTED
 
     workbook = catalog.load_csv_stock()
+    workbook_month = max((v["month"] for v in workbook.values()), default=None)
+    counted_month = dbmod.one(con(), "SELECT MAX(count_month) AS m FROM Inventory_Count")["m"]
     return jsonify({
         "month": month,
         "counts": counts,
         "total_units": sum(r["quantity"] for r in counts),
-        "workbook_month": max((v["month"] for v in workbook.values()), default=None),
+        "workbook_month": workbook_month,
+        "latest_month": max(filter(None, (workbook_month, counted_month)), default=None),
     })
 
 
@@ -1407,6 +1437,10 @@ def import_inventory_counts():
     onto it. A valid row whose name is neither is HELD (Pending_Import_Row)
     and counted under "Names to review"; it is applied once the name is
     settled there.
+
+    The store's own inventory report workbook (monthly "<MONTH> <YEAR>
+    INVENTORY" sheets) is recognised and read differently: see
+    _import_inventory_report. The ?month= field does not apply to it.
     """
     storage = request.files.get("file")
     if storage is None or not storage.filename:
@@ -1420,6 +1454,13 @@ def import_inventory_counts():
         return jsonify({"ok": False, "error": "Month must be YYYY-MM."}), 400
 
     saved = _archive_upload(storage)
+    today_month = date.today().strftime("%Y-%m")
+    if storage.filename.lower().endswith(".xlsx"):
+        storage.stream.seek(0)
+        report = inventory_report.read_latest_month(storage.stream.read(), today_month)
+        if report is not None:
+            return _import_inventory_report(report, storage.filename, saved, today_month)
+
     storage.stream.seek(0)
     try:
         _, rows = _read_table(storage)
@@ -1428,7 +1469,6 @@ def import_inventory_counts():
 
     c = con()
     products = _product_index(c)
-    today_month = date.today().strftime("%Y-%m")
     imported = updated = 0
     rejected = []
     held = {}                                      # name -> rows held for review
@@ -1460,15 +1500,7 @@ def import_inventory_counts():
             held[item] = held.get(item, 0) + 1
             continue
 
-        existed = dbmod.one(c, "SELECT 1 FROM Inventory_Count WHERE product_id = ? AND count_month = ?",
-                            (pid, month))
-        c.execute("""
-            INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged)
-            VALUES (?, ?, ?, ?, 'import', ?)
-            ON CONFLICT (product_id, count_month) DO UPDATE SET
-                quantity = excluded.quantity, note = excluded.note, date_logged = excluded.date_logged
-        """, (pid, month, qty, (str(note).strip() if note else None), now))
-        if existed:
+        if _save_imported_count(c, pid, month, qty, (str(note).strip() if note else None), now):
             updated += 1
         else:
             imported += 1
@@ -1479,6 +1511,74 @@ def import_inventory_counts():
         "rejected": rejected[:50], "rejected_total": len(rejected),
         **_held_summary(held),
         "rows_read": len(rows), "saved_to": saved,
+    })
+
+
+def _save_imported_count(c, pid, month, qty, note, now):
+    """Upsert one imported count. Returns True when it replaced one already
+    recorded for that product and month."""
+    existed = dbmod.one(c, "SELECT 1 FROM Inventory_Count WHERE product_id = ? AND count_month = ?",
+                        (pid, month))
+    c.execute("""
+        INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged)
+        VALUES (?, ?, ?, ?, 'import', ?)
+        ON CONFLICT (product_id, count_month) DO UPDATE SET
+            quantity = excluded.quantity, note = excluded.note, date_logged = excluded.date_logged
+    """, (pid, month, qty, note, now))
+    return existed is not None
+
+
+def _import_inventory_report(report, filename, saved, today_month):
+    """Load the store's inventory report: its latest month with counts, one
+    count per item (inventory_report.item_totals), into Inventory_Count for
+    that month. Later months laid out but not filled in yet are passed over.
+
+    An item whose rows all read "N/A" or blank has no figure that month; it
+    is listed under `no_count` and its count is left as it was, rather than
+    recorded as zero, which would claim the store is out of it. Unknown
+    names are held exactly as in a plain import, with the item's total."""
+    month = report["month"]
+    if month is None:
+        return jsonify({"ok": False, "saved_to": saved, "error":
+                        f"This inventory report has no counts in any month up to "
+                        f"{datetime.strptime(today_month, '%Y-%m'):%B %Y}."}), 400
+
+    c = con()
+    products = _product_index(c)
+    totals = inventory_report.item_totals(report["rows"])
+    now = datetime.now().isoformat(timespec="seconds")
+    imported = updated = 0
+    counts = {}                                    # product_id -> units, items sharing an id added
+    rejected, no_count, held = [], [], {}
+
+    for item, qty in totals:
+        if qty is None:
+            no_count.append(item); continue
+        if qty != int(qty):
+            rejected.append({"row": None, "item": item,
+                             "reason": f"Units on hand add up to {qty}, not a whole number."}); continue
+        pid = _lookup(products, item)
+        if pid is None:
+            names.hold_row(c, "inventory", item, int(qty), filename, count_month=month,
+                           entered_by=auth.current_user())
+            held[item] = 1
+            continue
+        counts[pid] = counts.get(pid, 0) + int(qty)
+
+    for pid, qty in counts.items():
+        if _save_imported_count(c, pid, month, qty, None, now):
+            updated += 1
+        else:
+            imported += 1
+
+    c.commit()
+    return jsonify({
+        "ok": True, "source": "inventory_report", "month": month, "sheets": report["sheets"],
+        "imported": imported, "updated": updated,
+        "rejected": rejected[:50], "rejected_total": len(rejected),
+        "no_count": no_count[:50], "no_count_total": len(no_count),
+        **_held_summary(held),
+        "rows_read": len(report["rows"]), "saved_to": saved,
     })
 
 
@@ -2742,39 +2842,96 @@ def get_forecast_general():
     })
 
 
+def _compare_source(scope):
+    """(forecast table, metrics table, extra WHERE, extra args) for the model
+    asked for with ?model= (forecast_models.source): the main tables for the
+    recommended model or none, the comparison tables filtered on `model`
+    otherwise. Raises ValueError for a model not offered."""
+    model = request.args.get("model") or None
+    compare = forecast_models.source(scope, model)
+    if compare is None:
+        main = {forecast_models.ITEM: ("Result_Forecast", "Result_Forecast_Metrics"),
+                forecast_models.CATEGORY: ("Result_Category_Forecast", "Result_Category_Forecast_Metrics")}
+        return (*main[scope], "", ())
+    return (*compare, " AND model = ?", (model,))
+
+
+def _model_metrics(c, scope, key):
+    """Every offered model's overall walk-forward check for one item
+    (scope 'item', key = product_id) or category (key = its name): the
+    Demand Forecast page's comparison of models in the (i) by the Reliable
+    tag. [{id, label, recommended, made, n_obs, mae, mape, mase,
+    beats_naive_mae}] in the offered order; the figures are null for a model
+    Run Forecast has not made (or could not check) for this one."""
+    tables = _table_names(c)
+    key_col = "product_id" if scope == forecast_models.ITEM else "forecast_category"
+    main = {forecast_models.ITEM: "Result_Forecast_Metrics",
+            forecast_models.CATEGORY: "Result_Category_Forecast_Metrics"}[scope]
+    compare = forecast_models.COMPARE_TABLES[scope][1]
+    found = {}
+    for table, extra in ((main, ""), (compare, ", model")):
+        if table not in tables:
+            continue
+        cols = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+        mase = "mase" if "mase" in cols else "NULL AS mase"
+        for r in dbmod.rows(c, f"""
+                SELECT n_obs, mae, mape, {mase}, beats_naive_mae{extra} FROM {table}
+                WHERE {key_col} = ? AND period_scope = 'overall'""", (key,)):
+            found[r.pop("model", None) or forecast_models.DEFAULTS[scope]] = r
+    return [{"id": o["id"], "label": o["label"], "recommended": bool(o.get("recommended")),
+             "made": o["id"] in found,
+             **(found.get(o["id"]) or dict.fromkeys(("n_obs", "mae", "mape", "mase", "beats_naive_mae")))}
+            for o in forecast_models.OPTIONS[scope]]
+
+
+NOT_MADE_YET = ("This model's forecast has not been made yet. Choose Run Forecast in the Tally "
+                "Interface's Update Analytics tab: it makes every model's forecast for comparison.")
+
+
 @app.get("/api/forecast/<int:product_id>")
 def get_forecast(product_id):
+    """One item's forecast. ?model= shows another model's, for the Demand
+    Forecast page's comparison (forecast_models.py); without it, the
+    recommended model's, which the rest of the dashboard uses."""
     c = con()
     if not _has_forecast_table(c):
         return jsonify(_FORECAST_PENDING)
+    try:
+        f_table, m_table, which, which_args = _compare_source(forecast_models.ITEM)
+    except ValueError as exc:
+        return jsonify({"available": False, "reason": str(exc), "data": None}), 400
+    tables = _table_names(c)
+    if f_table not in tables:
+        return jsonify({"available": False, "reason": NOT_MADE_YET, "data": None})
 
-    forecast_rows = dbmod.rows(c, """
+    forecast_rows = dbmod.rows(c, f"""
         SELECT forecast_date, yhat, yhat_lower, yhat_upper,
                model_type, is_heuristic, snapshot_date
-        FROM Result_Forecast
-        WHERE product_id = ? AND model_type IS NOT 'policy_rate'
+        FROM {f_table}
+        WHERE product_id = ? AND model_type IS NOT 'policy_rate'{which}
         ORDER BY forecast_date
-    """, (product_id,))
+    """, (product_id, *which_args))
 
     if not forecast_rows:
         return jsonify({
             "available": False,
-            "reason": f"No forecast exists for product {product_id}.",
+            "reason": NOT_MADE_YET if which else f"No forecast exists for product {product_id}.",
             "data": None,
         })
 
-    # Metrics from Result_Forecast_Metrics
-    tables = {r[0] for r in c.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'")}
     metrics = []
-    if "Result_Forecast_Metrics" in tables:
-        metrics = dbmod.rows(c, """
+    if m_table in tables:
+        # mase / naive_mase arrived later (step4 adds them to an existing
+        # table), so they are read only where the columns are there.
+        cols = {r[1] for r in c.execute(f"PRAGMA table_info({m_table})")}
+        mase = ", ".join(m if m in cols else f"NULL AS {m}" for m in ("mase", "naive_mase"))
+        metrics = dbmod.rows(c, f"""
             SELECT tier, validation_method, period_scope, n_obs,
-                   mae, rmse, mape, naive_mae, naive_rmse, naive_mape,
+                   mae, rmse, mape, naive_mae, naive_rmse, naive_mape, {mase},
                    beats_naive_mae, meets_mape_threshold, snapshot_date
-            FROM Result_Forecast_Metrics
-            WHERE product_id = ?
-        """, (product_id,))
+            FROM {m_table}
+            WHERE product_id = ?{which}
+        """, (product_id, *which_args))
 
     product = dbmod.one(c,
         "SELECT item_name, fsn_class, is_hvl FROM Dim_Product WHERE product_id = ?",
@@ -2797,6 +2954,7 @@ def get_forecast(product_id):
             "fsn_class": product["fsn_class"] if product else None,
             "is_hvl": product["is_hvl"] if product else 0,
             "model_type": forecast_rows[0]["model_type"],
+            "model_label": forecast_models.label(forecast_models.ITEM, forecast_rows[0]["model_type"]),
             "is_heuristic": bool(forecast_rows[0]["is_heuristic"]),
             "snapshot_date": snapshot_date,
             "last_sale_date": last_sale_date,
@@ -2805,6 +2963,7 @@ def get_forecast(product_id):
             "forecast": forecast_rows,
             "history": history,
             "metrics": metrics,
+            "model_metrics": _model_metrics(c, forecast_models.ITEM, product_id),
             "range_30d": _range_30d(total, rmse),
             "guidance": _forecast_guidance(c, forecast_rows, history, [product_id],
                                            single_item=True, rmse=rmse),
@@ -2937,31 +3096,41 @@ def get_forecast_category(category):
     pipeline has not run step4c, or an older database), this falls back to the
     previous behaviour - the SUM of the Fast items' forecasts - and reports
     `source: "sum_of_items"` so the screen can word it accordingly.
+
+    ?model= shows another model's category forecast, for the page's
+    comparison (forecast_models.py); one not made yet says so rather than
+    falling back to anything.
     """
     c = con()
     tables = _table_names(c)
+    try:
+        f_table, m_table, which, which_args = _compare_source(forecast_models.CATEGORY)
+    except ValueError as exc:
+        return jsonify({"available": False, "reason": str(exc), "data": None}), 400
     cat_rows = []
-    if "Result_Category_Forecast" in tables:
-        cat_rows = dbmod.rows(c, """
+    if f_table in tables:
+        cat_rows = dbmod.rows(c, f"""
             SELECT forecast_date, yhat, yhat_lower, yhat_upper
-            FROM Result_Category_Forecast
-            WHERE forecast_category = ?
+            FROM {f_table}
+            WHERE forecast_category = ?{which}
             ORDER BY forecast_date
-        """, (category,))
+        """, (category, *which_args))
     if not cat_rows:
+        if which:
+            return jsonify({"available": False, "reason": NOT_MADE_YET, "data": None})
         return _category_forecast_from_items(c, category)
 
-    head = dbmod.one(c, """
+    head = dbmod.one(c, f"""
         SELECT model_type, is_heuristic, snapshot_date, history_end
-        FROM Result_Category_Forecast WHERE forecast_category = ? LIMIT 1
-    """, (category,))
+        FROM {f_table} WHERE forecast_category = ?{which} LIMIT 1
+    """, (category, *which_args))
     metrics = []
-    if "Result_Category_Forecast_Metrics" in tables:
-        metrics = dbmod.rows(c, """
+    if m_table in tables:
+        metrics = dbmod.rows(c, f"""
             SELECT validation_method, period_scope, n_obs, mae, rmse, mape, mase,
                    naive_mae, naive_mase, beats_naive_mae, mean_actual_30d
-            FROM Result_Category_Forecast_Metrics WHERE forecast_category = ?
-        """, (category,))
+            FROM {m_table} WHERE forecast_category = ?{which}
+        """, (category, *which_args))
     contributors = _category_contributors(c, category) if _has_forecast_table(c) else []
     _flag_discontinued(contributors, head["history_end"])
     _attach_ranges(c, contributors)
@@ -2982,6 +3151,7 @@ def get_forecast_category(category):
             "category": category,
             "source": "category_model",
             "model_type": head["model_type"],
+            "model_label": forecast_models.label(forecast_models.CATEGORY, head["model_type"]),
             "snapshot_date": head["snapshot_date"],
             "history_end": head["history_end"],
             "is_heuristic": bool(head["is_heuristic"]),
@@ -2994,6 +3164,7 @@ def get_forecast_category(category):
             "history": history,
             "contributors": contributors,
             "metrics": metrics,
+            "model_metrics": _model_metrics(c, forecast_models.CATEGORY, category),
             "guidance": _forecast_guidance(c, cat_rows, history, series_ids, single_item=False),
         },
     })
@@ -3471,14 +3642,16 @@ def run_pipeline():
     """Body (optional): {"skip": ["step4"]}, or the friendlier
     {"include_forecast": false} the Tally Interface sends.
 
-    Only step4 can be opted out of (pipeline.SKIPPABLE) - it is the only step
-    that costs hours rather than seconds and the only one whose output no
-    later step reads. Everything else always runs, so a "quick" run still
-    produces a fully rebuilt database, FSN classes and reorder points."""
+    Only step4 and step4d can be opted out of (pipeline.SKIPPABLE): the item
+    forecasts and every other model's forecasts for the Demand Forecast
+    page's comparison - minutes, and output no later step reads. Run
+    Analytics leaves both out; Run Forecast runs them. Everything else always
+    runs, so a "quick" run still produces a fully rebuilt database, FSN
+    classes and reorder points."""
     payload = request.get_json(silent=True) or {}
     skip = set(payload.get("skip") or [])
     if payload.get("include_forecast") is False:
-        skip.add("step4")
+        skip |= {"step4", "step4d"}
 
     started = pipeline.start_pipeline(skip)
     if not started:
@@ -3517,6 +3690,34 @@ def pipeline_staleness():
         state["total_pending"] += n
         state["stale"] = state["stale"] or n > 0
     return jsonify(state)
+
+
+@app.get("/api/forecast/models")
+def get_forecast_models():
+    """The models the Demand Forecast page compares, per scope ('item',
+    'category'): each option with `made` (the date of the forecast Run
+    Forecast last made with it, or null - never made yet). The recommended
+    model's forecast is the dashboard's own, so it is `made` whenever any
+    forecast exists. Choosing among them only changes what that page shows:
+    `?model=` on /api/forecast/<id> and /api/forecast/category/<name>."""
+    c = con()
+    made = forecast_models.made(c)
+    tables = _table_names(c)
+    main_made = {
+        forecast_models.ITEM: (dbmod.one(c, "SELECT MAX(snapshot_date) AS d FROM Result_Forecast "
+                                            "WHERE model_type IS NOT 'policy_rate'")["d"]
+                               if "Result_Forecast" in tables else None),
+        forecast_models.CATEGORY: (dbmod.one(c, "SELECT MAX(snapshot_date) AS d FROM Result_Category_Forecast")["d"]
+                                   if "Result_Category_Forecast" in tables else None),
+    }
+    return jsonify({
+        scope: {
+            "default": forecast_models.DEFAULTS[scope],
+            "options": [{**o, "made": main_made[scope] if o["id"] == forecast_models.DEFAULTS[scope]
+                         else made[scope].get(o["id"])} for o in opts],
+        }
+        for scope, opts in forecast_models.OPTIONS.items()
+    })
 
 
 if __name__ == "__main__":

@@ -312,8 +312,10 @@ export const getMonthlyUnits = (filters = {}) =>
 /** The Overview's story in pesos: the latest tallied month against the one
  *  before and the same month last year, the last 90 days of daily sales, and
  *  the items that make 80% of sales. Supplier and category narrow the sums. */
-export const getOverviewPerformance = (filters = {}) =>
-  get(`/overview/performance${qs({ supplier: filters.supplier, category: filters.category })}`);
+/** `topRange` is the Top Sellers card's own period (backend
+ *  TOP_EARNER_RANGES); left out, its ranking covers the last 12 months. */
+export const getOverviewPerformance = (filters = {}, topRange) =>
+  get(`/overview/performance${qs({ supplier: filters.supplier, category: filters.category, top_range: topRange })}`);
 
 /** One product's observed monthly units — measured history, no fit. */
 export const getProductHistory = productId => get(`/products/${productId}/history`);
@@ -355,7 +357,17 @@ export const getFsnSensitivity = () => get('/fsn/sensitivity');
 
 export const getForecast = () => get('/forecast');
 export const getForecastMetrics = () => get('/forecast');
-export const getProductForecast = productId => get(`/forecast/${productId}`);
+/** `model` (optional) is another model's forecast, for the Demand Forecast
+ *  page's comparison; without it, the recommended model's, which every other
+ *  page uses. */
+export const getProductForecast = (productId, model) =>
+  get(`/forecast/${productId}${qs({ model })}`);
+
+/** The models the Demand Forecast page compares (scripts/forecast_options.py).
+ *  -> { item: { default, options:[{ id, label, desc, recommended, made }] },
+ *  category: { ...same } }. `made` is when Run Forecast last made that
+ *  model's forecast, or null if it never has. */
+export const getForecastModels = () => get('/forecast/models');
 
 // Category-level forecast, from step4c_category_forecast.py: the category's
 // sales are added up first and THAT total is forecast, so it covers every item
@@ -365,8 +377,8 @@ export const getProductForecast = productId => get(`/forecast/${productId}`);
 // `data.source` ('category_model' | 'sum_of_items').
 // encodeURIComponent because the names carry spaces and '&'
 // ("Shirts & Tops", "Umbrellas & Gear").
-export const getCategoryForecast = category =>
-  get(`/forecast/category/${encodeURIComponent(category)}`);
+export const getCategoryForecast = (category, model) =>
+  get(`/forecast/category/${encodeURIComponent(category)}${qs({ model })}`);
 // Which categories have a category-level forecast, biggest first. Includes
 // categories with no Fast item, which the per-item forecasts cannot reach.
 export const getCategoryForecasts = () => get('/forecast/categories');
@@ -507,7 +519,7 @@ export const resetLocalState = () => {};
 // -------------------------------------------------------------- inventory
 
 /** Staff-entered stock counts for one month ('YYYY-MM').
- *  -> { month, counts:[...], total_units, workbook_month }. */
+ *  -> { month, counts:[...], total_units, workbook_month, latest_month }. */
 export const getInventoryCounts = month => get(`/inventory?month=${encodeURIComponent(month)}`);
 
 /** Record (or correct) one product's units on hand for a month. Upsert:
@@ -565,8 +577,20 @@ export const deleteRestock = restockId => del(`/restocks/${restockId}`);
  *  { ok, imported, updated, rejected:[{row,item,reason}], rows_read, saved_to }.
  *
  *  Rejected rows are reported rather than dropped, so the caller is expected
- *  to show them. */
+ *  to show them.
+ *
+ *  The size is checked here first: over the server's cap (MAX_UPLOAD_MB in
+ *  backend/app.py) Flask closes the connection mid-upload, and the browser
+ *  then reports only that the server could not be reached. */
+const MAX_UPLOAD_MB = 256;
+
 async function upload(path, file, fields = {}) {
+  if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+    return {
+      ok: false,
+      error: `That file is ${Math.round(file.size / 1024 / 1024)} MB; the upload limit is ${MAX_UPLOAD_MB} MB.`,
+    };
+  }
   const body = new FormData();
   body.append('file', file);
   for (const [k, v] of Object.entries(fields)) if (v != null) body.append(k, v);
@@ -590,6 +614,10 @@ async function upload(path, file, fields = {}) {
   return out;
 }
 
+/** `month` applies to a plain Item / Units On Hand sheet. The store's own
+ *  inventory report is loaded into its latest month with counts instead, and
+ *  the response says which: { source:'inventory_report', month, sheets,
+ *  no_count:[item], no_count_total, ... }. */
 export const importInventoryCounts = (file, month) =>
   upload('/inventory/import', file, { month });
 

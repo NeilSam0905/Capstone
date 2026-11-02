@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import {
   getProducts, getForecast, getProductForecast, getProductHistory,
   getCategoryForecast, getCategoryForecasts, getOverviewPerformance,
+  getForecastModels,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
@@ -41,6 +42,10 @@ export default function Forecast({ filters, setPage }) {
     getCategoryForecasts, [], null, { key: 'forecast:categories' });
   const [category, setCategory] = useState(null);
   const [selectedId, setSelectedId] = useState(ALL_ITEMS);
+  // Which model's forecast is shown, per scope; null is the recommended one,
+  // the forecast the rest of the dashboard uses (ModelSelect).
+  const [shown, setShown] = useState({ item: null, category: null });
+  const showModel = scope => model => setShown(s => ({ ...s, [scope]: model }));
 
   // Only SKUs step4_forecast_model.py actually produced a forecast for
   // (the Fast tier) belong in the item dropdown - every other SKU would just
@@ -181,8 +186,10 @@ export default function Forecast({ filters, setPage }) {
           total, or the selected item */}
       {product
         ? <ForecastPanel productId={product.product_id} itemName={product.item_name}
-                         forecastMeta={forecastMeta} setPage={setPage} />
-        : <CategoryForecastPanel category={activeCategory} onPickItem={setSelectedId} setPage={setPage} />}
+                         forecastMeta={forecastMeta} setPage={setPage}
+                         model={shown.item} onModel={showModel('item')} />
+        : <CategoryForecastPanel category={activeCategory} onPickItem={setSelectedId} setPage={setPage}
+                                 model={shown.category} onModel={showModel('category')} />}
 
       <DailySales filters={filters} />
     </div>
@@ -279,16 +286,21 @@ function CategoryContents({ category, products, supplier }) {
  * `n_products` is stated explicitly there because a reader who assumes it
  * covers the whole category would over-order.
  */
-function CategoryForecastPanel({ category, onPickItem, setPage }) {
+function CategoryForecastPanel({ category, onPickItem, setPage, model, onModel }) {
   const { data: forecast, loading } = useData(
-    () => getCategoryForecast(category), [category], null,
-    { key: `forecast:category:${category}` }
+    () => getCategoryForecast(category, model), [category, model], null,
+    { key: `forecast:category:${category}:${model ?? ''}` }
   );
 
   if (loading) return <Loading label="Loading category forecast…" />;
 
   if (!forecast?.available) {
-    return <Pending title={`No forecast for ${category}`} reason={forecast?.reason} />;
+    return (
+      <>
+        <Pending title={`No forecast for ${category}`} reason={forecast?.reason} />
+        {model && <BackToRecommended onModel={onModel} />}
+      </>
+    );
   }
 
   const fd = forecast.data;
@@ -297,7 +309,9 @@ function CategoryForecastPanel({ category, onPickItem, setPage }) {
   return (
     <>
       <ForecastCard key={category} title={category} fd={fd} setPage={setPage}
-                    tags={wholeCategory && <ReliabilityTag metrics={fd.metrics} isHeuristic={fd.is_heuristic} />}
+                    modelScope={wholeCategory ? 'category' : 'item'}
+                    model={wholeCategory ? model : null} onModel={wholeCategory ? onModel : null}
+                    tags={wholeCategory && <Reliability fd={fd} model={model} />}
                     scope={!wholeCategory && fd.n_forecast < fd.n_products
                       ? `the ${fd.n_forecast} forecast item${fd.n_forecast === 1 ? '' : 's'} only`
                       : null} />
@@ -483,10 +497,10 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
   );
 }
 
-function ForecastPanel({ productId, itemName, forecastMeta, setPage }) {
+function ForecastPanel({ productId, itemName, forecastMeta, setPage, model, onModel }) {
   const { data: forecast, loading } = useData(
-    () => getProductForecast(productId), [productId], null,
-    { key: `forecast:${productId}` }
+    () => getProductForecast(productId, model), [productId, model], null,
+    { key: `forecast:${productId}:${model ?? ''}` }
   );
 
   if (loading) return <Loading label="Loading forecast…" />;
@@ -502,6 +516,7 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage }) {
           title="No forecast has been generated for this SKU"
           reason={forecast?.reason ?? forecastMeta?.reason}
         />
+        {model && <BackToRecommended onModel={onModel} />}
         {/* Without a forecast there is no month to predict, but the real
             history is still worth showing on its own. */}
         <div className="card card__pad">
@@ -522,7 +537,7 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage }) {
   return (
     <>
       <ForecastCard key={productId} title={fd.item_name} fd={fd} setPage={setPage}
-                    tags={<ReliabilityTag metrics={fd.metrics} isHeuristic={fd.is_heuristic} />}>
+                    modelScope="item" model={model} onModel={onModel} tags={<Reliability fd={fd} model={model} />}>
         {/* Same reasoning as the category note: a shaped line draws ups and downs
             that are not predicted spikes. An item's own days are too sparse to
             carry a pattern, so it borrows its category's. */}
@@ -573,19 +588,24 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage }) {
  * Callers key this on the item/category, so switching either reopens the
  * chart on the forecast instead of wherever the last one was scrolled to.
  */
-function ForecastCard({ title, fd, scope, tags, children, setPage }) {
+function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, children, setPage }) {
   return (
     <div className="card card__pad">
-      <div className="card-h">
-        <span className="section-h">Demand Forecast — {title}</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {tags}
-          <span className="hint" title={fd.history_end ? `Sales through ${usDate(fd.history_end)}` : undefined}>
-            {fd.history_end
-              ? `Based on ${monthName(fd.history_end)} Sales`
-              : `Generated ${usDate(fd.snapshot_date)}`}
-          </span>
+      {/* Title, then the model that made the figures (a dropdown to choose
+          another) and whether it held up, on the line under it. */}
+      <div className="card-h" style={{ alignItems: 'flex-start' }}>
+        <div className="fcard__head">
+          <span className="section-h">Demand Forecast — {title}</span>
+          <div className="fcard__model">
+            {onModel && <ModelSelect scope={modelScope} value={model} onChange={onModel} />}
+            {tags}
+          </div>
         </div>
+        <span className="hint" title={fd.history_end ? `Sales through ${usDate(fd.history_end)}` : undefined}>
+          {fd.history_end
+            ? `Based on ${monthName(fd.history_end)} Sales`
+            : `Generated ${usDate(fd.snapshot_date)}`}
+        </span>
       </div>
       {scope && <div className="hint" style={{ marginTop: -6, marginBottom: 6 }}>Totals cover {scope}.</div>}
 
@@ -681,51 +701,192 @@ function ForecastGuidance({ g, title, setPage }) {
 }
 
 /**
- * Whether the forecast held up when it was checked against real sales, as one
- * tag beside the model's own.
+ * Whether the forecast held up when it was checked against real sales: a tag
+ * with the verdict, and behind the (i) beside it the reason in a sentence and
+ * how every model did on the same check, worded for a store reader.
  *
- * This was a card of its own titled "How Reliable Is This Forecast?". A whole
- * card to say one word pushed the observed-history chart below the fold, so
- * the verdict now sits next to the model that produced it and the sentence
- * behind it is the tag's tooltip.
+ * The verdict is the walk-forward check's: did the model miss by less than
+ * simply repeating the last 30 days (beats_naive_mae)? The table under it is
+ * every offered model's check for this item or category (the API's
+ * model_metrics, from the main and comparison metrics tables), ranked by
+ * MASE, with the model on screen marked - so the reader sees whether another
+ * model would have done better here.
  *
- * MAPE is deliberately never shown: on this dataset it is undefined whenever a
- * period had zero actual sales (the common case) and reads as 100%+ even for a
- * working forecast, so surfacing it to a non-technical reader does more harm
- * than good (see docs/DEGENERATE_FORECAST.md, docs/SPARSE_DEMAND_EXPERIMENTS.md).
+ * MAPE is shown, with a caution: on this dataset a 30-day period that sold
+ * very little turns a small miss into a huge percentage, so it can read 100%+
+ * for a forecast that is doing well (docs/DEGENERATE_FORECAST.md). That is
+ * why the ranking is by MASE.
  */
-function ReliabilityTag({ metrics, isHeuristic }) {
-  if (isHeuristic) {
+function Reliability({ fd, model }) {
+  if (fd.is_heuristic) {
     return (
       <span className="tag tag--warn"
-            title="This item hasn't sold long enough to check this forecast against real results.">
+            title="This hasn't sold long enough to check the forecast against real results.">
         Not enough history
       </span>
     );
   }
-
-  const overall = metrics?.find(m => m.period_scope === 'overall') ?? metrics?.[0];
-  if (!overall || overall.mae == null) {
+  const m = fd.metrics?.find(r => r.period_scope === 'overall') ?? fd.metrics?.[0];
+  if (!m || m.mae == null) {
     return (
-      <span className="tag tag--info" title="No accuracy check has been recorded for this item yet.">
+      <span className="tag tag--info" title="No accuracy check has been recorded for this forecast yet.">
         Not checked
       </span>
     );
   }
+  const reliable = !!m.beats_naive_mae;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+      <span className={`tag tag--${reliable ? 'ok' : 'warn'}`}>{reliable ? 'Reliable' : 'Rough estimate'}</span>
+      <InfoTip label="How reliable is this forecast?" width={540}>
+        <ReliabilityDetail m={m} reliable={reliable} model={model} fd={fd} />
+      </InfoTip>
+    </span>
+  );
+}
 
-  const reliable = !!overall.beats_naive_mae;
-  const typicalOff = Math.round(overall.mae);
-  const checked = `Checked against ${overall.n_obs} past 30-day period${overall.n_obs === 1 ? '' : 's'} of real sales `
-    + `— actual sales were typically about ${typicalOff} unit${typicalOff === 1 ? '' : 's'} away from this forecast.`;
+const units = v => `${num(Math.round(v))} unit${Math.round(v) === 1 ? '' : 's'}`;
+const pctFmt = v => `${num(Math.round(v))}%`;
 
-  return reliable
-    ? <span className="tag tag--ok" title={`More accurate than just repeating last month's number. ${checked}`}>
-        Reliable
-      </span>
-    : <span className="tag tag--warn"
-            title={`No more accurate than repeating last month's number — use with caution. ${checked}`}>
-        Rough estimate
-      </span>;
+/** Every model's check for this item or category (the API's model_metrics),
+ *  lowest scaled miss first; models with no figures (not made yet, or too
+ *  little history to check) at the end, in the offered order. Ranked by MASE
+ *  rather than MAPE because the percentage swells on a period that sold very
+ *  little. */
+function rankModels(rows) {
+  const scored = rows.filter(r => r.mase != null).sort((a, b) => a.mase - b.mase);
+  return [...scored, ...rows.filter(r => r.mase == null)];
+}
+
+function ReliabilityDetail({ m, reliable, model, fd }) {
+  const periods = `${num(m.n_obs)} past 30-day period${m.n_obs === 1 ? '' : 's'}`;
+  const ofMonth = m.mean_actual_30d > 0 ? Math.round(m.mae / m.mean_actual_30d * 100) : null;
+  const rows = rankModels(fd.model_metrics ?? []);
+  const shownId = model ?? rows.find(r => r.recommended)?.id;
+  const bestId = rows[0]?.mase != null ? rows[0].id : null;
+  const mapeSwells = rows.some(r => (r.mape ?? 0) > 100);
+  const missing = rows.filter(r => !r.made).length;
+  return (
+    <>
+      <div className="infotip__h">How reliable is this forecast?</div>
+      <p>
+        <b>{reliable ? 'Reliable.' : 'Rough estimate.'}</b>{' '}
+        Checked against {periods} of real sales, it missed by about <b>{units(m.mae)}</b> on average
+        {m.naive_mae != null && <>
+          {reliable ? ', less than' : ', no better than'} simply repeating the last 30 days&rsquo; sales
+          ({units(m.naive_mae)})</>}.
+        {ofMonth != null && <> That is about {ofMonth}% of a typical month ({units(m.mean_actual_30d)}).</>}
+        {!reliable && <> Use it as a rough guide and check it against what you know.</>}
+      </p>
+
+      {rows.length > 0 && (
+        <>
+          <div className="infotip__h" style={{ marginTop: 12 }}>Against the other models</div>
+          <table className="reliab">
+            <colgroup><col /><col className="reliab__fig" /><col className="reliab__fig" /></colgroup>
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th className="num" title="The miss as a share of what actually sold">
+                  Percent error<br /><span className="reliab__code">MAPE</span>
+                </th>
+                <th className="num" title="The miss measured against a simple day-to-day guess">
+                  Scaled miss<br /><span className="reliab__code">MASE</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.id} className={[r.id === shownId && 'is-shown', !r.made && 'is-missing']
+                  .filter(Boolean).join(' ') || undefined}>
+                  <td>
+                    <div className="reliab__name">{r.label}</div>
+                    {(r.id === shownId || r.id === bestId || r.recommended) && (
+                      <div className="reliab__tags">
+                        {r.id === shownId && <span className="tag tag--info">Shown</span>}
+                        {r.id === bestId && <span className="tag tag--ok">Lowest error</span>}
+                        {r.recommended && <span className="tag">Recommended</span>}
+                      </div>
+                    )}
+                  </td>
+                  <td className="num">{r.mape != null ? pctFmt(r.mape) : '—'}</td>
+                  <td className="num">{r.mase != null ? r.mase.toFixed(2) : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="reliab__rule"><Icon name="alert" size={13} /> Higher error means less accurate.</p>
+          {missing > 0 && (
+            <p className="hint">
+              {missing === 1 ? 'The model' : `The ${missing} models`} with &ldquo;&mdash;&rdquo; {missing === 1 ? 'has' : 'have'} no
+              figures yet: you need to Run the Forecast.
+            </p>
+          )}
+        </>
+      )}
+      <p className="hint">
+        <b>MAPE</b> is the miss as a share of what actually sold; <b>MASE</b> is the miss measured against a
+        simple day-to-day guess. Models are ranked by MASE
+        {mapeSwells ? ': the percent error swells when a period sold very little.' : '.'}
+        {' '}Reliable means it misses less than repeating the last 30 days&rsquo; sales.
+      </p>
+    </>
+  );
+}
+
+/* ------------------------------------------------------------ model choice */
+
+/**
+ * Which model's forecast this card shows, as a dropdown under its title:
+ * categories have their own models, items theirs (scripts/forecast_options.py).
+ *
+ * A comparison, nothing more: Run Forecast makes every model's forecast, and
+ * picking one here only changes what this page shows - nothing is saved, and
+ * every other page keeps the recommended model's figures, which the line
+ * beside the dropdown says while another is shown. A model Run Forecast has
+ * not made yet is listed, greyed out.
+ */
+/** Under a comparison model that has nothing for this item or category, the
+ *  way back - the card holding the dropdown is not shown then. */
+function BackToRecommended({ onModel }) {
+  return (
+    <div className="btn-row">
+      <button type="button" className="btn btn--ghost btn--sm" onClick={() => onModel(null)}>
+        Show the recommended model&rsquo;s forecast
+      </button>
+    </div>
+  );
+}
+
+function ModelSelect({ scope, value, onChange }) {
+  const { data } = useData(getForecastModels, [], null);
+  const s = data?.[scope];
+  if (!s) return null;
+  const current = value ?? s.default;
+  const recommended = s.options.find(o => o.id === s.default);
+  // A model Run Forecast has not made is listed but cannot be picked; hovering
+  // it says why. The recommended one is the dashboard's own forecast, never
+  // held back here (the page says so itself when there is no forecast at all).
+  const options = s.options.map(o => {
+    const ready = Boolean(o.made) || Boolean(o.recommended);
+    return {
+      value: o.id,
+      label: `${o.label}${o.recommended ? ' (Recommended)' : ''}`,
+      disabled: !ready,
+      title: ready ? o.desc : 'You need to Run the Forecast',
+    };
+  });
+  return (
+    <>
+      <SearchSelect value={current} options={options} searchable={false} minWidth={280}
+                    onChange={id => onChange(id === s.default ? null : id)} />
+      {current !== s.default && (
+        <span className="hint" title="Nothing else on the dashboard changes">
+          For comparison · the dashboard uses {recommended?.label}
+        </span>
+      )}
+    </>
+  );
 }
 
 function HistoryChart({ productId }) {
