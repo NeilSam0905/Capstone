@@ -74,6 +74,9 @@ from forecasting.day_status import (                       # noqa: E402
 
 RAW_DIR = os.path.join(ROOT, "rawdata")
 DATA_DIR = os.path.join(ROOT, "data")
+# The prefix the Tally Interface gives an upload it archives into rawdata/
+# (backend/app.py _archive_upload; step0's APP_IMPORT_PREFIX).
+APP_IMPORT_PREFIX = "import_"
 
 SKIP_SHEET = ("VOUCHER", "OPEX", "CASH REQ", "O.R.", "RE-CHECKING")
 BATCH_FILE_HINT = "TOTAL SALES BY BATCH"
@@ -480,8 +483,11 @@ def main():
     # No workbooks means nothing to read, not an empty calendar: stop before
     # Dim_Day_Status is replaced, so the days read on an earlier run are kept
     # (the pipeline reports this as a skip, as it does for step0).
+    # "import_*" are the Tally Interface's archived uploads (sales tables,
+    # inventory reports), not tally workbooks - step0 skips them too. An
+    # inventory report runs to ~185 MB, and this opens every workbook in full.
     workbooks = sorted(p for p in glob.glob(os.path.join(RAW_DIR, "*.xlsx"))
-                       if not os.path.basename(p).startswith("~$"))
+                       if not os.path.basename(p).startswith(("~$", APP_IMPORT_PREFIX)))
     if not workbooks:
         raise FileNotFoundError(f"No tally workbooks (.xlsx) found in {RAW_DIR}")
 
