@@ -344,6 +344,19 @@ export const batchReportCsvUrl = (period, supplier) =>
 export const batchReportXlsxUrl = (period, supplier) =>
   `${API_BASE}/reports/batch.xlsx${qs({ ...period, supplier })}`;
 
+/** The Summary Report (backend/summary_report.py): an academic year, a term
+ *  or a quarter for the people the store reports to. Periods come as
+ *  { kind: 'year' | 'term' | 'quarter', key, label, start, end, span }, and
+ *  a report is asked for by its kind and key. */
+export const getSummaryPeriods = () => get('/reports/summary/periods');
+export const getSummaryReport = (kind, key) => get(`/reports/summary${qs({ kind, key })}`);
+export const summaryReportPdfUrl = (kind, key, { inline = false } = {}) =>
+  `${API_BASE}/reports/summary.pdf${qs({ kind, key, inline: inline ? 1 : '' })}`;
+/** A period's sales goal in pesos; null removes it. Changing or removing a
+ *  goal already set needs the admin. */
+export const setSummaryGoal = (kind, key, goalPhp) =>
+  put('/reports/summary/goal', { kind, key, goal_php: goalPhp });
+
 // ---------------------------------------------------------------- FSN
 
 export const getFsnSensitivity = () => get('/fsn/sensitivity');

@@ -60,6 +60,7 @@ See `UST Prototype Design/BACKEND_TODO.md` for the full contract this implements
 | Auth (`auth.py`, open) | `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/session` |
 | Names and workbooks (`names.py`) | `GET /api/names/review`, `POST /api/names/review`, `POST /api/products/:id/rename`, `POST /api/tally/workbook` |
 | Orders and restocks | `GET/POST /api/orders/upcoming`, `DELETE /api/orders/upcoming/:id`, `GET/POST /api/restocks`, `PUT/DELETE /api/restocks/:id` |
+| Summary Report (`summary_report.py`) | `GET /api/reports/summary/periods`, `GET /api/reports/summary?kind=year\|term\|quarter&key=`, `GET /api/reports/summary.pdf` (same params, `&inline=1` to view), `PUT /api/reports/summary/goal` (`{kind, key, goal_php}`; changing or removing a goal needs the admin) |
 
 **Names and workbooks** keep the system running through sheet changes without a developer.
 `GET /api/names/review` lists item names the vocabulary does not know yet: from the tally sheets

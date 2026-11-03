@@ -41,6 +41,7 @@ import catalog
 import db as dbmod
 import decision_rules
 import pipeline
+import summary_report
 import validation
 import names                  # after pipeline: it needs scripts/ on sys.path
 import order_types            # scripts/order_types.py
@@ -1122,6 +1123,82 @@ def get_batch_report_xlsx():
                         "Content-Disposition": f'attachment; filename="{filename}"',
                         "Content-Length": str(len(xlsx_bytes)),
                     })
+
+
+# --------------------------------------------------------- summary report
+#
+# An academic year, term or quarter on a page or two, with the store's sales
+# goal, for the people the store reports to (summary_report.py).
+
+def _summary_period(c, args):
+    """The period ?kind=&key= names, as (period, error response)."""
+    kind, key = args.get("kind"), args.get("key")
+    if kind not in summary_report.KINDS or not key:
+        return None, _period_error("kind= (year, term or quarter) and key= are required.")
+    period = summary_report.find(c, kind, str(key))
+    if not period:
+        return None, _period_error(f"No {kind} {key!r} with tallied sales.")
+    return period, None
+
+
+@app.get("/api/reports/summary/periods")
+def get_summary_periods():
+    return jsonify(summary_report.periods(con()))
+
+
+@app.get("/api/reports/summary")
+def get_summary_report():
+    c = con()
+    period, error = _summary_period(c, request.args)
+    if error:
+        return error
+    report = summary_report.build(c, period)
+    # The goal's verdict in words, as the PDF prints it, so the screen cannot
+    # word it differently: [[text, tone], ...] with tone ok | crit | null.
+    report["goal_text"] = summary_report.goal_lines(report, summary_report.peso_text)
+    return jsonify(report)
+
+
+@app.get("/api/reports/summary.pdf")
+def get_summary_report_pdf():
+    """The Summary Report as a PDF. `?inline=1` opens it in the browser
+    (Print Preview); the default is a download (Export as PDF)."""
+    c = con()
+    period, error = _summary_period(c, request.args)
+    if error:
+        return error
+    pdf_bytes = summary_report.render_pdf(summary_report.build(c, period), auth.current_user())
+    disposition = "inline" if _bool_flag("inline") else "attachment"
+    return Response(pdf_bytes, mimetype="application/pdf", headers={
+        "Content-Disposition": f'{disposition}; filename="{summary_report.filename(period)}"',
+        "Content-Length": str(len(pdf_bytes)),
+    })
+
+
+@app.put("/api/reports/summary/goal")
+def set_summary_goal():
+    """{kind, key, goal_php}: the sales goal for a period, in pesos; goal_php
+    null removes it. Setting a period's first goal is adding a record;
+    changing or removing one needs the admin, as for any saved record."""
+    payload = request.get_json(silent=True) or {}
+    c = con()
+    period, error = _summary_period(c, payload)
+    if error:
+        return error
+    goal = payload.get("goal_php")
+    if goal is not None and (isinstance(goal, bool) or not isinstance(goal, (int, float))
+                             or not math.isfinite(goal) or goal <= 0):
+        return jsonify({"ok": False, "error": "The goal must be an amount in pesos above zero."}), 400
+    existing = summary_report.get_goal(c, period["kind"], period["key"])
+    if existing is None and goal is None:
+        return jsonify({"ok": True, "goal_php": None})
+    if existing is not None:
+        gate = _needs_admin("Changing a sales goal")
+        if gate:
+            return gate
+    summary_report.goal_record(c, period["kind"], period["key"],
+                               float(goal) if goal is not None else None, auth.current_user())
+    return jsonify({"ok": True, "goal_php": goal})
 
 
 # -------------------------------------------------------------------- FSN

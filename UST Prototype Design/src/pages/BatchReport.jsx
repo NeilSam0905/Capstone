@@ -7,13 +7,39 @@ import InfoTip from '../components/InfoTip';
 import { peso, num, longMonth, usDate } from '../lib/format';
 import { PERIOD_KINDS, periodParams, periodLabel, periodSlug } from '../lib/reportPeriod';
 import { ALL_SUPPLIERS } from '../services/dataService';
+import SummaryReport from './SummaryReport';
+
+const REPORT_MODES = [['batch', 'Batch Sales Report'], ['summary', 'Summary Report']];
+
+/** The report page: the Batch Sales Report - the tally sheet, for Purchasing
+ *  and Finance - or the Summary Report, a school year, term or quarter for
+ *  the people the store reports to. `mode` lives in App, which drops the
+ *  topbar's supplier filter while the summary (always the whole store) shows. */
+export default function BatchReport({ mode = 'batch', setMode, ...props }) {
+  return (
+    <div className="stack">
+      <div>
+        <div className="period-tabs" role="tablist" aria-label="Report">
+          {REPORT_MODES.map(([key, name]) => (
+            <button key={key} type="button" role="tab" aria-selected={mode === key}
+                    className={'period-tab' + (mode === key ? ' is-active' : '')}
+                    onClick={() => setMode?.(key)}>
+              {name}
+            </button>
+          ))}
+        </div>
+      </div>
+      {mode === 'summary' ? <SummaryReport /> : <BatchSales {...props} />}
+    </div>
+  );
+}
 
 /** `period` / `setPeriod` come from App: the topbar's supplier list is scoped
  *  to the period on show, so the two have to read the same value. `period` is
  *  { kind: 'day' | 'week' | 'month' | 'year', month, date, year }
  *  (lib/reportPeriod.js), and setPeriod merges a change into it, so switching
  *  Day / Week / Month / Year keeps the day, month and year already picked. */
-export default function BatchReport({ filters, period, setPeriod }) {
+function BatchSales({ filters, period, setPeriod }) {
   const { data: months } = useData(getMonths, [], []);
   const { data: meta } = useData(getMeta, []);
   const years = [...new Set(months.map(m => m.slice(0, 4)))];

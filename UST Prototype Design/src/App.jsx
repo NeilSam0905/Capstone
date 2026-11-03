@@ -190,6 +190,11 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
   }), [reportChoice, months, meta]);
   const reportParams = useMemo(() => periodParams(reportPeriod), [reportPeriod]);
   const setReportPeriod = useCallback(change => setReportChoice(p => ({ ...p, ...change })), []);
+  // The report page shows the Batch Sales Report or the Summary Report. The
+  // summary is always the whole store, so the topbar drops its supplier
+  // filter while it shows - hence this lives here too.
+  const [reportMode, setReportMode] = useState('batch');
+  const summaryShown = page === 'report' && reportMode === 'summary';
 
   // The advisories are the prescriptive half of the dashboard, so they are
   // one click away on every page, through the topbar's Advisories button.
@@ -222,9 +227,9 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
   // useData dependency array, which compares by identity. Rebuilding it on
   // each render would refetch the whole page every time anything above it
   // re-rendered.
-  const shown = PAGE_FILTERS[page] ?? [];
+  const shown = summaryShown ? [] : PAGE_FILTERS[page] ?? [];
   const pageFilters = useMemo(() => {
-    const keys = PAGE_FILTERS[page] ?? [];
+    const keys = summaryShown ? [] : PAGE_FILTERS[page] ?? [];
     const out = { ...UNFILTERED };
     keys.forEach(k => { if (k in UNFILTERED) out[k] = filters[k]; });
     if (keys.includes('customRange')) {
@@ -234,7 +239,7 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
       out.dateRange = UNFILTERED.dateRange;
     }
     return out;
-  }, [page, filters]);
+  }, [page, filters, summaryShown]);
 
   return (
     <div className="app">
@@ -276,7 +281,7 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
         <FilterBar
           filters={filters}
           setFilters={setFilters}
-          pageTitle={PAGE_TITLES[page]}
+          pageTitle={summaryShown ? 'Summary Report' : PAGE_TITLES[page]}
           show={shown}
           forecastableSuppliers={page === 'forecast'}
           supplierPeriod={page === 'report' ? reportParams ?? undefined : undefined}
@@ -293,7 +298,9 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
             setPage={setPage}
             setView={setView}
             user={user}
-            {...(page === 'report' ? { period: reportPeriod, setPeriod: setReportPeriod } : {})}
+            {...(page === 'report' ? {
+              period: reportPeriod, setPeriod: setReportPeriod, mode: reportMode, setMode: setReportMode,
+            } : {})}
           />
         </div>
       </div>

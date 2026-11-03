@@ -122,7 +122,21 @@ UPCOMING_ORDER_DDL = """CREATE TABLE IF NOT EXISTS Upcoming_Order (
     entered_by    TEXT,
     date_logged   TEXT
 )"""
-_TABLES = (PRODUCT_STATUS_DDL, PENDING_IMPORT_DDL, APP_USER_DDL, RESTOCK_LOG_DDL, UPCOMING_ORDER_DDL)
+# Sales_Goal: the store's sales goal in pesos for an academic year, a term or
+# a quarter, entered on the Summary Report screen and checked against there
+# (backend/summary_report.py). Keyed by the period, not by dates, so a goal
+# stays with its term if the school calendar moves the term's dates.
+# Operational: no pipeline step reads or clears it.
+SALES_GOAL_DDL = """CREATE TABLE IF NOT EXISTS Sales_Goal (
+    period_kind  TEXT NOT NULL,   -- 'year' | 'term' | 'quarter'
+    period_key   TEXT NOT NULL,   -- '2026' (A.Y. 2026-2027) | 'AY2627-T1' | '2026-Q3'
+    goal_php     REAL NOT NULL,
+    set_by       TEXT,
+    set_at       TEXT,
+    PRIMARY KEY (period_kind, period_key)
+)"""
+_TABLES = (PRODUCT_STATUS_DDL, PENDING_IMPORT_DDL, APP_USER_DDL, RESTOCK_LOG_DDL, UPCOMING_ORDER_DDL,
+           SALES_GOAL_DDL)
 
 # Columns added after databases already existed. CREATE TABLE IF NOT EXISTS
 # cannot add a column to a table that is already there, so each is added here

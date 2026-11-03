@@ -415,6 +415,22 @@ CREATE TABLE IF NOT EXISTS Upcoming_Order (
 );
 """)
 
+# ----- OPERATIONAL TABLE: Sales_Goal -------------------------------
+# The store's sales goal in pesos for an academic year, a term or a
+# quarter, entered on the Summary Report screen (backend/summary_report.py).
+# Operational: no pipeline step reads or clears it. backend/db.py creates
+# the same table for a database built before it.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Sales_Goal (
+    period_kind  TEXT NOT NULL,   -- 'year' | 'term' | 'quarter'
+    period_key   TEXT NOT NULL,   -- '2026' (A.Y. 2026-2027) | 'AY2627-T1' | '2026-Q3'
+    goal_php     REAL NOT NULL,
+    set_by       TEXT,
+    set_at       TEXT,
+    PRIMARY KEY (period_kind, period_key)
+);
+""")
+
 # ----- Columns added after databases already existed ---------------
 # CREATE TABLE IF NOT EXISTS leaves an existing table as it is, so a column
 # added to one of the definitions above is added here when it is missing.
