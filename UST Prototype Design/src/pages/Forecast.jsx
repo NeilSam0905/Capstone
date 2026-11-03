@@ -768,20 +768,34 @@ function ReliabilityDetail({ m, reliable, model, fd }) {
   const missing = rows.filter(r => !r.made).length;
   return (
     <>
-      <div className="infotip__h">How reliable is this forecast?</div>
+      <div className="infotip__h">What &ldquo;{reliable ? 'Reliable' : 'Rough estimate'}&rdquo; means</div>
       <p>
-        <b>{reliable ? 'Reliable.' : 'Rough estimate.'}</b>{' '}
+        To test a forecast, the system goes back in time: it forecasts past months as if it did not know
+        their sales yet, then compares each guess with what really sold.
+      </p>
+      <p>
+        {reliable
+          ? <>This forecast <b>did better</b> than simply assuming the next 30 days will sell like the last 30,
+            so it is a useful guide.</>
+          : <>This forecast <b>did no better</b> than simply assuming the next 30 days will sell like the
+            last 30. Treat its number as a ballpark, not an exact amount, and check it against what you
+            know, such as upcoming events or bulk orders.</>}
+      </p>
+      {!reliable && (
+        <p>
+          This is common at the USTore: sales are uneven, with many quiet days and then a big order all at
+          once, which no forecast can see coming unless the order is known in advance.
+        </p>
+      )}
+      <p>
         Checked against {periods} of real sales, it missed by about <b>{units(m.mae)}</b> on average
-        {m.naive_mae != null && <>
-          {reliable ? ', less than' : ', no better than'} simply repeating the last 30 days&rsquo; sales
-          ({units(m.naive_mae)})</>}.
+        {m.naive_mae != null && <> (repeating the last 30 days missed by {units(m.naive_mae)})</>}.
         {ofMonth != null && <> That is about {ofMonth}% of a typical month ({units(m.mean_actual_30d)}).</>}
-        {!reliable && <> Use it as a rough guide and check it against what you know.</>}
       </p>
 
       {rows.length > 0 && (
         <>
-          <div className="infotip__h" style={{ marginTop: 12 }}>Against the other models</div>
+          <div className="infotip__h" style={{ marginTop: 12 }}>How the other models did on the same test</div>
           <table className="reliab">
             <colgroup><col /><col className="reliab__fig" /><col className="reliab__fig" /></colgroup>
             <thead>
@@ -825,10 +839,10 @@ function ReliabilityDetail({ m, reliable, model, fd }) {
         </>
       )}
       <p className="hint">
-        <b>MAPE</b> is the miss as a share of what actually sold; <b>MASE</b> is the miss measured against a
-        simple day-to-day guess. Models are ranked by MASE
-        {mapeSwells ? ': the percent error swells when a period sold very little.' : '.'}
-        {' '}Reliable means it misses less than repeating the last 30 days&rsquo; sales.
+        <b>Percent error</b> is how far off the guess was, as a share of what actually sold. <b>Scaled
+        miss</b> is the same miss measured against a simple day-to-day guess, so items that sell a lot and
+        items that sell a little can be compared fairly. Lower is better for both; models are ranked by
+        scaled miss{mapeSwells ? ', because percent error swells when a period sold very little' : ''}.
       </p>
     </>
   );
@@ -880,12 +894,33 @@ function ModelSelect({ scope, value, onChange }) {
     <>
       <SearchSelect value={current} options={options} searchable={false} minWidth={280}
                     onChange={id => onChange(id === s.default ? null : id)} />
+      <ModelsInfo options={s.options} />
       {current !== s.default && (
         <span className="hint" title="Nothing else on the dashboard changes">
           For comparison · the dashboard uses {recommended?.label}
         </span>
       )}
     </>
+  );
+}
+
+/** How each model makes its forecast, in words a store reader can follow:
+ *  the (i) beside the model menu. Each line is the option's `desc`
+ *  (scripts/forecast_options.py), the same text the menu shows on hover. */
+function ModelsInfo({ options }) {
+  return (
+    <InfoTip label="How do the models work?" width={460}>
+      <div className="infotip__h">How each model works</div>
+      <p>
+        Every model looks at past sales and guesses the next 30 days, each in its own way. Pick one in
+        the menu to compare its forecast; the rest of the dashboard always uses the Recommended one.
+      </p>
+      <ul className="infotip__bullets">
+        {options.map(o => (
+          <li key={o.id}><b>{o.label}{o.recommended ? ' (Recommended)' : ''}</b>: {o.desc}</li>
+        ))}
+      </ul>
+    </InfoTip>
   );
 }
 

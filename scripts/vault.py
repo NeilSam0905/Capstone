@@ -283,7 +283,9 @@ def unlock(prefer_vault=False, quiet=False, only_safe=False):
     that would overwrite local work (what the backend does on start)."""
     enc_key, mac_key = load_keys()
     st = status(mac_key)
-    blocked = [r for r, s in st.items() if s == "local-changed" or (s == "conflict" and not prefer_vault)]
+    # --prefer-vault takes the vault's copy over local changes too, not only
+    # over conflicts: it is what the error below tells you to run.
+    blocked = [r for r, s in st.items() if s in ("local-changed", "conflict") and not prefer_vault]
     if blocked and not only_safe:
         raise VaultError("these have local changes not yet locked: " + ", ".join(blocked) +
                          " - run `lock` first (or `unlock --prefer-vault` to discard them)")

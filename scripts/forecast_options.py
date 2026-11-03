@@ -14,41 +14,49 @@ its DEFAULT_MODEL; tests/test_forecast_models.py checks both.
 """
 ITEM, CATEGORY = "item", "category"
 
+# `desc` is what the Demand Forecast page says a model does: in its menu on
+# hover and in the (i) beside it. Written for store staff, not analysts - what
+# the model looks at and what it assumes, with no method names.
+_PROPHET = ("Looks for patterns that repeat (busier days of the week, busier months, school breaks) "
+            "and carries them forward. It needs several years of sales to learn them and the store has "
+            "about two, so it did worse in testing.")
+
 OPTIONS = {
     ITEM: [
         {"id": "topdown_tsb+calendar+weekday_shape", "label": "Category Blend + School Calendar",
          "recommended": True,
-         "desc": "Mixes the item's recent sales with its category's 6-month level, and lowers it when "
-                 "the school calendar shows quieter days ahead. The most accurate in testing."},
+         "desc": "Averages two guesses: one from how the item's whole category sold over the last 6 months "
+                 "and the item's share of it last month, one from the item's own recent sales. Then it is "
+                 "lowered when the school calendar shows breaks or exams ahead. Chosen from 47 methods "
+                 "compared on the last 12 months of sales."},
         {"id": "topdown_tsb+weekday_shape", "label": "Category Blend",
-         "desc": "The same mix, without the school-calendar adjustment."},
+         "desc": "The same two guesses averaged, without the school-calendar adjustment."},
         {"id": "tsb", "label": "TSB (Recent Sales Trend)",
-         "desc": "Follows how often and how much the item has sold lately, and fades when it stops selling."},
+         "desc": "Looks at how often the item has sold lately and how many it sells each time, paying most "
+                 "attention to the latest weeks. If the item stops selling, its forecast slowly goes down."},
         {"id": "ewma_a0.1", "label": "Weighted Average",
-         "desc": "An average of past sales that counts recent days more than older ones."},
+         "desc": "An average of past sales in which recent days count more than older ones."},
         {"id": "rolling_mean_30", "label": "Last 30 Days Average",
-         "desc": "Repeats the average of the last 30 days."},
-        {"id": "prophet", "label": "Prophet",
-         "desc": "A seasonal model with weekly and yearly patterns and the school calendar. "
-                 "Less accurate in testing."},
+         "desc": "Assumes the next 30 days will sell the same as the last 30 days."},
+        {"id": "prophet", "label": "Prophet", "desc": _PROPHET},
     ],
     CATEGORY: [
         {"id": "RM6_6month_180d+calendar", "label": "6-Month Average + School Calendar",
          "recommended": True,
-         "desc": "The category's average over the last 6 months, lowered when the school calendar shows "
-                 "quieter days ahead. The most accurate in testing."},
+         "desc": "Takes the category's average sales per day over the last 6 months and expects that to "
+                 "continue, lowered when the school calendar shows breaks or exams ahead. Chosen from 27 "
+                 "methods compared on the last 12 months of sales."},
         {"id": "RM6_6month_180d", "label": "6-Month Average",
          "desc": "The category's average over the last 6 months, without the school-calendar adjustment."},
         {"id": "RM3_3month_90d", "label": "3-Month Average",
-         "desc": "The category's average over the last 3 months: quicker to follow a change, "
-                 "and jumpier."},
+         "desc": "The category's average over the last 3 months: it follows a change sooner, but jumps "
+                 "around more."},
         {"id": "rolling_mean_30", "label": "Last 30 Days Average",
-         "desc": "Repeats the category's average of the last 30 days."},
+         "desc": "Assumes the next 30 days will sell the same as the category's last 30 days."},
         {"id": "tsb", "label": "TSB (Recent Sales Trend)",
-         "desc": "Follows how often and how much the category has sold lately, counting recent days more."},
-        {"id": "prophet", "label": "Prophet",
-         "desc": "A seasonal model with weekly and yearly patterns and the school calendar. "
-                 "Less accurate in testing."},
+         "desc": "Looks at how often and how much the category has sold lately, paying most attention to "
+                 "the latest weeks."},
+        {"id": "prophet", "label": "Prophet", "desc": _PROPHET},
     ],
 }
 DEFAULTS = {scope: next(o["id"] for o in opts if o.get("recommended")) for scope, opts in OPTIONS.items()}
