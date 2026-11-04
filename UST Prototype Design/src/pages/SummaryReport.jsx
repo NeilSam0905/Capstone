@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getSummaryPeriods, getSummaryReport, summaryReportPdfUrl, setSummaryGoal } from '../services/dataService';
+import { getSummaryPeriods, getSummaryReport, summaryReportPdfUrl } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import KPICard from '../components/KPICard';
@@ -48,6 +48,20 @@ function monthEnd(month) {
 
 const plural = (n, one, many = `${one}s`) => `${num(n)} ${n === 1 ? one : many}`;
 
+/** A section's title with its icon beside it, so the report reads as
+ *  distinct parts rather than a stack of alike cards. */
+function SectionTitle({ icon, children, extra }) {
+  return (
+    <div className="card-h">
+      <span className="rpt-title">
+        <span className="rpt-title__icon"><Icon name={icon} size={17} /></span>
+        <span className="section-title">{children}</span>
+      </span>
+      {extra}
+    </div>
+  );
+}
+
 export default function SummaryReport() {
   const { data: periods, loading: listing } = useData(getSummaryPeriods, [], []);
   const [kind, setKind] = useState('year');
@@ -55,12 +69,9 @@ export default function SummaryReport() {
   const [picked, setPicked] = useState({});
   const options = periods.filter(p => p.kind === kind);
   const period = options.find(p => p.key === picked[kind]) ?? options[0] ?? null;
-  // Bumped when a goal is saved: the save clears the cache, this refetches.
-  const [version, setVersion] = useState(0);
-
   const { data: report, loading } = useData(
     () => (period ? getSummaryReport(period.kind, period.key) : Promise.resolve(null)),
-    [period?.kind, period?.key, version]);
+    [period?.kind, period?.key]);
 
   // A temporary anchor, as the Batch Sales Report does: the response is an
   // attachment, so this downloads without leaving the page.
@@ -76,7 +87,7 @@ export default function SummaryReport() {
   const ready = !!period && !!report && !loading;
 
   return (
-    <div className="stack">
+    <div className="stack summary-report">
       <div className="card-h" style={{ marginBottom: 0 }}>
         <div className="report-period">
           <span className="section-h">Period</span>
@@ -111,12 +122,12 @@ export default function SummaryReport() {
 
       {listing || (loading && !report) ? <Loading label="Building report…" />
         : !period ? <div className="empty">No sales have been tallied yet.</div>
-        : report && <Report report={report} onGoalSaved={() => setVersion(v => v + 1)} />}
+        : report && <Report report={report} />}
     </div>
   );
 }
 
-function Report({ report, onGoalSaved }) {
+function Report({ report }) {
   const { period: p, totals: tot, last_year: ly } = report;
   const compare = !!ly?.complete;
   const vs = (now, then, money) => {
@@ -130,10 +141,13 @@ function Report({ report, onGoalSaved }) {
     <>
       <div className="card card__pad">
         <div className="card-h" style={{ marginBottom: 0, alignItems: 'flex-start' }}>
-          <div>
-            <div className="section-title" style={{ fontSize: 16 }}>USTore Summary Report</div>
-            <div className="hint" style={{ marginTop: 4 }}>
-              Sales, the sales goal and new items, for the people the store reports to
+          <div className="rpt-head__title">
+            <span className="rpt-head__icon"><Icon name="file" size={22} /></span>
+            <div>
+              <div className="section-title" style={{ fontSize: 16 }}>USTore Summary Report</div>
+              <div className="hint" style={{ marginTop: 4 }}>
+                Sales and new items, for the people the store reports to
+              </div>
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -149,10 +163,14 @@ function Report({ report, onGoalSaved }) {
       </div>
 
       <div className="summary-tiles">
-        <KPICard label="Sales" value={peso(tot.php)} sub={vs(tot.php, ly?.php, true)} accent />
-        <KPICard label="Units sold" value={num(tot.units)} sub={vs(tot.units, ly?.units)} />
-        <KPICard label="Items that sold" value={num(tot.items_sold)} sub={`of ${num(tot.listed)} on the tally sheet`} />
-        <KPICard label="Days with sales" value={num(tot.selling_days)} sub={`of ${num(tot.recorded_days)} days recorded`} />
+        <KPICard icon="peso" label="Sales" value={peso(tot.php)}
+                 sub={vs(tot.php, ly?.php, true)} />
+        <KPICard icon="box" label="Units sold" value={num(tot.units)}
+                 sub={vs(tot.units, ly?.units)} />
+        <KPICard icon="tag" label="Items that sold" value={num(tot.items_sold)}
+                 sub={`of ${num(tot.listed)} on the tally sheet`} />
+        <KPICard icon="cal" label="Days with sales" value={num(tot.selling_days)}
+                 sub={`of ${num(tot.recorded_days)} days recorded`} />
       </div>
       {ly && (
         <div className="hint" style={{ marginTop: -6 }}>
@@ -162,10 +180,8 @@ function Report({ report, onGoalSaved }) {
         </div>
       )}
 
-      <GoalCard report={report} onSaved={onGoalSaved} />
-
       <div className="card card__pad">
-        <div className="card-h"><span className="section-title">Month by Month</span></div>
+        <SectionTitle icon="chart">Month by Month</SectionTitle>
         <div style={{ overflowX: 'auto' }}>
           <table className="tbl">
             <thead>
@@ -220,7 +236,7 @@ function Report({ report, onGoalSaved }) {
 
       <div className="grid-2">
         <div className="card card__pad">
-          <div className="card-h"><span className="section-title">Sales by Category</span></div>
+          <SectionTitle icon="dashboard">Sales by Category</SectionTitle>
           <div className="report-items">
             <table className="tbl">
               <thead>
@@ -234,7 +250,12 @@ function Report({ report, onGoalSaved }) {
                   <tr key={r.category}>
                     <td className="strong">{r.category}</td>
                     <td className="num">{peso(r.php)}</td>
-                    <td className="num">{(r.share * 100).toFixed(0)}%</td>
+                    <td className="num">
+                      <span className="rpt-share">
+                        <span className="minibar"><span className="minibar__fill" style={{ width: `${r.share * 100}%` }} /></span>
+                        {(r.share * 100).toFixed(0)}%
+                      </span>
+                    </td>
                     {compare && <ChangeCell now={r.php} then={r.last_year_php} />}
                   </tr>
                 ))}
@@ -244,7 +265,7 @@ function Report({ report, onGoalSaved }) {
         </div>
 
         <div className="card card__pad">
-          <div className="card-h"><span className="section-title">Top {report.top_items.length} Items by Sales</span></div>
+          <SectionTitle icon="trend">Top {report.top_items.length} Items by Sales</SectionTitle>
           <div className="report-items">
             <table className="tbl tbl--fixed">
               <colgroup><col style={{ width: 46 }} /><col /><col style={{ width: 70 }} /><col style={{ width: 100 }} /></colgroup>
@@ -254,7 +275,7 @@ function Report({ report, onGoalSaved }) {
               <tbody>
                 {report.top_items.map((r, i) => (
                   <tr key={r.product_id}>
-                    <td><span className="muted">{i + 1}</span></td>
+                    <td><span className="rpt-rank">{i + 1}</span></td>
                     <td className="strong"><span className="cell-trunc" title={r.item_name}>{r.item_name}</span></td>
                     <td className="num">{num(r.units)}</td>
                     <td className="num">{r.php != null ? peso(r.php) : '—'}</td>
@@ -268,8 +289,11 @@ function Report({ report, onGoalSaved }) {
 
       <NewItems report={report} />
 
-      <div className="card card__pad">
-        <div className="section-h" style={{ marginBottom: 6 }}>How these figures are made</div>
+      <div className="card card__pad rpt-notes">
+        <div className="rpt-title" style={{ marginBottom: 6 }}>
+          <span className="rpt-title__icon"><Icon name="info" size={15} /></span>
+          <span className="section-h">How these figures are made</span>
+        </div>
         <ul className="hint summary-notes">
           <li>Sales in pesos are units sold times each item&apos;s listed price.</li>
           {tot.unpriced_items > 0 && (
@@ -287,101 +311,6 @@ function Report({ report, onGoalSaved }) {
   );
 }
 
-const STATUS_TAG = {
-  met: ['Goal met', 'ok'], not_met: ['Goal not met', 'crit'],
-  on_track: ['On track', 'ok'], behind: ['Behind', 'crit'], in_progress: ['In progress', 'gold'],
-};
-
-/** The sales goal: how far the period has come against it, and the box to
- *  set or change it. A first goal saves straight away; changing or removing
- *  one asks for the admin's password (dataService's admin confirmation). */
-function GoalCard({ report, onSaved }) {
-  const { goal, projection, period } = report;
-  const [draft, setDraft] = useState(null);       // null: not editing
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-  const amount = draft == null ? null : Number(String(draft).replace(/[₱,\s]/g, ''));
-  const valid = amount != null && Number.isFinite(amount) && amount > 0;
-
-  async function save(value) {
-    setSaving(true);
-    setError(null);
-    try {
-      const out = await setSummaryGoal(period.kind, period.key, value);
-      if (out?.ok) {
-        setDraft(null);
-        onSaved();
-      } else {
-        setError(out?.error ?? 'Not saved.');
-      }
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const [tagText, tagTone] = goal ? STATUS_TAG[goal.status] : [];
-  const share = goal?.reached_share ?? 0;
-
-  return (
-    <div className="card card__pad">
-      <div className="card-h">
-        <span className="section-title">Sales Goal</span>
-        {goal && <span className={`tag tag--${tagTone}`}>{tagText}</span>}
-      </div>
-
-      {goal && (
-        <div className="meter" style={{ height: 10, marginBottom: 10 }}>
-          <div className="meter__fill"
-               style={{ width: `${Math.min(share, 1) * 100}%`, background: share >= 1 ? 'var(--ok)' : undefined }} />
-        </div>
-      )}
-      {report.goal_text.map(([text, t]) => (
-        <div key={text} style={{
-          fontSize: 13, marginBottom: 4, fontWeight: t ? 700 : 400,
-          color: t === 'ok' ? 'var(--ok)' : t === 'crit' ? 'var(--crit)' : 'var(--text)',
-        }}>
-          {text}
-        </div>
-      ))}
-      {projection && period.in_progress && report.last_year && (
-        <div className="hint">
-          By {usDate(report.last_year.to)}, last year&apos;s period had made
-          {` ${(projection.last_year_share_by_now * 100).toFixed(0)}%`} of its sales
-          ({peso(projection.last_year_full_php)} in all).
-        </div>
-      )}
-
-      <div className="goal-edit">
-        {draft == null ? (
-          <button className="btn btn--ghost btn--sm" onClick={() => { setDraft(goal ? String(goal.php) : ''); setError(null); }}>
-            {goal ? 'Change goal' : 'Set a sales goal'}
-          </button>
-        ) : (
-          <form className="goal-edit__form" onSubmit={e => { e.preventDefault(); if (valid) save(amount); }}>
-            <label className="hint" htmlFor="goal-php">Sales goal for {period.label} (₱)</label>
-            <input id="goal-php" inputMode="decimal" autoFocus value={draft} placeholder="e.g. 20,000,000"
-                   onChange={e => setDraft(e.target.value)} />
-            <button type="submit" className="btn btn--ink btn--sm" disabled={!valid || saving}>Save</button>
-            <button type="button" className="btn btn--ghost btn--sm" disabled={saving}
-                    onClick={() => { setDraft(null); setError(null); }}>Cancel</button>
-            {goal && (
-              <button type="button" className="btn btn--crit btn--sm" disabled={saving} onClick={() => save(null)}>
-                Remove goal
-              </button>
-            )}
-          </form>
-        )}
-        {goal?.set_at && draft == null && (
-          <span className="hint">Set {usDate(goal.set_at.slice(0, 10))}{goal.set_by ? ` by ${goal.set_by}` : ''}</span>
-        )}
-        {error && <span className="hint" style={{ color: 'var(--crit)' }}>{error}</span>}
-      </div>
-    </div>
-  );
-}
-
 /** The items first listed on the tally sheet during the period: which have
  *  not sold - the ones to act on - and which have. */
 function NewItems({ report }) {
@@ -392,7 +321,7 @@ function NewItems({ report }) {
 
   return (
     <div className="card card__pad">
-      <div className="card-h"><span className="section-title">New Items</span></div>
+      <SectionTitle icon="calPlus">New Items</SectionTitle>
       {n.count === 0 ? (
         <div className="hint">No new item appeared on the tally sheet during this period.</div>
       ) : (

@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
 
@@ -9,7 +9,8 @@ const MARGIN = 12;  // kept clear of the window's edges
  *
  *  It opens on click rather than hover: a touch screen has no hover, and an
  *  explanation that vanishes when the pointer slips off is hard to read. A
- *  second click, a click anywhere else, Escape, scrolling or resizing closes it.
+ *  second click, a click anywhere else or Escape closes it; scrolling or
+ *  resizing moves it with its button instead.
  *
  *  The panel is portalled to <body> with fixed positioning, so no card or
  *  scrolling area can clip it. It opens below the button, or above when there
@@ -32,23 +33,36 @@ export default function InfoTip({ label = 'More information', text, link, width 
 
   // Placed after the panel renders, so its real height decides above or
   // below. Written straight to the element: it is a measurement of the page,
-  // not state, and it renders hidden until this has run.
-  useLayoutEffect(() => {
+  // not state, and it renders hidden until this has run. The side it opens
+  // on is kept while it stays open (`side`), so following the button on a
+  // scroll never makes it jump from below to above.
+  const side = useRef(null);
+  const place = useCallback(() => {
     const pop = popRef.current;
-    if (!open || !btnRef.current || !pop) return;
+    if (!btnRef.current || !pop) return;
     const b = btnRef.current.getBoundingClientRect();
     const w = Math.min(width, window.innerWidth - 2 * MARGIN);
     pop.style.width = `${w}px`;
     const h = pop.offsetHeight;
-    const below = b.bottom + GAP;
-    const top = below + h > window.innerHeight - MARGIN && b.top - GAP - h > MARGIN
-      ? b.top - GAP - h
-      : below;
+    if (side.current == null) {
+      side.current = b.bottom + GAP + h > window.innerHeight - MARGIN && b.top - GAP - h > MARGIN
+        ? 'above' : 'below';
+    }
+    const top = side.current === 'above' ? b.top - GAP - h : b.bottom + GAP;
     pop.style.left = `${Math.max(MARGIN, Math.min(b.left, window.innerWidth - w - MARGIN))}px`;
     pop.style.top = `${top}px`;
     pop.style.visibility = 'visible';
-  }, [open, width]);
+  }, [width]);
 
+  useLayoutEffect(() => {
+    if (!open) { side.current = null; return; }
+    place();
+  }, [open, place]);
+
+  // Closes only on a click outside it (or on the (i) again) and on Escape.
+  // Scrolling or resizing moves it with its button instead: a fixed panel
+  // would otherwise be left behind, and closing it there lost the reading
+  // whenever the page moved under it.
   useEffect(() => {
     if (!open) return undefined;
     const close = () => setOpen(false);
@@ -58,19 +72,23 @@ export default function InfoTip({ label = 'More information', text, link, width 
     const onKey = e => {
       if (e.key === 'Escape') { close(); btnRef.current?.focus(); }
     };
-    // Scrolling would leave a fixed panel behind its button, so it closes.
-    const onScroll = e => { if (!popRef.current?.contains(e.target)) close(); };
+    let frame = 0;
+    const follow = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(place);
+    };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', close);
+    window.addEventListener('scroll', follow, true);
+    window.addEventListener('resize', follow);
     return () => {
+      cancelAnimationFrame(frame);
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', follow, true);
+      window.removeEventListener('resize', follow);
     };
-  }, [open]);
+  }, [open, place]);
 
   return (
     <>
@@ -88,11 +106,42 @@ export default function InfoTip({ label = 'More information', text, link, width 
       </button>
       {open && createPortal(
         <div id={id} ref={popRef} role="dialog" aria-label={label} className="infotip__pop"
-             onClick={e => e.stopPropagation()}>
+             onClick={e => e.stopPropagation()}
+             onWheel={e => passWheel(e, popRef.current, btnRef.current)}>
           {children}
         </div>,
         document.body,
       )}
     </>
   );
+}
+
+/** Whether `el` can scroll further in the wheel's direction. */
+function canScroll(el, dy) {
+  const oy = getComputedStyle(el).overflowY;
+  if (!(oy === 'auto' || oy === 'scroll') || el.scrollHeight <= el.clientHeight) return false;
+  return dy < 0 ? el.scrollTop > 0 : el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+}
+
+/** The nearest scrolling area holding `el` - the dashboard's .scroll, the
+ *  Tally Interface's page - or the document. */
+function scrollParent(el) {
+  for (let n = el?.parentElement; n; n = n.parentElement) {
+    if (n.scrollHeight > n.clientHeight && /(auto|scroll)/.test(getComputedStyle(n).overflowY)) return n;
+  }
+  return document.scrollingElement;
+}
+
+/** The panel is portalled to <body>, outside the page's scrolling area, so a
+ *  wheel over it would scroll nothing. Hand the wheel to the area that holds
+ *  its button instead - the panel follows it there (the scroll listener
+ *  above) - unless a list inside the panel can still scroll that way, which
+ *  then scrolls as usual. Line-based wheels (deltaMode 1, Firefox) are turned
+ *  into pixels. */
+function passWheel(e, pop, btn) {
+  for (let n = e.target; n && n !== pop; n = n.parentElement) {
+    if (n instanceof Element && canScroll(n, e.deltaY)) return;
+  }
+  const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
+  scrollParent(btn)?.scrollBy({ top: e.deltaY * unit, left: 0 });
 }

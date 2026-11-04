@@ -591,21 +591,26 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage, model, onMo
 function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, children, setPage }) {
   return (
     <div className="card card__pad">
-      {/* Title, then the model that made the figures (a dropdown to choose
-          another) and whether it held up, on the line under it. */}
+      {/* Left: the title, and under it the model that made the figures (a
+          dropdown to choose another). Right: which month's sales they rest on,
+          and under it whether the forecast held up. */}
       <div className="card-h" style={{ alignItems: 'flex-start' }}>
         <div className="fcard__head">
           <span className="section-h">Demand Forecast — {title}</span>
-          <div className="fcard__model">
-            {onModel && <ModelSelect scope={modelScope} value={model} onChange={onModel} />}
-            {tags}
-          </div>
+          {onModel && (
+            <div className="fcard__model">
+              <ModelSelect scope={modelScope} value={model} onChange={onModel} />
+            </div>
+          )}
         </div>
-        <span className="hint" title={fd.history_end ? `Sales through ${usDate(fd.history_end)}` : undefined}>
-          {fd.history_end
-            ? `Based on ${monthName(fd.history_end)} Sales`
-            : `Generated ${usDate(fd.snapshot_date)}`}
-        </span>
+        <div className="fcard__side">
+          <span className="hint" title={fd.history_end ? `Sales through ${usDate(fd.history_end)}` : undefined}>
+            {fd.history_end
+              ? `Based on ${monthName(fd.history_end)} Sales`
+              : `Generated ${usDate(fd.snapshot_date)}`}
+          </span>
+          {tags}
+        </div>
       </div>
       {scope && <div className="hint" style={{ marginTop: -6, marginBottom: 6 }}>Totals cover {scope}.</div>}
 
