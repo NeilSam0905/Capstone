@@ -104,6 +104,10 @@ def real_api(tmp_path, monkeypatch):
 
 def test_another_models_forecast_is_shown_beside_the_recommended(real_api):
     con = sqlite3.connect(real_api.db)
+    # From no comparison forecasts, whatever Run Forecast has left in ustore.db.
+    for table in (*fo.COMPARE_TABLES["item"], *fo.COMPARE_TABLES["category"]):
+        con.execute(f"DROP TABLE IF EXISTS {table}")
+    con.commit()
     cat = con.execute("SELECT forecast_category FROM Result_Category_Forecast LIMIT 1").fetchone()
     if cat is None:
         pytest.skip("no category forecasts in this database")
@@ -149,6 +153,28 @@ def test_another_models_forecast_is_shown_beside_the_recommended(real_api):
     assert default["total_30d"] == pytest.approx(main_total, abs=1e-3)
     models = real_api.get("/api/forecast/models").get_json()
     assert next(o for o in models["category"]["options"] if o["id"] == "tsb")["made"] is not None
+
+
+def test_calendar_marks_name_what_falls_in_the_forecast(tmp_path, monkeypatch):
+    (tmp_path / "calendar_ranges.csv").write_text("""start_date,end_date,flag,semester_id,event_name
+2026-10-29,2026-11-03,is_sem_break,AY2627-T1,Undas Break
+2026-11-30,2026-11-30,is_store_closed,AY2627-T1,Bonifacio Day
+2026-10-20,2026-10-20,is_event_day,AY2627-T1,Foundation Day (date uncertain - verify)
+""", encoding="utf-8")
+    monkeypatch.setattr(backend, "DATA_DIR", tmp_path)
+    con = sqlite3.connect(tmp_path / "x.db")
+    con.row_factory = sqlite3.Row
+    con.executescript("""
+        CREATE TABLE Event_Log (event_id INTEGER PRIMARY KEY, event_date TEXT, event_name TEXT);
+        CREATE TABLE Closure_Log (closure_id INTEGER PRIMARY KEY, closure_date TEXT, is_closed INTEGER, reason TEXT);
+        INSERT INTO Event_Log (event_date, event_name) VALUES ('2026-11-05', 'Book Fair'), ('2027-01-05', 'Later');
+        INSERT INTO Closure_Log (closure_date, is_closed, reason) VALUES ('2026-11-06', 1, NULL), ('2026-11-07', 0, 'x');
+    """)
+    marks = backend._calendar_marks(con, "2026-10-19", "2026-11-01")
+    assert marks == [{"start": "2026-10-20", "end": "2026-10-20", "name": "Foundation Day", "kind": "event"},
+                     {"start": "2026-10-29", "end": "2026-11-01", "name": "Undas Break", "kind": "break"}]
+    later = backend._calendar_marks(con, "2026-11-04", "2026-11-17")
+    assert [(m["name"], m["kind"]) for m in later] == [("Book Fair", "event"), ("Store closed", "closed")]
 
 
 def test_top_sellers_period(real_api):

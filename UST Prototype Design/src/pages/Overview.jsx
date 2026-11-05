@@ -56,7 +56,7 @@ export default function Overview({ filters, setPage, setView, user }) {
   const salesThrough = meta?.sales_span?.[1] ?? null;
 
   // A zero on hand is often an old count, not an empty shelf. This opens the
-  // Tally Interface straight on its Stock tab, where the count is entered.
+  // Tally Interface straight on its Inventory tab, where the count is entered.
   const recount = setView ? () => {
     try { sessionStorage.setItem(TALLY_TAB_KEY, 'stock'); } catch { /* opens on its last tab */ }
     setView('tally');
@@ -297,7 +297,7 @@ function CountInfo() {
       <div className="infotip__h">What &ldquo;counted&rdquo; means</div>
       <p>
         An <b>inventory count</b> is when staff count how many units of an item are actually on the shelf
-        and record it in the Tally Interface (Stock tab &rarr; Monthly Inventory Count).
+        and record it in the Tally Interface (Inventory tab &rarr; Monthly Inventory Count).
       </p>
       <p>
         The system compares that number with the item&rsquo;s <b>reorder point</b>, the stock level at which

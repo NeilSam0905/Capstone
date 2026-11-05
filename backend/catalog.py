@@ -14,8 +14,9 @@ import csv
 import re
 import statistics
 from collections import defaultdict
+from datetime import date
 
-from db import INVENTORY_CSV, SALE_ONLY, rows
+from db import ENTRY_PHP, ENTRY_UNITS, INVENTORY_CSV, SALE_ONLY, pesos, rows
 
 ALL_SUPPLIERS = "All Suppliers"
 ALL_CATEGORIES = "All Categories"
@@ -135,8 +136,10 @@ def compute_stats(con, date_range=None, start=None, end=None):
     where = " AND ".join([full] + conds)
     args = tuple(args)
 
-    agg_sql = """
+    agg_sql = f"""
         SELECT f.product_id,
+               {ENTRY_UNITS}                                          AS entry_units,
+               {ENTRY_PHP}                                            AS entry_php,
                SUM(f.quantity_sold)                                   AS total_units,
                COUNT(DISTINCT f.date_id)                              AS observed_days,
                COUNT(DISTINCT CASE WHEN f.is_censored = 1 THEN f.date_id END) AS censored_days,
@@ -145,7 +148,7 @@ def compute_stats(con, date_range=None, start=None, end=None):
                MIN(d.calendar_date)                                   AS first_sale,
                MAX(d.calendar_date)                                   AS last_sale
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
-        {where}
+        {{where}}
         GROUP BY f.product_id
     """
     monthly_sql = """
@@ -194,7 +197,8 @@ def compute_stats(con, date_range=None, start=None, end=None):
     # A product outside the window sold nothing in it — which is a real zero,
     # not missing data, and must not read as "no stats" to compute_catalog.
     no_sales = {"total_units": 0, "observed_days": 0, "censored_days": 0,
-                "weighted_units": 0, "first_sale": None, "last_sale": None}
+                "weighted_units": 0, "first_sale": None, "last_sale": None,
+                "entry_units": 0, "entry_php": 0.0}
 
     stats = {}
     for full in full_agg:
@@ -208,6 +212,8 @@ def compute_stats(con, date_range=None, start=None, end=None):
         stats[pid] = {
             "product_id": pid,
             "total_units": a["total_units"],
+            "entry_units": a["entry_units"],
+            "entry_php": a["entry_php"],
             "observed_days": a["observed_days"],
             "censored_days": a["censored_days"],
             "active_tally_dates": denom,
@@ -237,6 +243,12 @@ def compute_catalog(con, date_range=None, start=None, end=None):
     """)
     stats, _series = compute_stats(con, date_range, start, end)
     discontinued = load_discontinued(con)
+    # The price in force today, for showing. unit_price_php stays the sheet
+    # price: pesos() needs it for sales from before a price change.
+    current_price = {r["product_id"]: r["price_php"] for r in rows(con, """
+        SELECT product_id, price_php FROM Item_Price_Change WHERE effective_from <= ?
+        ORDER BY effective_from, change_id
+    """, (date.today().isoformat(),))}
 
     catalog = []
     for p in products:
@@ -249,6 +261,7 @@ def compute_catalog(con, date_range=None, start=None, end=None):
             # is_active is honoured (the tally item pickers among them).
             "is_active": 0 if is_discontinued else p["is_active"],
             "discontinued": is_discontinued,
+            "current_price_php": current_price.get(p["product_id"], p["unit_price_php"]),
             "supplier_name": p["supplier_name"] or UNATTRIBUTED,
             "category": p["category"] or "Uncategorised",
             "total_units": total_units,
@@ -263,7 +276,7 @@ def compute_catalog(con, date_range=None, start=None, end=None):
             "days_of_supply": s.get("days_of_supply"),
             "first_sale": s.get("first_sale"),
             "last_sale": s.get("last_sale"),
-            "revenue": (total_units * p["unit_price_php"]) if p["unit_price_php"] is not None else None,
+            "revenue": pesos(total_units, p["unit_price_php"], s.get("entry_units", 0), s.get("entry_php", 0.0)),
             "has_history": p["product_id"] in stats,
         }
         catalog.append(row)

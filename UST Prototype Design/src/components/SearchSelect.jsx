@@ -110,7 +110,7 @@ export default function SearchSelect({
       </button>
 
       {open && (
-        <div className="sselect__panel">
+        <div className={`sselect__panel${searchable ? '' : ' sselect__panel--plain'}`}>
           {searchable && (
             <input
               ref={input}

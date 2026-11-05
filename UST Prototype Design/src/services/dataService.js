@@ -427,8 +427,13 @@ export const getEntriesByDate = isoDate => get(`/tally${qs({ date: isoDate })}`)
  *  every one of these rules, plus rules the client can't check on its own
  *  (product/date existence). See backend/validation.py. Returns a
  *  field->message map; an empty object means valid. */
-export function validateEntry({ product_id, quantity_sold, calendar_date, transaction_type }) {
+export function validateEntry({ product_id, quantity_sold, calendar_date, transaction_type, entry_price_php }) {
   const errors = {};
+  if (entry_price_php != null && entry_price_php !== '') {
+    const price = Number(entry_price_php);
+    if (!Number.isFinite(price)) errors.entry_price_php = 'Price must be a number.';
+    else if (price < 0) errors.entry_price_php = 'Price cannot be negative.';
+  }
   if (!product_id) errors.product_id = 'Select an item.';
   if (quantity_sold === '' || quantity_sold == null) {
     errors.quantity_sold = 'Enter a quantity.';
@@ -457,6 +462,9 @@ export async function addEntry(entry) {
     // walk_in (default) / bulk / pre_order, for a SALE. Bulk and pre-orders
     // are kept out of the forecasts' training (scripts/order_types.py).
     order_type: entry.order_type,
+    // What this sale went for, if not the listed price. Every peso total
+    // counts it (backend db.pesos); blank is the listed price.
+    entry_price_php: entry.entry_price_php === '' ? null : entry.entry_price_php ?? null,
   });
 }
 
@@ -658,6 +666,16 @@ export const getNamesToReview = () => get('/names/review');
  *  Appends one row to the controlled vocabulary. */
 export const settleName = ({ raw_name, action, product_id, category, supplier_name }) =>
   post('/names/review', { raw_name, action, product_id, category, supplier_name });
+
+/** An item's listed price and its history.
+ *  -> { item_name, sheet_price, current_price,
+ *       changes:[{ effective_from, price_php, previous_php, note, changed_by, changed_at }] }. */
+export const getProductPrice = productId => get(`/products/${productId}/price`);
+
+/** Change a listed price from a date on (today if left out): sales before it
+ *  keep their price. Replacing a price asks for the admin's password. */
+export const setProductPrice = (productId, { price_php, effective_from, note }) =>
+  post(`/products/${productId}/price`, { price_php, effective_from, note });
 
 /** The tally sheet now calls an item something else. The new name is added
  *  to the vocabulary as another name for the item: history and the name

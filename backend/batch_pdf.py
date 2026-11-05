@@ -517,7 +517,10 @@ def render(report, period, daily=None):
             by_date = quantities.get(item.get("product_id"), {})
             units = item_units(item, days, by_date)
             price = item["unit_price_php"]
-            remit = price * units if price is not None else None
+            # A line with sales at their own prices has its exact total; its
+            # price is what the units averaged (app.py's batch report).
+            remit = (item["line_total"] if item.get("sale_prices")
+                     else price * units if price is not None else None)
             block_rows.append(units)
             block_remit.append(remit or 0)
             for col in range(n):

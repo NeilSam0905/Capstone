@@ -6,7 +6,7 @@ import {
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
-import { LineChart, ScrollForecastChart } from '../components/charts';
+import { LineChart, MARK_KINDS, ScrollForecastChart } from '../components/charts';
 import { num, shortMonth, longMonth, monthName, usDate, isCalendarAdjusted, roundNice, pesoK, FSN_TONE, FSN_LABEL } from '../lib/format';
 import SearchSelect from '../components/SearchSelect';
 import Icon from '../components/Icon';
@@ -614,11 +614,18 @@ function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, chil
       </div>
       {scope && <div className="hint" style={{ marginTop: -6, marginBottom: 6 }}>Totals cover {scope}.</div>}
 
-      <ScrollForecastChart history={fd.history} forecast={fd.forecast} />
+      <ScrollForecastChart history={fd.history} forecast={fd.forecast} marks={fd.calendar_marks} />
       <div className="legend" style={{ justifyContent: 'center', marginTop: 10 }}>
         <span><i style={{ background: 'var(--text-2)', opacity: 0.7 }} />Past months · average sold per day</span>
         <span><i style={{ background: 'var(--accent)' }} />Forecast per day</span>
         <span><i style={{ background: 'var(--accent)', opacity: 0.25 }} />Likely range</span>
+        {/* Only the kinds in this window; hover a day for its name. */}
+        {[...new Set((fd.calendar_marks ?? []).map(m => m.kind))].map(kind => (
+          <span key={kind} title="Hover the day on the chart for its name">
+            <i className="legend__mark" style={{ background: MARK_KINDS[kind]?.color }} />
+            {MARK_KINDS[kind]?.label}
+          </span>
+        ))}
       </div>
 
       {children}

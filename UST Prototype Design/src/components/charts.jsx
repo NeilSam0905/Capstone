@@ -42,15 +42,25 @@ function svgXToLocalPx(svg, vbX) {
 
 /** Shared hover readout. Positioned in the chart's own coordinate space by the
  *  caller, so it works the same in an SVG viewBox as in a flow layout. */
-function ChartTip({ label, value, sub }) {
+function ChartTip({ label, value, sub, notes }) {
   return (
     <div className="charttip">
       <div className="charttip__label">{label}</div>
       <div className="charttip__value">{value}</div>
       {sub && <div className="charttip__sub">{sub}</div>}
+      {notes?.map(n => <div key={n} className="charttip__note">{n}</div>)}
     </div>
   );
 }
+
+/** A calendar entry's colour on the forecast chart; exported for its legend. */
+export const MARK_KINDS = {
+  event:      { label: 'Event',          color: 'var(--info)' },
+  closed:     { label: 'Store closed',   color: 'var(--crit)' },
+  enrollment: { label: 'Enrollment',     color: 'var(--ok)' },
+  exams:      { label: 'Exams',          color: 'var(--hvl)' },
+  break:      { label: 'Semester break', color: 'var(--muted)' },
+};
 
 /** [callback ref, width in px] for an element, kept current as it resizes.
  *  0 until the element is laid out. A callback ref rather than an effect, so
@@ -570,7 +580,7 @@ function niceAxis(v) {
  *  the month labels show the jump) rather than dipping to zero.
  *  `forecast` is the Result_Forecast rows [{ forecast_date, yhat, yhat_lower,
  *  yhat_upper }]. */
-export function ScrollForecastChart({ history, forecast, height = 290, monthMax = 56, dayMin = 16 }) {
+export function ScrollForecastChart({ history, forecast, marks, height = 290, monthMax = 56, dayMin = 16 }) {
   const scrollRef = useRef(null);
   const dragRef = useRef(null);
   const frameRef = useRef(0);
@@ -754,6 +764,16 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthMax 
   const fcLine = days.map((d, j) => `${j === 0 ? 'M' : 'L'}${dx(j).toFixed(1)},${y(d.yhat).toFixed(1)}`).join(' ');
   const lastMonth = months.length ? months[months.length - 1] : null;
 
+  // Calendar entries on the forecast: a diamond on the line at the first day,
+  // a bar along the top for how long it runs, and the name in the day's tip.
+  const dayMarks = (marks ?? []).map(m => {
+    const from = days.findIndex(d => d.date >= m.start);
+    let to = -1;
+    days.forEach((d, j) => { if (d.date <= m.end) to = j; });
+    return { ...m, from, to };
+  }).filter(m => m.from >= 0 && m.to >= m.from);
+  const LANE_Y = padT - 6;
+
   let tip = null;
   if (hover?.kind === 'month') {
     const m = months[hover.i];
@@ -762,7 +782,8 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthMax 
   } else if (hover?.kind === 'day') {
     const d = days[hover.i];
     tip = { label: `${fmtIsoDay(d.date)} · forecast`, value: num(Math.round(d.yhat)),
-            sub: `likely ${num(Math.round(d.lo))} – ${num(Math.round(d.hi))} units` };
+            sub: `likely ${num(Math.round(d.lo))} – ${num(Math.round(d.hi))} units`,
+            notes: dayMarks.filter(m => m.from <= hover.i && hover.i <= m.to).map(m => m.name) };
   }
 
   return (
@@ -875,6 +896,24 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthMax 
                   </g>
                 )}
 
+                {/* Calendar entries in the forecast window */}
+                {dayMarks.map(m => {
+                  const { color } = MARK_KINDS[m.kind] ?? MARK_KINDS.event;
+                  const cx = dx(m.from), cy = y(days[m.from].yhat);
+                  return (
+                    <g key={`${m.start}${m.name}`}>
+                      <title>{`${m.name} · ${m.start === m.end ? fmtIsoDay(m.start)
+                        : `${fmtIsoDay(m.start)} – ${fmtIsoDay(m.end)}`}`}</title>
+                      <rect x={cx - dayW / 2 + 1} y={LANE_Y - 1.5} rx="1.5" height="3"
+                            width={Math.max(4, (m.to - m.from + 1) * dayW - 2)} fill={color} />
+                      <line x1={cx} y1={LANE_Y} x2={cx} y2={cy} stroke={color} strokeWidth="1"
+                            strokeDasharray="2 3" strokeOpacity="0.7" />
+                      <path d={`M${cx},${cy - 6.5} L${cx + 6.5},${cy} L${cx},${cy + 6.5} L${cx - 6.5},${cy} Z`}
+                            fill={color} stroke="var(--card)" strokeWidth="1.5" />
+                    </g>
+                  );
+                })}
+
                 {/* X axis, one baseline for both parts - history: "May 24"
                     as often as fits; forecast: day numbers, then the month */}
                 {months.map((m, i) => (labelMonth(i) ? (
@@ -903,7 +942,7 @@ export function ScrollForecastChart({ history, forecast, height = 290, monthMax 
                        transform: hover.align === 'left' ? 'translateX(-12px)'
                          : hover.align === 'right' ? 'translateX(calc(-100% + 12px))' : undefined,
                      }}>
-                  <ChartTip label={tip.label} value={tip.value} sub={tip.sub} />
+                  <ChartTip label={tip.label} value={tip.value} sub={tip.sub} notes={tip.notes} />
                 </div>
               )}
             </div>

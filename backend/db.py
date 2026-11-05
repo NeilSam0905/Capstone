@@ -41,6 +41,32 @@ BUSY_TIMEOUT_MS = 30_000
 # written in upper case before writes were normalised still count.
 SALE_ONLY = "LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'"
 
+# A sale's price, when it is not the sheet price on Dim_Product: the price
+# typed with the sale (Sales Tally's optional Price field), else the listed
+# price in force on the sale's date (Item_Price_Change, Edit price). Older
+# sales therefore keep the price they sold at. Needs Fact_Sales f and Dim_Date d.
+PRICE_IN_FORCE = """(SELECT pc.price_php FROM Item_Price_Change pc
+    WHERE pc.product_id = f.product_id AND pc.effective_from <= d.calendar_date
+    ORDER BY pc.effective_from DESC, pc.change_id DESC LIMIT 1)"""
+OWN_PRICE = f"COALESCE(f.entry_price_php, {PRICE_IN_FORCE})"
+
+# Selected AS entry_units and entry_php beside SUM(quantity_sold), these are
+# what pesos() needs. Every peso figure goes through pesos(), so a report
+# cannot count a sale's price differently from another.
+ENTRY_UNITS = f"SUM(CASE WHEN {OWN_PRICE} IS NOT NULL THEN f.quantity_sold ELSE 0 END)"
+ENTRY_PHP = f"SUM(COALESCE(f.quantity_sold * {OWN_PRICE}, 0))"
+ENTRY_PRICES = f"COUNT(DISTINCT {OWN_PRICE})"
+
+
+def pesos(units, price, entry_units=0, entry_php=0.0):
+    """What `units` sold for: `entry_units` of them at their own prices
+    (`entry_php` in all), the rest at the listed `price`. None when none of
+    them has a price: an unpriced item with no priced sale counts in units
+    only, as it always has."""
+    if price is None:
+        return entry_php if entry_units else None
+    return (units - entry_units) * price + entry_php
+
 # create_schema.py defines no indexes; every endpoint here joins Fact_Sales to
 # Dim_Product/Dim_Date on every request (not a one-off script run), so these
 # matter for response time. Doesn't touch create_schema.py itself - purely a
@@ -135,8 +161,25 @@ SALES_GOAL_DDL = """CREATE TABLE IF NOT EXISTS Sales_Goal (
     set_at       TEXT,
     PRIMARY KEY (period_kind, period_key)
 )"""
+# Item_Price_Change: a listed price edited in the Tally Interface, from a date
+# on. Sales before that date keep their price; the rows are the price history,
+# so they are only ever added to. Dim_Product.unit_price_php stays the price
+# on the store's sheets, which step1 recalculates. Operational: no pipeline
+# step clears it, and step1 moves it with an item that is merged into another.
+ITEM_PRICE_CHANGE_DDL = """CREATE TABLE IF NOT EXISTS Item_Price_Change (
+    change_id       INTEGER PRIMARY KEY,
+    product_id      INTEGER NOT NULL,
+    effective_from  TEXT    NOT NULL,   -- 'YYYY-MM-DD', the first day at this price
+    price_php       REAL    NOT NULL,
+    previous_php    REAL,               -- the price it replaced, NULL if unpriced
+    note            TEXT,
+    changed_by      TEXT,
+    changed_at      TEXT
+)"""
+ITEM_PRICE_CHANGE_INDEX = """CREATE INDEX IF NOT EXISTS ix_price_change_item
+    ON Item_Price_Change (product_id, effective_from)"""
 _TABLES = (PRODUCT_STATUS_DDL, PENDING_IMPORT_DDL, APP_USER_DDL, RESTOCK_LOG_DDL, UPCOMING_ORDER_DDL,
-           SALES_GOAL_DDL)
+           SALES_GOAL_DDL, ITEM_PRICE_CHANGE_DDL, ITEM_PRICE_CHANGE_INDEX)
 
 # Columns added after databases already existed. CREATE TABLE IF NOT EXISTS
 # cannot add a column to a table that is already there, so each is added here
@@ -150,6 +193,9 @@ _COLUMNS = (
     ("Pending_Import_Row", "order_type", "TEXT"),
     # the Tally_Correction a corrected workbook row came from
     ("Fact_Sales", "correction_id", "INTEGER"),
+    # the price one sale went at, typed in Sales Tally (see pesos() below);
+    # NULL = the item's listed price
+    ("Fact_Sales", "entry_price_php", "REAL"),
 )
 
 

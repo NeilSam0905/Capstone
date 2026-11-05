@@ -267,7 +267,9 @@ function BatchSales({ filters, period, setPeriod }) {
                         <td className="num">{num(item.quantity)}</td>
                         <td className="num">
                           {item.unit_price_php != null
-                            ? peso(item.unit_price_php)
+                            ? <span title={item.avg_price ? 'Average: sold at more than one price in this period' : undefined}>
+                                {peso(item.unit_price_php)}{item.avg_price ? ' avg' : ''}
+                              </span>
                             : <span className="muted" title="No unit price on record for this item">—</span>}
                         </td>
                         <td className="num">

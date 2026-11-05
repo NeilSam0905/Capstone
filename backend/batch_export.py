@@ -562,9 +562,12 @@ def render_xlsx(report, period, daily=None):
                 ws.cell(row, total_col, item["quantity"])
             if item["unit_price_php"] is not None:
                 ws.cell(row, price_col, item["unit_price_php"])
+                # A line with sales at their own prices has its exact total:
+                # its price is an average, so price x units would round.
                 ws.cell(row, remit_col,
-                        f"={get_column_letter(price_col)}{row}"
-                        f"*{get_column_letter(total_col)}{row}")
+                        item["line_total"] if item.get("sale_prices")
+                        else f"={get_column_letter(price_col)}{row}"
+                             f"*{get_column_letter(total_col)}{row}")
             for col in range(1, remit_col + 1):
                 cell = ws.cell(row, col)
                 # A marked day is a marked day for the whole month, so its

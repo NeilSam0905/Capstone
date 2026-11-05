@@ -6,7 +6,7 @@ import {
   getInventoryCounts, saveInventoryCount, correctOnHand, deleteInventoryCount,
   getStockPosition, ALL_CATEGORIES, ALL_SUPPLIERS, UNATTRIBUTED, addProduct,
   importInventoryCounts, importTallyEntries, addTallyWorkbook,
-  getNamesToReview, settleName, renameProduct,
+  getNamesToReview, settleName, renameProduct, getProductPrice, setProductPrice,
   getRestocks, addRestock, markRestockDelivered, deleteRestock,
   getUpcomingOrders, addUpcomingOrder, deleteUpcomingOrder,
   editClosure, editEvent, deleteEvent, editEntry, deleteEntry,
@@ -211,8 +211,12 @@ export default function TallyInterface({ setView, user, signOut }) {
   const { data: staleness } = useData(getPipelineStaleness, [reloadKey]);
   const { data: review } = useData(getNamesToReview, [reloadKey], null);
   const [tab, setTab] = useState(savedTab);
+  // The sections share one scrolling area, so without this a tab opens at
+  // however far down the last one was.
+  const bodyRef = useRef(null);
   const goTo = useCallback(next => {
     setTab(next);
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
     try { sessionStorage.setItem(TAB_KEY, next); } catch { /* remembered for this visit only */ }
   }, []);
 
@@ -235,11 +239,11 @@ export default function TallyInterface({ setView, user, signOut }) {
         </div>
       </header>
 
-      <div className="tally-body">
+      <div className="tally-body" ref={bodyRef}>
         {connectionError && <ErrorBanner error={connectionError} />}
         <CalendarEndBanner meta={meta} goTo={goTo} />
         <StalenessBanner staleness={staleness} goTo={goTo} />
-        {/* On the Stock tab the card itself is right there. */}
+        {/* On the Inventory tab the card itself is right there. */}
         {tab !== 'stock' && <NamesBanner review={review} goTo={goTo} />}
 
         <TallyTabs active={tab} onChange={goTo} staleness={staleness}
@@ -247,13 +251,13 @@ export default function TallyInterface({ setView, user, signOut }) {
 
         {/* Every section stays mounted and is only hidden, so switching tab
             never loses a half-filled form. */}
-        <section className="tally-section tone-orange" hidden={tab !== 'sales'} aria-label="Sales">
+        <section className="tally-section tone-orange" hidden={tab !== 'sales'} aria-label="Sales Tally">
           <SalesTally products={products} onSaved={bump}
                       recent={recent} recentLoading={recentLoading} />
           <UpcomingOrders products={products} reloadKey={reloadKey} />
           <EntriesByDate reloadKey={reloadKey} />
         </section>
-        <section className="tally-section tone-ok" hidden={tab !== 'stock'} aria-label="Stock">
+        <section className="tally-section tone-ok" hidden={tab !== 'stock'} aria-label="Inventory">
           <NamesToReview data={review} products={products} onChanged={bump} />
           <MonthlyInventoryCount products={products} onSaved={bump} />
           <RestockDeliveries products={products} reloadKey={reloadKey} />
@@ -275,8 +279,8 @@ export default function TallyInterface({ setView, user, signOut }) {
  *  says where you are: the card stripes and title badges inside a section
  *  take its colour (.tone-* in redesign.css). */
 const SECTIONS = [
-  { id: 'sales',    label: 'Sales',            icon: 'trend', tone: 'orange', desc: 'Record sales' },
-  { id: 'stock',    label: 'Stock',            icon: 'box',   tone: 'ok',   desc: 'Counts and deliveries' },
+  { id: 'sales',    label: 'Sales Tally',      icon: 'trend', tone: 'orange', desc: 'Record sales' },
+  { id: 'stock',    label: 'Inventory',        icon: 'box',   tone: 'ok',   desc: 'Counts and deliveries' },
   { id: 'calendar', label: 'Calendar',         icon: 'cal',   tone: 'info', desc: 'Closures and busy days' },
   { id: 'update',   label: 'Update Analytics', icon: 'zap',   tone: 'hvl',  desc: 'Refresh the dashboard' },
 ];
@@ -358,7 +362,20 @@ function TabLink({ to, goTo, children }) {
 
 /* ------------------------------------------------------- Names to review */
 
+/** ₱120 or ₱120.50: an entered price is shown as it was typed. */
+const pesoExact = v => `₱${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+
 const SOURCE_LABEL = { sheet: 'tally sheet', import: 'imported file', 'sheet+import': 'sheet + import' };
+
+/** What the Names to review list can be narrowed to. */
+const REVIEW_FILTERS = [
+  { key: 'all', label: 'All names', test: () => true },
+  { key: 'strong', label: 'Strong match', test: n => n.suggestion?.strength === 'strong' },
+  { key: 'possible', label: 'Possible match', test: n => !!n.suggestion && n.suggestion.strength !== 'strong' },
+  { key: 'none', label: 'No match found', test: n => !n.suggestion },
+  { key: 'sheet', label: 'From the tally sheet', test: n => n.source !== 'import' },
+  { key: 'import', label: 'From an imported file', test: n => n.source !== 'sheet' },
+];
 
 /** "1 Jul – 31 Jul 2026 · MADEBYRUZ · 40 units" — what is known about a name. */
 function evidence(n) {
@@ -385,9 +402,11 @@ function evidence(n) {
  *  A sheet name takes effect at the next pipeline run; held import rows are
  *  added at once. The card is hidden when there is nothing to settle.
  *
- *  Lives on the Stock tab, folded shut; NamesBanner points the other tabs at
+ *  Lives on the Inventory tab, folded shut; NamesBanner points the other tabs at
  *  it. `data` is getNamesToReview(), read once by the page for both. */
 function NamesToReview({ data, products, onChanged }) {
+  const [search, setSearch] = useState('');
+  const [show, setShow] = useState('all');           // a REVIEW_FILTERS key
   const [busy, setBusy] = useState(null);           // raw_name being saved, or '*' for the batch
   const [choosing, setChoosing] = useState(null);    // { raw_name, product_id } while picking an item
   const [creating, setCreating] = useState(null);    // { raw_name, category, supplier_name } for an import-only name
@@ -403,6 +422,10 @@ function NamesToReview({ data, products, onChanged }) {
   const provisional = new Set(names.map(n => n.provisional_product_id).filter(Boolean));
   const settledItems = products.filter(p => !provisional.has(p.product_id));
   const strong = names.filter(n => n.suggestion?.strength === 'strong');
+  const needle = search.trim().toLowerCase();
+  const shown = names.filter(n => (REVIEW_FILTERS.find(f => f.key === show)?.test ?? (() => true))(n)
+    && (!needle || [n.raw_name, n.suggestion?.item_name, n.supplier_name]
+      .some(text => text?.toLowerCase().includes(needle))));
 
   async function settle(n, action, extra = {}) {
     setBusy(n.raw_name);
@@ -479,8 +502,21 @@ function NamesToReview({ data, products, onChanged }) {
       )}
 
       {names.length > 0 && (
+        <div className="review-tools">
+          <input type="search" className="review-tools__search" value={search}
+                 placeholder="Search names, suggested items or suppliers…" aria-label="Search names to review"
+                 onChange={e => setSearch(e.target.value)} />
+          <SearchSelect value={show} onChange={setShow} searchable={false} minWidth={200}
+                        options={REVIEW_FILTERS.map(f => ({ value: f.key, label: f.label }))} />
+          <span className="hint">Showing {num(shown.length)} of {num(names.length)}</span>
+        </div>
+      )}
+
+      {names.length > 0 && shown.length === 0 && <div className="empty">No names match that search.</div>}
+
+      {shown.length > 0 && (
         <ul className="review-list">
-          {names.map(n => {
+          {shown.map(n => {
             const s = n.suggestion;
             const isBusy = busy === n.raw_name || busy === '*';
             const importOnly = n.source === 'import';
@@ -617,7 +653,7 @@ function outcome(r) {
 
 function SalesTally({ products, onSaved, recent, recentLoading }) {
   const [form, setForm] = useState({
-    calendar_date: today(), transaction_type: 'SALE', product_id: '', quantity_sold: '',
+    calendar_date: today(), transaction_type: 'SALE', product_id: '', quantity_sold: '', entry_price_php: '',
   });
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [errors, setErrors] = useState({});
@@ -632,6 +668,11 @@ function SalesTally({ products, onSaved, recent, recentLoading }) {
     setErrors(e => ({ ...e, [key]: undefined }));
     setSaved(null);
   };
+  // Only a sale has a price; damaged, promo and transfer units did not sell.
+  const isSale = form.transaction_type.startsWith('SALE');
+  const item = products.find(p => p.product_id === Number(form.product_id));
+  const listed = item?.current_price_php ?? item?.unit_price_php;
+  const [pricing, setPricing] = useState(false);
 
   /** Narrowing the category drops the selected item if it falls outside the
    *  new range, so the form can never submit a product the list no longer
@@ -655,7 +696,7 @@ function SalesTally({ products, onSaved, recent, recentLoading }) {
     }
     setErrors({});
     setSaved(result.entry);
-    setForm(f => ({ ...f, product_id: '', quantity_sold: '' }));
+    setForm(f => ({ ...f, product_id: '', quantity_sold: '', entry_price_php: '' }));
     onSaved();
   }
 
@@ -672,6 +713,7 @@ function SalesTally({ products, onSaved, recent, recentLoading }) {
         </span>
       </div>
       {editing && <EditTallyModal onClose={closeEditor} onSaved={onSaved} />}
+      {pricing && item && <ItemPriceModal item={item} onClose={() => setPricing(false)} onSaved={onSaved} />}
 
       <div className="form-grid">
         <Field label="Date" error={errors.calendar_date}>
@@ -708,6 +750,25 @@ function SalesTally({ products, onSaved, recent, recentLoading }) {
                  className={errors.quantity_sold ? 'is-err' : ''}
                  onChange={e => set('quantity_sold', e.target.value)} />
         </Field>
+
+        {isSale && (
+          <Field label="Price per unit (optional)" error={errors.entry_price_php}
+                 hint={(
+                   <>
+                     Only if this sale went at a different price. It is used for this entry only.
+                     {item && (
+                       <>{' '}<button type="button" className="linkish" onClick={() => setPricing(true)}>
+                         Edit listed price
+                       </button></>
+                     )}
+                   </>
+                 )}>
+            <input type="number" min="0" step="0.01" value={form.entry_price_php}
+                   placeholder={listed != null ? `Listed price: ${pesoExact(listed)}` : 'No listed price'}
+                   className={errors.entry_price_php ? 'is-err' : ''}
+                   onChange={e => set('entry_price_php', e.target.value)} />
+          </Field>
+        )}
       </div>
 
       <div className="btn-row" style={{ marginTop: 18 }}>
@@ -715,7 +776,8 @@ function SalesTally({ products, onSaved, recent, recentLoading }) {
         {saved ? (
           <span className="ok-text" style={{ fontSize: 12.5 }}>
             <Icon name="check" size={14} />
-            Recorded {saved.quantity_sold} × {saved.item_name} ({saved.transaction_type}
+            Recorded {saved.quantity_sold} × {saved.item_name}
+            {saved.entry_price_php != null ? ` at ${pesoExact(saved.entry_price_php)}` : ''} ({saved.transaction_type}
             {ORDER_LABEL[saved.order_type] ? ` · ${ORDER_LABEL[saved.order_type]}` : ''})
           </span>
         ) : (
@@ -1057,6 +1119,113 @@ function MonthlyInventoryCount({ products, onSaved }) {
   );
 }
 
+/** An item's listed price: the change, and the history of them. A new price
+ *  starts on a date, today unless another is picked: sales before that date
+ *  keep the price they sold at, in every report, and the Price typed with a
+ *  sale still wins over it. The history is added to, never edited, so a wrong
+ *  price is put right by another change. Replacing a price asks for the
+ *  admin's password (the backend's rule, dataService's dialog). */
+function ItemPriceModal({ item, onClose, onSaved }) {
+  const [own, setOwn] = useState(0);
+  const { data } = useData(() => getProductPrice(item.product_id), [item.product_id, own], null);
+  const [form, setForm] = useState({ price_php: '', effective_from: today(), note: '' });
+  const [errors, setErrors] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(null);
+  const set = (key, value) => {
+    setForm(f => ({ ...f, [key]: value }));
+    setErrors(e => ({ ...e, [key]: undefined }));
+    setSaved(null);
+  };
+
+  async function save() {
+    setBusy(true);
+    try {
+      const r = await setProductPrice(item.product_id, form);
+      if (!r.ok) { setErrors(r.errors || { price_php: r.error }); return; }
+      setErrors({});
+      setSaved(r);
+      setForm(f => ({ ...f, price_php: '', note: '' }));
+      setOwn(k => k + 1);
+      onSaved?.();
+    } catch (err) {
+      setErrors({ price_php: err.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const changes = data?.changes ?? [];
+  return (
+    <Modal open onClose={onClose} width={680} title="Listed price" subtitle={item.item_name}>
+      <div className="price-now">
+        <span className="section-h">Price now</span>
+        <b>{data?.current_price != null ? pesoExact(data.current_price) : 'No listed price'}</b>
+      </div>
+
+      <div className="form-grid">
+        <Field label="New price" error={errors.price_php}>
+          <input type="number" min="0" step="0.01" value={form.price_php} autoFocus placeholder="₱ per unit"
+                 className={errors.price_php ? 'is-err' : ''}
+                 onChange={e => set('price_php', e.target.value)} />
+        </Field>
+        <Field label="Starts on" error={errors.effective_from}
+               hint="Sales before this date keep their old price.">
+          <input type="date" value={form.effective_from}
+                 className={errors.effective_from ? 'is-err' : ''}
+                 onChange={e => set('effective_from', e.target.value)} />
+        </Field>
+        <div className="col-2">
+          <Field label="Note (optional)">
+            <input type="text" value={form.note} placeholder="e.g. New supplier price"
+                   onChange={e => set('note', e.target.value)} />
+          </Field>
+        </div>
+      </div>
+
+      <div className="btn-row" style={{ marginTop: 14 }}>
+        <button className="btn btn--ink btn--sm" disabled={busy || form.price_php === ''} onClick={save}>
+          {busy ? 'Saving…' : 'Save Price'}
+        </button>
+        {saved && (
+          <span className="ok-text" style={{ fontSize: 12.5 }}>
+            <Icon name="check" size={14} />
+            {pesoExact(saved.price_php)} from {usDate(saved.effective_from)}
+          </span>
+        )}
+      </div>
+
+      <div className="section-h" style={{ margin: '18px 0 8px' }}>Price History</div>
+      <div className="modal-grow">
+        <table className="tbl">
+          <thead>
+            <tr><th>Starts</th><th className="num">Price</th><th className="num">Was</th><th>Changed by</th><th>Note</th></tr>
+          </thead>
+          <tbody>
+            {changes.map(c => (
+              <tr key={c.change_id}>
+                <td className="strong">{usDate(c.effective_from)}</td>
+                <td className="num strong">{pesoExact(c.price_php)}</td>
+                <td className="num">{c.previous_php != null ? pesoExact(c.previous_php) : <span className="muted">—</span>}</td>
+                <td>{c.changed_by ? displayUser(c.changed_by) : <span className="muted">—</span>}</td>
+                <td>{c.note ?? <span className="muted">—</span>}</td>
+              </tr>
+            ))}
+            <tr>
+              <td className="strong">Original</td>
+              <td className="num strong">
+                {data?.sheet_price != null ? pesoExact(data.sheet_price) : <span className="muted">No price</span>}
+              </td>
+              <td className="num"><span className="muted">—</span></td>
+              <td colSpan={2}><span className="muted">From the store&apos;s sheets</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
 /** Create an item the catalogue does not have yet, so today's count is not
  *  blocked on a vocabulary update.
  *
@@ -1204,6 +1373,7 @@ function CurrentStockModal({ open, onClose, onChanged }) {
   const [stockOnly, setStockOnly] = useState(false);
   // { product_id, value, newName } while one row is being edited.
   const [editing, setEditing] = useState(null);
+  const [pricing, setPricing] = useState(null);   // the row whose price is open
   const [busyId, setBusyId] = useState(null);
   const [message, setMessage] = useState(null);   // { ok, text }
 
@@ -1295,7 +1465,7 @@ function CurrentStockModal({ open, onClose, onChanged }) {
 
   const columns = [
     {
-      key: 'item_name', label: 'Item', strong: true, width: '36%',
+      key: 'item_name', label: 'Item', strong: true, width: '30%',
       render: (v, row) => (
         <span className="stock-item">
           <span className="cell-trunc" title={v}>{v}</span>
@@ -1303,18 +1473,22 @@ function CurrentStockModal({ open, onClose, onChanged }) {
         </span>
       ),
     },
-    { key: 'category',       label: 'Category', truncate: true, width: '17%' },
-    { key: 'supplier_name',  label: 'Supplier', truncate: true, width: '20%' },
+    { key: 'category',       label: 'Category', truncate: true, width: '15%' },
+    { key: 'supplier_name',  label: 'Supplier', truncate: true, width: '16%' },
     {
-      key: 'current_stock', label: 'On hand', num: true, strong: true, width: '10%',
+      key: 'current_price_php', label: 'Price', num: true, width: '10%',
+      render: v => (v == null ? <span className="muted">—</span> : pesoExact(v)),
+    },
+    {
+      key: 'current_stock', label: 'On hand', num: true, strong: true, width: '9%',
       render: num,
     },
     {
-      key: 'days_of_supply', label: 'Days left', num: true, width: '9%',
+      key: 'days_of_supply', label: 'Days left', num: true, width: '8%',
       render: v => v == null ? <span className="muted">—</span> : Math.round(v),
     },
     {
-      key: 'product_id', label: '', width: '8%',
+      key: 'product_id', label: '', width: '12%',
       render: (id, row) => {
         const busy = busyId === id;
         // A gold Edit link, as on a row in Edit Tally Entries. The open row's
@@ -1332,6 +1506,10 @@ function CurrentStockModal({ open, onClose, onChanged }) {
                       setEditing({ product_id: id, value: String(row.current_stock ?? 0), newName: '' });
                     }}>
               Edit
+            </button>
+            <button type="button" className="linkish" title="Change the listed price, or see its history"
+                    onClick={() => { setMessage(null); setPricing(row); }}>
+              Price
             </button>
           </span>
         );
@@ -1383,6 +1561,11 @@ function CurrentStockModal({ open, onClose, onChanged }) {
   const filtered = shown.length !== items.length;
 
   return (
+    <>
+    {pricing && (
+      <ItemPriceModal item={pricing} onClose={() => setPricing(null)}
+                      onSaved={() => { setReloadKey(k => k + 1); onChanged?.(); }} />
+    )}
     <Modal
       open={open}
       onClose={onClose}
@@ -1450,6 +1633,7 @@ function CurrentStockModal({ open, onClose, onChanged }) {
         )}
       {message?.ok && <SavedDialog text={message.text} onConfirm={clearMessage} />}
     </Modal>
+    </>
   );
 }
 
@@ -2267,9 +2451,11 @@ const TYPE_CELL = (v, row) => (
  *  is defined once. */
 const RECENT_COLUMNS = [
   { key: 'calendar_date', label: 'Date', width: '14%', render: usDate },
-  { key: 'item_name',     label: 'Item', strong: true, truncate: true, width: '30%' },
+  { key: 'item_name',     label: 'Item', strong: true, truncate: true, width: '26%' },
   { key: 'quantity_sold', label: 'Qty', num: true, strong: true, width: '8%' },
-  { key: 'supplier_name', label: 'Supplier', truncate: true, width: '24%' },
+  { key: 'entry_price_php', label: 'Price', num: true, width: '9%',
+    render: v => (v != null ? pesoExact(v) : <span className="muted" title="The item's listed price">Listed</span>) },
+  { key: 'supplier_name', label: 'Supplier', truncate: true, width: '19%' },
   { key: 'transaction_type', label: 'Type', width: '13%', render: TYPE_CELL },
   {
     key: 'is_local', label: 'Origin', width: '11%',
@@ -2430,7 +2616,7 @@ function NamesBanner({ review, goTo }) {
             title={`${num(n)} item name${n === 1 ? ' needs' : 's need'} review, please settle ${n === 1 ? 'it' : 'them'}`}>
       These names from the tally sheets or imported files are not in the item list yet, so their sales and
       counts are not tied to an item. Settle them under Names to review in
-      the <TabLink to="stock" goTo={goTo}>Stock tab</TabLink> to fix the issue.
+      the <TabLink to="stock" goTo={goTo}>Inventory tab</TabLink> to fix the issue.
     </Banner>
   );
 }

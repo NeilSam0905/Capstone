@@ -5,6 +5,7 @@ The client copy is a convenience; this is the guarantee (BACKEND_TODO.md §2).
 Same field->message contract so the frontend's existing inline-error
 rendering needs no changes.
 """
+import math
 import re
 from datetime import date
 
@@ -41,6 +42,20 @@ def calendar_gap_message(con, iso_date):
         return (f"The calendar currently runs to {last}. Check the date - "
                 f"if it is right, try again in a moment.")
     return "Date not found in the calendar."
+
+
+def entry_price(value):
+    """The optional price typed with a sale: (price or None, error or None).
+    Blank means the item's listed price."""
+    if value in (None, ""):
+        return None, None
+    try:
+        price = float(str(value).replace(",", "").strip())
+    except ValueError:
+        return None, "Price must be a number."
+    if not math.isfinite(price) or price < 0:
+        return None, "Price cannot be negative."
+    return round(price, 2), None
 
 
 def validate_entry(con, payload):

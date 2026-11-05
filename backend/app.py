@@ -564,6 +564,80 @@ def add_product():
     }})
 
 
+def _price_on(c, product_id, sheet_price, iso_date):
+    """The listed price in force on a date."""
+    r = dbmod.one(c, """
+        SELECT price_php FROM Item_Price_Change WHERE product_id = ? AND effective_from <= ?
+        ORDER BY effective_from DESC, change_id DESC LIMIT 1
+    """, (product_id, iso_date))
+    return r["price_php"] if r else sheet_price
+
+
+@app.get("/api/products/<int:product_id>/price")
+def get_product_price(product_id):
+    """An item's listed price and its history, newest first. `sheet_price` is
+    the price on the store's sheets, in force until the first change."""
+    c = con()
+    p = dbmod.one(c, "SELECT item_name, unit_price_php FROM Dim_Product WHERE product_id = ?", (product_id,))
+    if p is None:
+        return jsonify({"ok": False, "error": "That item no longer exists."}), 404
+    return jsonify({
+        "ok": True, "product_id": product_id, "item_name": p["item_name"],
+        "sheet_price": p["unit_price_php"],
+        "current_price": _price_on(c, product_id, p["unit_price_php"], date.today().isoformat()),
+        "changes": dbmod.rows(c, """
+            SELECT change_id, effective_from, price_php, previous_php, note, changed_by, changed_at
+            FROM Item_Price_Change WHERE product_id = ?
+            ORDER BY effective_from DESC, change_id DESC
+        """, (product_id,)),
+    })
+
+
+@app.post("/api/products/<int:product_id>/price")
+def set_product_price(product_id):
+    """Change a listed price from a date on: {price_php, effective_from?, note?}.
+    `effective_from` defaults to today. Sales before it keep the price they
+    sold at, in every report; a sale with its own price keeps that. Added to
+    the history, never overwriting it, so a mistake is corrected by another
+    change. Replacing a price is the admin's, as any edit of a saved record;
+    giving an unpriced item its first price is not."""
+    payload = request.get_json(silent=True) or {}
+    c = con()
+    p = dbmod.one(c, "SELECT unit_price_php FROM Dim_Product WHERE product_id = ?", (product_id,))
+    if p is None:
+        return jsonify({"ok": False, "error": "That item no longer exists."}), 404
+
+    errors = {}
+    price, problem = validation.entry_price(payload.get("price_php"))
+    if problem or price is None:
+        errors["price_php"] = problem or "Enter the new price."
+    effective_from = str(payload.get("effective_from") or date.today().isoformat())
+    if not validation.is_iso_date(effective_from):
+        errors["effective_from"] = "Pick the date the price starts."
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+
+    previous = _price_on(c, product_id, p["unit_price_php"], effective_from)
+    if previous == price:
+        return jsonify({"ok": False, "errors": {"price_php": "That is already the price on that date."}}), 400
+    if previous is not None:
+        refused = _needs_admin("Changing a listed price")
+        if refused:
+            return refused
+
+    note = str(payload.get("note") or "").strip() or None
+    c.execute(dbmod.ITEM_PRICE_CHANGE_DDL)         # in case startup could not create it
+    c.execute("""
+        INSERT INTO Item_Price_Change
+            (product_id, effective_from, price_php, previous_php, note, changed_by, changed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (product_id, effective_from, price, previous, note, auth.current_user(),
+          datetime.now().isoformat(timespec="seconds")))
+    c.commit()
+    return jsonify({"ok": True, "product_id": product_id, "price_php": price,
+                    "effective_from": effective_from, "previous_php": previous})
+
+
 @app.post("/api/products/<int:product_id>/rename")
 def rename_product(product_id):
     """The tally sheet now calls this item something else ({"new_name"}).
@@ -673,7 +747,8 @@ def get_monthly_units():
     months = catalog.months_seen(c)
 
     monthly = dbmod.rows(c, f"""
-        SELECT f.product_id, substr(d.calendar_date, 1, 7) AS month, SUM(f.quantity_sold) AS units
+        SELECT f.product_id, substr(d.calendar_date, 1, 7) AS month, SUM(f.quantity_sold) AS units,
+               {dbmod.ENTRY_UNITS} AS entry_units, {dbmod.ENTRY_PHP} AS entry_php
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
         WHERE {dbmod.SALE_ONLY}
         GROUP BY 1, 2
@@ -684,9 +759,9 @@ def get_monthly_units():
             continue
         acc = by_month.setdefault(row["month"], {"month": row["month"], "units": 0, "revenue": 0.0, "priced_units": 0})
         acc["units"] += row["units"]
-        price = price_by_id.get(row["product_id"])
-        if price is not None:
-            acc["revenue"] += row["units"] * price
+        php = dbmod.pesos(row["units"], price_by_id.get(row["product_id"]), row["entry_units"], row["entry_php"])
+        if php is not None:
+            acc["revenue"] += php
             acc["priced_units"] += row["units"]
     return jsonify(sorted(by_month.values(), key=lambda a: a["month"]))
 
@@ -741,7 +816,8 @@ def get_overview_performance():
     keep = {p["product_id"] for p in cat if catalog.matches(p, supplier, category)}
 
     rows = dbmod.rows(c, f"""
-        SELECT f.product_id, d.calendar_date AS day, SUM(f.quantity_sold) AS units
+        SELECT f.product_id, d.calendar_date AS day, SUM(f.quantity_sold) AS units,
+               {dbmod.ENTRY_UNITS} AS entry_units, {dbmod.ENTRY_PHP} AS entry_php
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
         WHERE {dbmod.SALE_ONLY} AND f.quantity_sold > 0
         GROUP BY 1, 2
@@ -766,7 +842,8 @@ def get_overview_performance():
         pid = r["product_id"]
         if pid not in keep:
             continue
-        price = (by_id.get(pid) or {}).get("unit_price_php")
+        php = dbmod.pesos(r["units"], (by_id.get(pid) or {}).get("unit_price_php"),
+                          r["entry_units"], r["entry_php"])
         month = r["day"][:7]
         m = monthly.setdefault(month, {"month": month, "php": 0.0, "units": 0})
         m["units"] += r["units"]
@@ -775,9 +852,8 @@ def get_overview_performance():
             bi["units" if month == latest else "previous_units"] += r["units"]
         if r["day"] >= window_start:
             units_all += r["units"]
-        if price is None:
+        if php is None:
             continue
-        php = r["units"] * price
         m["php"] += php
         if month in (latest, previous):
             name = (by_id.get(pid) or {}).get("category") or "Uncategorised"
@@ -924,7 +1000,9 @@ def build_batch_report(c, period, only_supplier=None):
     product_by_id = {p["product_id"]: p for p in cat}
 
     totals = dbmod.rows(c, f"""
-        SELECT f.product_id, SUM(f.quantity_sold) AS units
+        SELECT f.product_id, SUM(f.quantity_sold) AS units,
+               {dbmod.ENTRY_UNITS} AS entry_units, {dbmod.ENTRY_PHP} AS entry_php,
+               {dbmod.ENTRY_PRICES} AS entry_prices
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
         WHERE d.calendar_date BETWEEN ? AND ? AND {dbmod.SALE_ONLY}
         GROUP BY 1
@@ -941,7 +1019,11 @@ def build_batch_report(c, period, only_supplier=None):
         entry = by_supplier.setdefault(supplier, {
             "supplier": supplier, "items": [], "total_units": 0, "subtotal": 0.0, "unpriced_units": 0,
         })
-        line_total = row["units"] * p["unit_price_php"] if p["unit_price_php"] is not None else None
+        line_total = dbmod.pesos(row["units"], p["unit_price_php"], row["entry_units"], row["entry_php"])
+        # Not all at the sheet price: the line shows what the units averaged,
+        # so its price and total still agree, and the renderers use line_total.
+        mixed = row["entry_units"] > 0
+        priced_units = row["units"] if p["unit_price_php"] is not None else row["entry_units"]
         entry["items"].append({
             # product_id travels with the line so the XLSX renderer can join
             # each row to its per-date quantities. Two suppliers can carry the
@@ -949,14 +1031,16 @@ def build_batch_report(c, period, only_supplier=None):
             "product_id": row["product_id"],
             "item_name": p["item_name"],
             "quantity": row["units"],
-            "unit_price_php": p["unit_price_php"],
+            "unit_price_php": round(line_total / priced_units, 2) if mixed else p["unit_price_php"],
             "line_total": line_total,
+            "sale_prices": mixed,
+            # More than one price in the period, so that price is an average.
+            "avg_price": mixed and (row["entry_units"] < row["units"] or row["entry_prices"] > 1),
         })
         entry["total_units"] += row["units"]
         if line_total is not None:
             entry["subtotal"] += line_total
-        else:
-            entry["unpriced_units"] += row["units"]
+        entry["unpriced_units"] += row["units"] - (priced_units if line_total is not None else 0)
 
     out = []
     for entry in by_supplier.values():
@@ -2117,7 +2201,8 @@ def get_recent_entries():
     rows = dbmod.rows(con(), """
         SELECT f.sale_id, f.product_id, d.calendar_date, f.quantity_sold,
                UPPER(f.transaction_type) AS transaction_type, f.imputation_flag, f.is_censored, f.entered_by,
-               f.order_type, f.tally_date_flag, p.item_name, COALESCE(p.supplier_name, ?) AS supplier_name
+               f.order_type, f.tally_date_flag, f.entry_price_php, p.item_name,
+               COALESCE(p.supplier_name, ?) AS supplier_name
         FROM Fact_Sales f
         JOIN Dim_Date d ON d.date_id = f.date_id
         JOIN Dim_Product p ON p.product_id = f.product_id
@@ -2160,6 +2245,13 @@ def add_entry():
     order_type = _order_type(transaction_type, payload.get("order_type"))
     if order_type is False:
         errors["order_type"] = "Choose walk-in, bulk or pre-order."
+    # A price says what a sale went for; damaged, promo and transfer units
+    # did not sell, so a price there is ignored rather than refused.
+    entry_price, price_error = validation.entry_price(payload.get("entry_price_php"))
+    if price_error:
+        errors["entry_price_php"] = price_error
+    if transaction_type != "SALE":
+        entry_price = None
     if errors:
         return jsonify({"ok": False, "errors": errors}), 400
 
@@ -2172,10 +2264,10 @@ def add_entry():
     cur = c.execute("""
         INSERT INTO Fact_Sales
             (product_id, date_id, quantity_sold, imputation_flag, tally_date_flag,
-             transaction_type, entered_by, order_type)
-        VALUES (?, ?, ?, 0, 0, ?, ?, ?)
+             transaction_type, entered_by, order_type, entry_price_php)
+        VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?)
     """, (product_id, date_row["date_id"], quantity_sold, transaction_type.lower(),
-          auth.current_user(), order_type))
+          auth.current_user(), order_type, entry_price))
     c.commit()
 
     product = dbmod.one(c, "SELECT item_name, supplier_name FROM Dim_Product WHERE product_id = ?", (product_id,))
@@ -2188,6 +2280,7 @@ def add_entry():
         "calendar_date": calendar_date,
         "transaction_type": transaction_type,
         "order_type": order_type,
+        "entry_price_php": entry_price,
         "entered_by": auth.current_user(),
         "is_local": False,
     }
@@ -2755,6 +2848,54 @@ def _calendar_window(c, start, end):
     }
 
 
+# calendar_ranges.csv's flags, as the forecast chart's points name them.
+CALENDAR_MARK_KINDS = {"is_store_closed": "closed", "is_event_day": "event",
+                       "is_enrollment_period": "enrollment", "is_exam_week": "exams",
+                       "is_sem_break": "break"}
+
+
+def _calendar_marks(c, start, end):
+    """What the calendar names between two dates, for the points on the
+    forecast chart: [{start, end, name, kind}] soonest first, each clipped to
+    the window. From the school calendar (calendar_ranges.csv, read-only), the
+    events staff flagged and the closures they recorded. A reviewer's "(date
+    uncertain - verify)" note on the calendar file is not part of the name."""
+    marks = []
+
+    def add(a, b, name, kind):
+        name = re.sub(r"\(date uncertain[^)]*\)", "", name or "").strip()
+        if name and a and b and a <= end and b >= start:
+            marks.append({"start": max(a, start), "end": min(b, end), "name": name, "kind": kind})
+
+    try:
+        with open(DATA_DIR / "calendar_ranges.csv", newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                kind = CALENDAR_MARK_KINDS.get((row.get("flag") or "").strip())
+                if kind:
+                    add((row.get("start_date") or "").strip(), (row.get("end_date") or "").strip(),
+                        row.get("event_name"), kind)
+    except (OSError, KeyError):
+        app.logger.warning("could not read calendar_ranges.csv for the forecast chart")
+
+    tables = _table_names(c)
+    if "Event_Log" in tables:
+        for r in dbmod.rows(c, "SELECT event_date, event_name FROM Event_Log"):
+            add(r["event_date"], r["event_date"], r["event_name"], "event")
+    if "Closure_Log" in tables:
+        for r in dbmod.rows(c, "SELECT closure_date, reason FROM Closure_Log WHERE is_closed = 1"):
+            add(r["closure_date"], r["closure_date"], r["reason"] or "Store closed", "closed")
+
+    unique = {(m["start"], m["end"], m["name"].lower()): m for m in marks}
+    return sorted(unique.values(), key=lambda m: (m["start"], m["end"]))
+
+
+def _chart_marks(c, forecast):
+    """The calendar entries to draw on a forecast's chart. Over the forecast's
+    own dates, not the advice's window from today: the chart starts the day
+    after the last sale."""
+    return _calendar_marks(c, forecast[0]["forecast_date"], forecast[-1]["forecast_date"]) if forecast else []
+
+
 def _busiest_week(rows, total):
     """The 7 consecutive forecast days with the most demand."""
     if len(rows) < 7 or total <= 0:
@@ -3041,6 +3182,7 @@ def get_forecast(product_id):
             "history": history,
             "metrics": metrics,
             "model_metrics": _model_metrics(c, forecast_models.ITEM, product_id),
+            "calendar_marks": _chart_marks(c, forecast_rows),
             "range_30d": _range_30d(total, rmse),
             "guidance": _forecast_guidance(c, forecast_rows, history, [product_id],
                                            single_item=True, rmse=rmse),
@@ -3242,6 +3384,7 @@ def get_forecast_category(category):
             "contributors": contributors,
             "metrics": metrics,
             "model_metrics": _model_metrics(c, forecast_models.CATEGORY, category),
+            "calendar_marks": _chart_marks(c, cat_rows),
             "guidance": _forecast_guidance(c, cat_rows, history, series_ids, single_item=False),
         },
     })
@@ -3322,6 +3465,7 @@ def _category_forecast_from_items(c, category):
             "history": history,
             "contributors": contributors,
             "metrics": [],
+            "calendar_marks": _chart_marks(c, rows),
             "guidance": _forecast_guidance(c, rows, history, ids, single_item=False),
         },
     })

@@ -437,6 +437,7 @@ CREATE TABLE IF NOT EXISTS Sales_Goal (
 # Fact_Sales.order_type has to exist before step2 loads history and the
 # forecast steps read it. (backend/db.py adds the same for the API.)
 for table, column, decl in (("Fact_Sales", "order_type", "TEXT"),
+                            ("Fact_Sales", "entry_price_php", "REAL"),
                             ("Pending_Import_Row", "order_type", "TEXT")):
     existing = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
     if column not in existing:

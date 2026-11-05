@@ -161,17 +161,42 @@ def get_goal(c, kind, key):
 
 # ----------------------------------------------------------------- figures
 
+class Sold(dict):
+    """{product_id: {'YYYY-MM': units}}, and `entry`, the units in it that
+    carry their own price: {(product_id, 'YYYY-MM'): (entry_units, entry_php)}."""
+
+    def __init__(self):
+        super().__init__()
+        self.entry = {}
+
+    def php(self, pid, month, units, price):
+        """What one item's units in one month sold for, or None (dbmod.pesos)."""
+        return dbmod.pesos(units, price, *self.entry.get((pid, month), (0, 0.0)))
+
+    def item_php(self, pid, price):
+        """What one item sold for over all its months, or None."""
+        months = [self.php(pid, m, u, price) for m, u in self[pid].items()]
+        priced = [v for v in months if v is not None]
+        return sum(priced) if priced else None
+
+    def entry_units(self, pid):
+        return sum(e[0] for (p, _m), e in self.entry.items() if p == pid)
+
+
 def _units(c, a, b):
-    """{product_id: {'YYYY-MM': units}} for every item on the tally sheet
-    between a and b - an item listed but not sold carries 0."""
-    out = {}
+    """Sold: every item on the tally sheet between a and b - an item listed
+    but not sold carries 0."""
+    out = Sold()
     for r in dbmod.rows(c, f"""
-        SELECT f.product_id, substr(d.calendar_date, 1, 7) AS month, SUM(f.quantity_sold) AS units
+        SELECT f.product_id, substr(d.calendar_date, 1, 7) AS month, SUM(f.quantity_sold) AS units,
+               {dbmod.ENTRY_UNITS} AS entry_units, {dbmod.ENTRY_PHP} AS entry_php
         FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
         WHERE d.calendar_date BETWEEN ? AND ? AND {dbmod.SALE_ONLY}
         GROUP BY 1, 2
     """, (a, b)):
         out.setdefault(r["product_id"], {})[r["month"]] = r["units"]
+        if r["entry_units"]:
+            out.entry[(r["product_id"], r["month"])] = (r["entry_units"], r["entry_php"])
     return out
 
 
@@ -205,12 +230,14 @@ def _totals(units, price):
             continue
         t["items_sold"] += 1
         t["units"] += u
-        p = price(pid)
-        if p is None:
+        php = units.item_php(pid, price(pid))
+        if php is None:
             t["unpriced_items"] += 1
             t["unpriced_units"] += u
         else:
-            t["php"] += u * p
+            t["php"] += php
+            if price(pid) is None:             # only its sales with their own price count
+                t["unpriced_units"] += u - units.entry_units(pid)
     t["php"] = round(t["php"], 2)
     return t
 
@@ -222,8 +249,9 @@ def _by_month(units, price):
         for m, u in months.items():
             e = out.setdefault(m, {"units": 0, "php": 0.0})
             e["units"] += u
-            if p is not None:
-                e["php"] += u * p
+            php = units.php(pid, m, u, p)
+            if php is not None:
+                e["php"] += php
     return out
 
 
@@ -235,9 +263,9 @@ def _by_category(units, price, category):
             continue
         e = out.setdefault(category(pid), {"units": 0, "php": 0.0})
         e["units"] += u
-        p = price(pid)
-        if p is not None:
-            e["php"] += u * p
+        php = units.item_php(pid, price(pid))
+        if php is not None:
+            e["php"] += php
     return out
 
 
@@ -333,14 +361,15 @@ def build(c, period):
 
     def item(pid, units):
         p = cat.get(pid) or {}
-        php = units * p["unit_price_php"] if p.get("unit_price_php") is not None else None
+        php = cur.item_php(pid, p.get("unit_price_php"))
         return {"product_id": pid, "item_name": p.get("item_name"), "category": category(pid),
                 "supplier_name": p.get("supplier_name"), "units": units,
                 "php": round(php, 2) if php is not None else None}
 
     sold = [(pid, sum(ms.values())) for pid, ms in cur.items() if sum(ms.values()) > 0]
-    ranked = sorted(sold, key=lambda t: (-(t[1] * (price(t[0]) or 0)), -t[1]))
-    top_items = [{**item(pid, u), "share": (u * (price(pid) or 0)) / totals["php"] if totals["php"] else 0.0}
+    earned = {pid: cur.item_php(pid, price(pid)) or 0 for pid, _u in sold}
+    ranked = sorted(sold, key=lambda t: (-earned[t[0]], -t[1]))
+    top_items = [{**item(pid, u), "share": earned[pid] / totals["php"] if totals["php"] else 0.0}
                  for pid, u in ranked[:TOP_ITEMS]]
 
     first_listed = {r["product_id"]: r["first"] for r in dbmod.rows(c, f"""

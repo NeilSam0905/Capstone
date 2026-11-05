@@ -4,6 +4,7 @@ import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import KPICard from '../components/KPICard';
 import Icon from '../components/Icon';
+import SearchSelect from '../components/SearchSelect';
 import { peso, num, longMonth, usDate } from '../lib/format';
 
 /* The Summary Report: an academic year, a term or a quarter on a page or two,
@@ -16,6 +17,69 @@ import { peso, num, longMonth, usDate } from '../lib/format';
  * days were tallied about as fully as now (the backend decides which). */
 
 const KINDS = [['year', 'Academic Year'], ['term', 'Term'], ['quarter', 'Quarter']];
+
+/* Terms and quarters are picked in two steps, the year from a dropdown and
+ * then the part of it from buttons, rather than from one long list: "Special
+ * Term" once per academic year, in a single dropdown, read like the same
+ * thing repeated. Each part is always shown, greyed out when that year has no
+ * sales in it. */
+const PARTS = {
+  term: [['T1', 'First Term'], ['T2', 'Second Term'], ['ST', 'Special Term']],
+  quarter: [['Q1', 'Q1', 'January – March'], ['Q2', 'Q2', 'April – June'],
+    ['Q3', 'Q3', 'July – September'], ['Q4', 'Q4', 'October – December']],
+};
+
+/** A period's year and part, from its key ('AY2627-T1', '2026-Q3', '2026'). */
+function splitPeriod(p) {
+  if (p.kind === 'term') return { group: p.key.slice(0, 6), groupLabel: p.label.split(', ')[1], part: p.key.slice(7) };
+  if (p.kind === 'quarter') return { group: p.key.slice(0, 4), groupLabel: p.key.slice(0, 4), part: p.key.slice(5) };
+  return { group: p.key, groupLabel: p.label.replace('Academic Year', 'A.Y.'), part: null };
+}
+
+function Tabs({ label, items, active, onPick }) {
+  return (
+    <div className="period-tabs" role="tablist" aria-label={label}>
+      {items.map(({ key, name, disabled, title }) => (
+        <button key={key} type="button" role="tab" aria-selected={active === key} disabled={disabled} title={title}
+                className={'period-tab' + (active === key ? ' is-active' : '')}
+                onClick={() => onPick(key)}>
+          {name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The year dropdown, newest first, and the buttons for the parts of the year
+ *  on show. Moving to another year keeps the part where that year has it,
+ *  else opens on the year's latest. */
+function PeriodPicker({ kind, options, period, onPick }) {
+  const split = options.map(o => ({ ...splitPeriod(o), key: o.key }));
+  const current = period ? splitPeriod(period) : null;
+  const groups = [...new Map(split.map(s => [s.group, s.groupLabel])).entries()]
+    .map(([value, label]) => ({ value, label }));
+  const inGroup = split.filter(s => s.group === current?.group);
+
+  function pickGroup(group) {
+    const there = split.filter(s => s.group === group);
+    onPick((there.find(s => s.part === current?.part) ?? there[0]).key);
+  }
+
+  return (
+    <>
+      <SearchSelect value={current?.group} options={groups} onChange={pickGroup} searchable={false}
+                    minWidth={kind === 'quarter' ? 110 : 190} />
+      {PARTS[kind] && (
+        <Tabs label="Part of the year" active={current?.part}
+              items={PARTS[kind].map(([key, name, months]) => {
+                const has = inGroup.some(s => s.part === key);
+                return { key, name, disabled: !has, title: has ? months : 'No sales recorded in this period' };
+              })}
+              onPick={part => onPick(inGroup.find(s => s.part === part).key)} />
+      )}
+    </>
+  );
+}
 
 /** '+12%' / '−5%' / 'new', with the tone of the change; null when there is
  *  nothing to compare with. */
@@ -100,13 +164,10 @@ export default function SummaryReport() {
               </button>
             ))}
           </div>
-          <div className="filter">
-            <select value={period?.key ?? ''} aria-label="Period" style={{ minWidth: 230 }}
-                    onChange={e => setPicked(p => ({ ...p, [kind]: e.target.value }))}>
-              {options.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
-            </select>
-            <span className="filter__chev">▾</span>
-          </div>
+          {options.length > 0 && (
+            <PeriodPicker kind={kind} options={options} period={period}
+                          onPick={key => setPicked(p => ({ ...p, [kind]: key }))} />
+          )}
         </div>
         <div className="btn-row">
           <button className="btn btn--ghost" disabled={!ready} title="Open the PDF in a new tab"

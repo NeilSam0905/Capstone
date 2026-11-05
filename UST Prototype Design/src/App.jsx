@@ -210,6 +210,11 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
     else setAdvisoriesOpen(true);
   };
 
+  // The pages share one scrolling area: a page opens at its top, not at
+  // however far down the last one was.
+  const scrollRef = useRef(null);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, [page]);
+
   const PageComponent = {
     overview:       Overview,
     classification: Classification,
@@ -288,7 +293,7 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
           action={<AdvisoriesButton onClick={openAdvisories} />}
         />
         <AdvisoriesModal open={advisoriesOpen} onClose={closeAdvisories} page={page} setPage={setPage} />
-        <div className="scroll">
+        <div className="scroll" ref={scrollRef}>
           {connectionError && <ErrorBanner error={connectionError} />}
           {/* setPage is handed to every page so a KPI or a chart can act as a
               link into the page that explains it — the ROP tile into Reorder

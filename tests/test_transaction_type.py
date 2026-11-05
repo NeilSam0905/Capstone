@@ -41,11 +41,13 @@ def _db():
                                   is_hvl INTEGER DEFAULT 0, lead_time_days INTEGER, forecast_category TEXT,
                                   unit_price_php REAL);
         CREATE TABLE Fact_Sales (sale_id INTEGER PRIMARY KEY, product_id INTEGER, date_id INTEGER,
-                                 quantity_sold INTEGER, imputation_flag INTEGER DEFAULT 0,
+                                 quantity_sold INTEGER, entry_price_php REAL, imputation_flag INTEGER DEFAULT 0,
                                  tally_date_flag INTEGER DEFAULT 0, transaction_type TEXT DEFAULT 'sale',
                                  is_censored INTEGER, days_of_supply REAL);
         INSERT INTO Dim_Date VALUES (1, '2026-08-01', 0), (2, '2026-08-02', 0), (3, '2026-08-03', 0);
         INSERT INTO Dim_Product VALUES (1, 'Test Tote', 'F', 0, 18, 'Bags', 150);
+        CREATE TABLE Item_Price_Change (change_id INTEGER PRIMARY KEY, product_id INTEGER,
+            effective_from TEXT, price_php REAL);
         INSERT INTO Fact_Sales (product_id, date_id, quantity_sold, tally_date_flag, transaction_type) VALUES
             (1, 1, 5, 1, 'sale'),
             (1, 2, 3, 0, 'SALE'),

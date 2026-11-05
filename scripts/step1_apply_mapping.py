@@ -375,6 +375,8 @@ def carry_over_operational_rows(con, old_ids, new_ids, mapping):
     and {old name: rows} for app rows left pointing at an id that is gone."""
     has_counts = con.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Inventory_Count'").fetchone()
+    has_prices = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Item_Price_Change'").fetchone()
     folded = {name_matcher.name_key(raw): canon for raw, canon in mapping.items()}
     moved, orphans = {}, {}
     for name, old_id in old_ids.items():
@@ -393,6 +395,8 @@ def carry_over_operational_rows(con, old_ids, new_ids, mapping):
         new_id = new_ids[target]
         n_sales = con.execute("UPDATE Fact_Sales SET product_id = ? WHERE product_id = ? AND tally_date_flag = 0",
                               (new_id, old_id)).rowcount
+        if has_prices:              # the price history goes with the item
+            con.execute("UPDATE Item_Price_Change SET product_id = ? WHERE product_id = ?", (new_id, old_id))
         n_counts = 0
         if has_counts:
             for count_id, month, logged in con.execute(
