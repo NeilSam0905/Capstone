@@ -923,6 +923,7 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .pipeline-step__dot--done    { background: var(--ok);   border-color: var(--ok); }
 .pipeline-step__dot--error   { background: var(--crit); border-color: var(--crit); }
 .pipeline-step__dot--skipped { background: var(--warn-bg); border-color: var(--warn); }
+.pipeline-step__dot--warning { background: var(--warn); border-color: var(--warn); }
 .pipeline-step__dot--cancelled { background: var(--warn-bg); border-color: var(--warn); }
 .pipeline-step__dot--running {
   background: var(--info); border-color: var(--info);

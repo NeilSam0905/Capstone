@@ -2697,6 +2697,8 @@ function dur(seconds) {
 
 const STEP_TAG = {
   done:      { cls: 'tag--ok',   label: 'done' },
+  // finished and wrote its results, but a check it reports fell short
+  warning:   { cls: 'tag--warn', label: 'done, check' },
   error:     { cls: 'tag--crit', label: 'failed' },
   skipped:   { cls: 'tag--warn', label: 'skipped' },
   running:   { cls: 'tag--info', label: 'running' },
@@ -2828,7 +2830,7 @@ function FullPipelineRun({ onChanged, attention = false }) {
       setPipelineError(null);
       // Refresh the page's other reads (Recent Entries, and the staleness
       // banner, which a completed run is exactly what clears).
-      if (s.status === 'done') onChanged?.();
+      if (s.status === 'done' || s.status === 'warning') onChanged?.();
     } catch (err) {
       setPipelineError(err.message || 'Lost connection to the backend while checking the update.');
     }
@@ -2880,10 +2882,11 @@ function FullPipelineRun({ onChanged, attention = false }) {
   // Only steps that got through count: done, or an optional step skipped on
   // purpose. A failed or stopped step does not, so an update that fails on its
   // last step reads 13 of 14 (93%), never a finished-looking 100%.
-  const completed = scheduled.filter(s => ['done', 'skipped'].includes(s.status)).length;
+  const completed = scheduled.filter(s => ['done', 'warning', 'skipped'].includes(s.status)).length;
   const current = steps.find(s => s.status === 'running');
   const pct = total ? Math.round((completed / total) * 100) : 0;
   const failures = steps.filter(s => s.status === 'error' && s.error);
+  const warnings = steps.filter(s => s.status === 'warning' && s.error);
   const skipped = steps.filter(s => s.status === 'skipped' && s.error);
   // The backend streams each step's stdout line by line (backend/pipeline.py
   // runs the scripts with `python -u`), so this is a live tail, not a
@@ -2967,6 +2970,11 @@ function FullPipelineRun({ onChanged, attention = false }) {
               <Icon name="check" size={14} /> Done. The dashboard is up to date.
             </span>
           )}
+          {finished === 'warning' && (
+            <span style={{ color: 'var(--warn)', fontWeight: 700, fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Icon name="alert" size={14} /> Done. The dashboard is up to date, with one check to note. See below.
+            </span>
+          )}
           {finished === 'error' && (
             <span style={{ color: 'var(--crit)', fontWeight: 700, fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}>
               <Icon name="xCircle" size={14} /> The update stopped on an error. See below.
@@ -2982,6 +2990,13 @@ function FullPipelineRun({ onChanged, attention = false }) {
         <Banner tone="warn" icon="alert" style={{ marginTop: 12 }} onClose={() => closeNotice('failures')}
                 title="The update stopped here.">
           {failures.map(s => <StepProblem key={s.id} step={s} />)}
+        </Banner>
+      )}
+
+      {warnings.length > 0 && !closedNotices.warnings && (
+        <Banner tone="warn" icon="alert" style={{ marginTop: 12 }} onClose={() => closeNotice('warnings')}
+                title="The update finished. One check did not pass.">
+          {warnings.map(s => <StepProblem key={s.id} step={s} />)}
         </Banner>
       )}
 
@@ -3003,7 +3018,7 @@ function FullPipelineRun({ onChanged, attention = false }) {
           <span className="run-details__label">Progress</span>
           <span className="progress run-details__bar">
             <span className={'progress__fill'
-                    + (finished === 'done' ? ' progress__fill--done' : '')
+                    + (finished === 'done' || finished === 'warning' ? ' progress__fill--done' : '')
                     + (finished === 'error' ? ' progress__fill--failed' : '')}
                   style={{ width: `${pct}%` }} />
           </span>

@@ -191,6 +191,18 @@ MIN_SALE_DAYS_FOR_RATE = MIN_SALE_DAYS_FOR_SIGMA
 # output, not a MAPE-style accuracy threshold - the two failed for opposite
 # reasons and must not be confused.
 MIN_PRICED_SHARE = 0.78
+PRICED_SHARE_GATE = f"priced share >= {MIN_PRICED_SHARE} (non-degeneracy)"
+
+# Exit code when the priced-share floor above is the ONLY gate that failed and
+# at least one SKU was priced: every number in Result_Prescriptive passed its
+# checks, there are just fewer priced SKUs than the floor expects, because the
+# rest had no sale in the trailing window. Re-running cannot change that, so
+# backend/pipeline.py reads this code as "finished, with a check to report"
+# rather than "stopped on an error". The gate itself is unchanged and still
+# fails, and the code is still non-zero, so a run by hand or in a script still
+# fails. Any other failed gate, or a table that prices nothing at all (the
+# collapse this floor was added to catch), keeps exit code 1.
+EXIT_PRICED_SHARE_SHORT = 3
 
 BUFFER_EMPIRICAL = "empirical_quantile"
 BUFFER_NORMAL_FALLBACK = "normal_z_sigma_fallback"
@@ -1019,13 +1031,33 @@ def main():
           f"scenarios + {n_flagged} flagged)")
     print(f"Dim_Parameters     : {n_params} assumption rows, all provisional")
 
-    rc = run_gates(con)
+    gates = {}
+    rc = run_gates(con, gates)
     con.close()
+    code = gate_exit_code(rc, gates)
+    if code == EXIT_PRICED_SHARE_SHORT:
+        print(f"Only the priced-share floor failed: the reorder points written for the "
+              f"{gates['priced']} priced SKUs passed every other gate "
+              f"(exit {EXIT_PRICED_SHARE_SHORT}).")
+    return code
+
+
+def gate_exit_code(rc, gates):
+    """run_gates()'s result as the script's exit code: 0 if every gate passed,
+    EXIT_PRICED_SHARE_SHORT if the priced-share floor was the only failure and
+    something was priced, otherwise 1."""
+    if rc and gates.get("failed") == [PRICED_SHARE_GATE] and gates.get("priced"):
+        return EXIT_PRICED_SHARE_SHORT
     return rc
 
 
-def run_gates(con):
+def run_gates(con, report=None):
+    """Returns 1 if any gate failed, else 0. `report`, if given, is filled with
+    the failed gate labels (`failed`) and the priced / eligible SKU counts, for
+    main()'s exit code."""
     failures = []
+    if report is not None:
+        report["failed"] = failures
 
     def expect(label, actual, expected):
         ok = actual == expected
@@ -1106,10 +1138,11 @@ def run_gates(con):
 
     # (1) Non-degeneracy. The gate there was no version of before.
     share = n_priced_skus / n_skus if n_skus else 0.0
+    if report is not None:
+        report.update(priced=n_priced_skus, eligible=n_skus)
     print(f"       priced share = {n_priced_skus}/{n_skus} = {share:.4f} "
           f"(floor {MIN_PRICED_SHARE})")
-    expect(f"priced share >= {MIN_PRICED_SHARE} (non-degeneracy)",
-           share >= MIN_PRICED_SHARE, True)
+    expect(PRICED_SHARE_GATE, share >= MIN_PRICED_SHARE, True)
 
     # (2) A flagged SKU must not carry a number. This is the gate that keeps
     # the degeneracy out of the prescription: a zero reorder point reads on

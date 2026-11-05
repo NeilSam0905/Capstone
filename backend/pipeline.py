@@ -168,6 +168,14 @@ STEPS = [
 # lead-time horizon, and step5a is what sets lead times.
 SKIPPABLE = {"step4", "step4d"}
 
+# The exit code with which a step says "my results are written, but a check I
+# report fell short", step by step. Only step5: its priced-share floor
+# (step5_prescriptive.EXIT_PRICED_SHARE_SHORT), when it is the only gate that
+# failed. Such a step is recorded as "warning" and the run as "warning", not
+# "error", so the dashboard reports the check instead of asking for a re-run
+# that cannot change it. Any other non-zero exit is still a failure.
+WARNING_EXIT = {"step5": 3}
+
 _lock = threading.Lock()
 _cancel_requested = threading.Event()
 _current_proc = None  # Popen handle for whichever step is running right now, if any
@@ -305,6 +313,24 @@ def _summarise_error(step_id, script, stderr, returncode, stdout=""):
         return said[-1]
     return "The step stopped due to an error."
 
+
+_PRICED_SHARE = re.compile(r"priced share = (\d+)/(\d+) = [\d.]+ \(floor ([\d.]+)\)")
+
+
+def _summarise_warning(step_id, stdout):
+    """One sentence for a step that finished with a check to report (see
+    WARNING_EXIT), from the figures the step printed."""
+    m = _PRICED_SHARE.search(stdout or "") if step_id == "step5" else None
+    if m:
+        priced, eligible, floor = int(m.group(1)), int(m.group(2)), float(m.group(3))
+        return (f"Reorder points were updated for {priced} of {eligible} items "
+                f"({priced / eligible:.1%}); the check expects at least {floor:.0%}. "
+                f"The other {eligible - priced} had no sale in the last year of records, "
+                f"so there is no recent demand to base a reorder point on. Running the "
+                f"update again will not change this.")
+    return ("This step finished, but a check at its end did not pass. "
+            "See Technical details for the figures.")
+
 # ------------------------------------------------------------ process control
 
 def _kill_tree(proc):
@@ -410,6 +436,7 @@ def _run_step(script, entry, timeout_s):
 
 def _run_all():
     ok_overall = True
+    warned = False
     cancelled = False
 
     # Start from the newest data: restore anything missing or updated in the
@@ -442,12 +469,18 @@ def _run_all():
             cancelled = True
             break
 
-        failed = timed_out or returncode != 0
+        warning = not timed_out and sid in WARNING_EXIT and returncode == WARNING_EXIT[sid]
+        failed = (timed_out or returncode != 0) and not warning
         with _lock:
             entry["duration_s"] = duration
             entry["_started_at"] = None
             entry["output"] = stdout
-            if failed:
+            if warning:
+                entry["error"] = _summarise_warning(sid, stdout)
+                entry["error_detail"] = (stdout or "").strip()[-4000:] or None
+                entry["status"] = "warning"
+                warned = True
+            elif failed:
                 if timed_out:
                     entry["error"] = (
                         f"This step was still running after {int(timeout_s // 60)} minutes, "
@@ -476,7 +509,7 @@ def _run_all():
                 if entry["status"] == "pending":
                     entry["status"] = "cancelled"
         else:
-            _state["status"] = "done" if ok_overall else "error"
+            _state["status"] = "error" if not ok_overall else "warning" if warned else "done"
         _state["finished_at"] = datetime.now().isoformat(timespec="seconds")
         run_id = _state["run_id"]
         status = _state["status"]
@@ -613,7 +646,7 @@ def _finish_run_record(run_id, status, steps):
                 """,
                 (
                     datetime.now().isoformat(timespec="seconds"), status,
-                    sum(1 for s in steps if s["status"] == "done"),
+                    sum(1 for s in steps if s["status"] in ("done", "warning")),
                     sum(1 for s in steps if s["status"] in ("skipped", "deselected")),
                     sum(1 for s in steps if s["status"] == "error"),
                     _max_id(con, "Fact_Sales", "sale_id"),
@@ -667,12 +700,14 @@ def get_staleness(con):
         latest["status"] if latest is not None and latest["status"] in ("cancelled", "error") else None
     )
 
+    # A "warning" run finished and wrote every result (see WARNING_EXIT), so it
+    # counts as completed here.
     last = con.execute(
         """
         SELECT run_id, started_at, finished_at, status, steps_skipped,
                max_sale_id, max_event_id, max_closure_id
           FROM Pipeline_Run
-         WHERE status = 'done' AND finished_at IS NOT NULL
+         WHERE status IN ('done', 'warning') AND finished_at IS NOT NULL
          ORDER BY run_id DESC LIMIT 1
         """
     ).fetchone()

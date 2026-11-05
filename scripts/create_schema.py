@@ -367,7 +367,8 @@ CREATE TABLE IF NOT EXISTS Pipeline_Run (
     run_id            INTEGER PRIMARY KEY,
     started_at        TEXT    NOT NULL,   -- ISO 8601 local time
     finished_at       TEXT,
-    status            TEXT    NOT NULL,   -- running | done | error | cancelled
+    status            TEXT    NOT NULL,   -- running | done | warning | error | cancelled
+                                          -- (warning: finished, a reported check fell short)
     trigger_source    TEXT,               -- 'frontend' (the Tally Interface button)
     steps_ok          INTEGER,            -- steps that completed
     steps_skipped     INTEGER,            -- optional steps that failed (step0 / step4)
