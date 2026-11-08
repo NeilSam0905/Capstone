@@ -135,19 +135,18 @@ export default function Forecast({ filters, setPage }) {
             <div className="filter-field">
               <label className="filter-field__label" htmlFor="fc-category">Category</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <div className="filter">
-                  <select
-                    id="fc-category"
-                    value={activeCategory}
-                    onChange={e => { setCategory(e.target.value); setSelectedId(ALL_ITEMS); }}
-                    style={{ minWidth: 210 }}
-                  >
-                    {categories.map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                  <span className="filter__chev">▾</span>
-                </div>
+                {/* The app's own dropdown, like the Item picker beside it.
+                    Re-picking the category already shown keeps the item:
+                    unlike a native <select>, this reports every pick. */}
+                <SearchSelect
+                  id="fc-category"
+                  value={activeCategory}
+                  onChange={c => { if (c !== activeCategory) { setCategory(c); setSelectedId(ALL_ITEMS); } }}
+                  minWidth={210}
+                  searchable={categories.length > 10}
+                  placeholder="Search categories…"
+                  options={categories.map(c => ({ value: c, label: c }))}
+                />
                 <CategoryContents category={activeCategory} products={products} supplier={filters.supplier} />
               </div>
             </div>

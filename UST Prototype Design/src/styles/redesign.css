@@ -196,16 +196,43 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
    the same height as the selects beside it. margin-left:auto keeps it at the
    right edge once the row has wrapped to full width on narrower screens. */
 .topbar__advisories {
-  height: 34px; white-space: nowrap; flex-shrink: 0; margin-left: auto;
-  display: inline-flex; align-items: center; gap: 7px;
+  height: 40px; padding: 0 16px; white-space: nowrap; flex-shrink: 0; margin-left: auto;
+  display: inline-flex; align-items: center; gap: 9px;
+  font-size: 14px; font-weight: 800;
+}
+/* With advisories waiting: a warm tint and border, so the button stands out
+   from the white filters beside it. */
+.topbar__advisories.has-alerts {
+  background: var(--crit-bg); border-color: var(--crit-line); color: var(--text);
+}
+.topbar__advisories.has-alerts:hover { background: #F9E0DC; }
+.topbar__advisories.has-alerts .topbar__bell { color: var(--crit); }
+/* The bell rings on its own the whole time there are advisories, hovered or
+   not: a swing of about a second, then a short pause, over and over. It
+   swings from its top, as a bell does. */
+.topbar__bell { display: inline-grid; place-items: center; transform-origin: 50% 10%; }
+.topbar__advisories.has-alerts .topbar__bell { animation: bell-ring 1.8s ease-in-out infinite; }
+@keyframes bell-ring {
+  0%   { transform: rotate(0); }
+  8%   { transform: rotate(16deg); }
+  16%  { transform: rotate(-14deg); }
+  24%  { transform: rotate(11deg); }
+  32%  { transform: rotate(-8deg); }
+  40%  { transform: rotate(5deg); }
+  48%  { transform: rotate(-2deg); }
+  56%, 100% { transform: rotate(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .topbar__advisories.has-alerts .topbar__bell { animation: none; }
 }
 /* The count: a solid red circle, so it reads as "needs attention" at a
    glance from anywhere on the page. */
 .topbar__badge {
-  min-width: 19px; height: 19px; padding: 0 6px; border-radius: 999px;
+  min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px;
   display: inline-grid; place-items: center;
-  font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums;
+  font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums;
   color: #fff; background: var(--crit);
+  box-shadow: 0 0 0 2px var(--card);
 }
 
 /* Overview only: a pill floating at the bottom centre of the page area that
@@ -766,7 +793,8 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 /* Narrower windows: the Advisories button keeps its bell and red count but
    drops the word, and the filter glyph goes - the room goes to the selects. */
 @media (max-width: 1080px) {
-  .topbar__advisories > span:not(.topbar__badge) { display: none; }
+  .topbar__advisories > span:not(.topbar__badge):not(.topbar__bell) { display: none; }
+  .topbar__advisories { padding: 0 12px; }
   .topbar__filter-icon { display: none; }
 }
 
@@ -931,7 +959,26 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
    dialog's edge on a phone. */
 .whatif-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .whatif-form .field input, .whatif-form .field select { width: 100%; min-width: 0; box-sizing: border-box; }
+/* Taller than the default dialog, and its body scrolls: the default body
+   clips, which cut the results table off at "Suggested order" with the last
+   rows (short, sales at stake, EOQ) out of reach. */
+.modal-panel.whatif-modal { max-height: 94vh; }
+.whatif-modal .modal-body { overflow-y: auto; overscroll-behavior: contain; }
+/* The row button that opens it: the same pill as the Class tags, in blue so
+   it is not read as a class (those are green, amber and red). A <button>, so
+   the browser's own font and padding are reset to the tag's. */
+.tbl .whatif-btn {
+  font-family: inherit; font-size: 11px; letter-spacing: .06em; padding: 6px 14px; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
+  transition: background .12s, border-color .12s, box-shadow .12s;
+}
+.tbl .whatif-btn:active { box-shadow: none; transform: translateY(1px); }
+.tbl .whatif-btn:hover {
+  background: var(--info-line); border-color: var(--info); box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+}
+.tbl .whatif-btn:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
 .whatif-results { margin-top: 18px; }
+.whatif-tbl tbody td { padding-top: 9px; padding-bottom: 9px; }
 .whatif-tbl td.strong { white-space: normal; }
 .whatif-changed { font-weight: 800; color: var(--warn); }
 .whatif-notes { margin: 10px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-2); line-height: 1.5; }
@@ -1154,6 +1201,23 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .filter-row .filter-field > select { width: 100%; }
 .filter-row .filter-field--grow { flex: 1 1 220px; min-width: 170px; }
 .filter-row .filter-field > input[type="search"] { flex: none; min-width: 0; }
+/* The app's own dropdown (SearchSelect) in the tray: the same 34px white box
+   as the search beside it. */
+.filter-row .sselect { width: 100%; }
+.filter-row .sselect__btn {
+  height: 34px; padding: 6px 28px 6px 10px; background: var(--card);
+  font-weight: 500; color: var(--text);
+  box-shadow: 0 1px 1px rgba(22,20,15,.03); transition: border-color .12s, box-shadow .12s;
+}
+.filter-row .sselect__btn:hover { border-color: #CFCABC; }
+.filter-row .sselect__btn[aria-expanded="true"],
+.filter-row .sselect__btn:focus-visible {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.filter-row .sselect__panel { width: max-content; min-width: 100%; max-width: min(360px, calc(100vw - 32px)); }
+/* Long supplier names wrap onto a second line rather than ending in "…". */
+.filter-row .sselect__opt { white-space: normal; overflow: visible; line-height: 1.35; }
+.filter-row__clear { height: 34px; align-self: flex-end; }
 
 /* Filtered count in a card header: a figure, not a sentence. */
 .count-pill {
@@ -1626,6 +1690,34 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .sselect--field .sselect__btn.is-err { border-color: var(--crit); }
 .sselect--field .sselect__panel { width: 100%; }
 .sselect--field .sselect__list { max-height: 300px; }
+
+/* An icon before the value (the topbar's Date Range calendar). */
+.sselect__btn--icon { padding-left: 30px; }
+.sselect__icon {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  display: grid; place-items: center; color: var(--muted); pointer-events: none;
+}
+
+/* Topbar filters (FilterBar.jsx). The control fills its .filter-field, which
+   the topbar sizes. The open list is at least as wide as the control, wide
+   enough for its longest option, and lines up with the control's right edge:
+   the filters sit at the right of the window, so a list hanging right ran off
+   the screen past the Category filter. */
+.topbar__right .sselect { width: 100%; }
+.topbar__right .sselect__btn:hover { border-color: #CFCABC; }
+.topbar__right .sselect__btn[aria-expanded="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+.topbar__right .sselect__panel {
+  left: auto; right: 0; z-index: 50;
+  width: max-content; min-width: 100%; max-width: min(380px, calc(100vw - 32px));
+}
+.topbar__right .sselect__opt { white-space: normal; overflow: visible; }
+/* On a phone the filters wrap to the left edge, so hang the list right again. */
+@media (max-width: 640px) {
+  .topbar__right .sselect__panel { left: 0; right: auto; }
+}
+/* No room to the right (SearchSelect measures it): open leftwards from the
+   control's right edge. After the topbar's phone rule, so it wins there too. */
+.sselect .sselect__panel.sselect__panel--end { left: auto; right: 0; }
 
 /* ----------------------------------------------- closure list (Tally page)
    Each row carries its origin, because there are two records of a closure

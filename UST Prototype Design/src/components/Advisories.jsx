@@ -241,9 +241,11 @@ function useAdvisoryCount() {
 export function AdvisoriesButton({ onClick }) {
   const { count, title } = useAdvisoryCount();
   return (
-    <button type="button" className="btn btn--ghost btn--sm topbar__advisories" onClick={onClick} title={title}
-            aria-label={`Advisories - ${title}`}>
-      <Icon name="bell" size={14} />
+    <button type="button" className={'btn btn--ghost topbar__advisories' + (count > 0 ? ' has-alerts' : '')}
+            onClick={onClick} title={title} aria-label={`Advisories - ${title}`}>
+      {/* The bell rings only while there is something to read: a bell that
+          moves with nothing behind it teaches people to ignore it. */}
+      <span className="topbar__bell"><Icon name="bell" size={17} /></span>
       <span>Advisories</span>
       {count > 0 && <span className="topbar__badge">{num(count)}</span>}
     </button>

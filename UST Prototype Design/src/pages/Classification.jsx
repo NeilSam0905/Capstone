@@ -100,7 +100,6 @@ export default function Classification({ filters }) {
     return c;
   }, [products]);
   const hvlCount = useMemo(() => products.filter(p => p.is_hvl).length, [products]);
-  const withSales = useMemo(() => products.filter(p => p.total_units > 0).length, [products]);
   const total = products.length || 1;
 
   // Ranked on units rather than revenue because only part of the catalogue
@@ -187,7 +186,6 @@ export default function Classification({ filters }) {
         <KPICard
           label="Total Products"
           value={num(products.length)}
-          sub={`${num(withSales)} with recorded sales · ${num(products.length - withSales)} without`}
           icon="box"
         />
         <KPICard label="Fast-Moving" value={fsnCounts.F} tone="ok" icon="zap" accent

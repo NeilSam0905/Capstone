@@ -4,12 +4,26 @@ import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
 import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
+import InfoTip from '../components/InfoTip';
+import SearchSelect from '../components/SearchSelect';
 import Pending, { Loading, PendingValue } from '../components/Pending';
 import ReorderWhatIf from '../components/ReorderWhatIf';
 import { num, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
 
 /** Fast, Slow, then Non-Moving: the order the recommendations table opens in. */
 const CLASS_ORDER = { F: 0, S: 1, N: 2 };
+
+const ALL_SUPPLIERS = 'All Suppliers';
+
+/** The Status filter of the recommendations table. "Approaching" is the
+ *  backend's own flag (stock above the reorder point by at most 20%). */
+const STATUS = {
+  All:         { label: 'All Statuses',    test: () => true },
+  reorder:     { label: 'Reorder now',     test: i => !!i.needs_reorder },
+  approaching: { label: 'Approaching ROP', test: i => !!i.approaching_rop },
+  ok:          { label: 'Stock is fine',   test: i => i.current_stock != null && !i.needs_reorder && !i.approaching_rop },
+  uncounted:   { label: 'No stock count',  test: i => i.current_stock == null },
+};
 
 export default function Reorder({ filters }) {
   const { data: stock, loading } = useData(() => getStockPosition(filters), [filters], null,
@@ -35,6 +49,25 @@ export default function Reorder({ filters }) {
   const byClass = [...alertItems].sort(
     (a, b) => (CLASS_ORDER[a.fsn_class] ?? 9) - (CLASS_ORDER[b.fsn_class] ?? 9));
   const summary = alerts?.available ? alerts.data.summary : null;
+
+  // Search and filters for the recommendations table. They narrow what the
+  // table shows only: the priority list, the cards and the totals above
+  // still count every item.
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState('All');
+  const [fsn, setFsn] = useState('All');
+  const [supplier, setSupplier] = useState(ALL_SUPPLIERS);
+  const suppliers = [...new Set(alertItems.map(i => i.supplier_name).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  const needle = q.trim().toLowerCase();
+  const shown = byClass.filter(i =>
+    (!needle || i.item_name?.toLowerCase().includes(needle)
+      || i.supplier_name?.toLowerCase().includes(needle))
+    && STATUS[status].test(i)
+    && (fsn === 'All' || i.fsn_class === fsn)
+    && (supplier === ALL_SUPPLIERS || i.supplier_name === supplier));
+  const filtering = needle !== '' || status !== 'All' || fsn !== 'All' || supplier !== ALL_SUPPLIERS;
+  const clearFilters = () => { setQ(''); setStatus('All'); setFsn('All'); setSupplier(ALL_SUPPLIERS); };
 
   const columns = [
     { key: 'item_name',     label: 'Product Name', strong: true, truncate: true, width: '26%' },
@@ -94,7 +127,7 @@ export default function Reorder({ filters }) {
       // An item with no reorder point (no sale in a year) has nothing to test.
       key: 'what_if', label: '', width: '10%', sortable: false,
       render: (_v, row) => row.policy_state === 'priced'
-        ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => setWhatIf(row)}
+        ? <button type="button" className="tag tag--info whatif-btn" onClick={() => setWhatIf(row)}
                   title="Try a busy period, a bulk order, a new lead time or new costs for this item">
             What if
           </button>
@@ -144,10 +177,53 @@ export default function Reorder({ filters }) {
       {alerts?.available && (
         <div className="card card__pad">
           <div className="card-h">
-            <span className="section-h">Reorder Recommendations</span>
-            <span className="hint">What if: try a busy period, a bulk order, a new lead time or new costs for one item</span>
+            <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              Reorder Recommendations
+              <span className="count-pill">
+                {shown.length !== byClass.length
+                  ? <><b>{num(shown.length)}</b> of {num(byClass.length)}</>
+                  : <><b>{num(byClass.length)}</b> items</>}
+              </span>
+            </span>
+            <WhatIfGuide />
           </div>
-          <DataTable columns={alertColumns} data={byClass} minWidth={1100} />
+
+          <div className="filter-row">
+            <div className="filter-field filter-field--grow">
+              <label className="filter-field__label" htmlFor="ro-search">Search</label>
+              <input id="ro-search" type="search" value={q} placeholder="Item or supplier…"
+                     onChange={e => setQ(e.target.value)} />
+            </div>
+            <div className="filter-field">
+              <label className="filter-field__label" htmlFor="ro-status">Status</label>
+              <SearchSelect id="ro-status" value={status} onChange={setStatus} minWidth={170}
+                            searchable={false}
+                            options={Object.entries(STATUS).map(([value, s]) => ({ value, label: s.label }))} />
+            </div>
+            <div className="filter-field">
+              <label className="filter-field__label" htmlFor="ro-class">Class</label>
+              <SearchSelect id="ro-class" value={fsn} onChange={setFsn} minWidth={150} searchable={false}
+                            options={[
+                              { value: 'All', label: 'All Classes' },
+                              ...['F', 'S', 'N'].map(k => ({ value: k, label: FSN_LABEL[k] })),
+                            ]} />
+            </div>
+            <div className="filter-field">
+              <label className="filter-field__label" htmlFor="ro-supplier">Supplier</label>
+              <SearchSelect id="ro-supplier" value={supplier} onChange={setSupplier} minWidth={220}
+                            searchable={suppliers.length > 10} placeholder="Search suppliers…"
+                            options={[ALL_SUPPLIERS, ...suppliers].map(s => ({ value: s, label: s }))} />
+            </div>
+            {filtering && (
+              <button type="button" className="btn btn--ghost btn--sm filter-row__clear" onClick={clearFilters}>
+                Clear
+              </button>
+            )}
+          </div>
+
+          {shown.length === 0
+            ? <div className="empty">No item matches those filters.</div>
+            : <DataTable columns={alertColumns} data={shown} minWidth={1100} />}
         </div>
       )}
       <ReorderWhatIf item={whatIf} onClose={() => setWhatIf(null)} />
@@ -165,6 +241,37 @@ export default function Reorder({ filters }) {
           : <DataTable columns={columns} data={items} minWidth={900} />}
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------- what-if */
+
+/** The Recommendations card's guide to the What if button: a gold pill that
+ *  opens a short, plain explanation, in place of a one-line hint that listed
+ *  four things to try without saying what any of them would show. */
+function WhatIfGuide() {
+  const rows = [
+    ['gold', 'Busy period', 'Enrollment or the start of a term, when sales run above a regular day. See how much more stock to keep.'],
+    ['info', 'Bulk order', 'An office or organization buys many at once. See whether it leaves the shelf short.'],
+    ['warn', 'Lead time', 'The supplier takes more (or fewer) days to deliver. See how the reorder point moves.'],
+    ['ok', 'Costs', 'A different cost per order or cost of keeping stock. This changes the EOQ only.'],
+  ];
+  return (
+    <InfoTip text="What if?" label="How to use What if" width={440}>
+      <div className="infotip__h">Test a change before you order</div>
+      <p>
+        Every item in this table has a <b>What if</b> button. It opens that item so you can change one
+        assumption and compare the figures <b>now</b> with the figures <b>if</b> it happens.
+      </p>
+      <div className="explain" style={{ marginTop: 10 }}>
+        {rows.map(([tone, name, text]) => (
+          <div className="explain__row" key={name}>
+            <span className={`tag tag--${tone}`}>{name}</span>
+            <p>{text}</p>
+          </div>
+        ))}
+      </div>
+    </InfoTip>
   );
 }
 

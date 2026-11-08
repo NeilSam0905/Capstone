@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo, useId } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useId } from 'react';
+import Icon from './Icon';
 
 /**
  * A closed dropdown (pick one of `options`, nothing new) whose open panel has
@@ -17,6 +18,7 @@ import { useState, useRef, useEffect, useMemo, useId } from 'react';
  * is picked. `variant`
  * "field" sizes it like the `.field` inputs of a form (the tally cards)
  * instead of like a topbar filter; `invalid` gives it the error border.
+ * `icon` names an Icon shown before the value (the topbar's Date Range).
  *
  * The panel always opens BELOW the control. A native <select> opens wherever
  * the browser finds room, which near the bottom of the screen meant a list
@@ -24,7 +26,7 @@ import { useState, useRef, useEffect, useMemo, useId } from 'react';
  */
 export default function SearchSelect({
   id, value, options, onChange, minWidth = 200, placeholder = 'Search…',
-  emptyLabel = '', variant, invalid = false, searchable = true,
+  emptyLabel = '', variant, invalid = false, searchable = true, icon,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -32,6 +34,7 @@ export default function SearchSelect({
   const wrap = useRef(null);
   const input = useRef(null);
   const list = useRef(null);
+  const panel = useRef(null);
   const listId = `${useId()}-list`;
 
   const selected = options.find(o => o.value === value);
@@ -61,6 +64,24 @@ export default function SearchSelect({
     setActive(Math.max(0, options.findIndex(o => o.value === value)));
     setOpen(true);
   }
+
+  // A list wider than its control hangs to the right, and near the right edge
+  // of the page that ran it under the page's edge, cut off (the Reorder
+  // table's Supplier filter). Measured once it renders: when it would pass the
+  // nearest area that clips it, it opens leftwards from the control instead.
+  useLayoutEffect(() => {
+    const p = panel.current;
+    if (!open || !p) return;
+    p.classList.remove('sselect__panel--end');
+    let limit = window.innerWidth;
+    for (let n = wrap.current?.parentElement; n; n = n.parentElement) {
+      if (getComputedStyle(n).overflowX !== 'visible') {
+        limit = Math.min(limit, n.getBoundingClientRect().right);
+        break;
+      }
+    }
+    if (p.getBoundingClientRect().right > limit - 8) p.classList.add('sselect__panel--end');
+  }, [open]);
 
   // Keep the highlighted row in view while arrowing through the list.
   useEffect(() => {
@@ -99,18 +120,20 @@ export default function SearchSelect({
       <button
         id={id}
         type="button"
-        className={`sselect__btn${invalid ? ' is-err' : ''}${selected ? '' : ' is-empty'}`}
+        className={`sselect__btn${invalid ? ' is-err' : ''}${selected ? '' : ' is-empty'}`
+          + (icon ? ' sselect__btn--icon' : '')}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => (open ? close() : openPanel())}
         onKeyDown={e => { if (e.key === 'ArrowDown' && !open) { e.preventDefault(); openPanel(); } }}
       >
+        {icon && <span className="sselect__icon"><Icon name={icon} size={13} /></span>}
         <span className="sselect__value">{selected ? selected.label : emptyLabel}</span>
         <span className="filter__chev">▾</span>
       </button>
 
       {open && (
-        <div className={`sselect__panel${searchable ? '' : ' sselect__panel--plain'}`}>
+        <div ref={panel} className={`sselect__panel${searchable ? '' : ' sselect__panel--plain'}`}>
           {searchable && (
             <input
               ref={input}

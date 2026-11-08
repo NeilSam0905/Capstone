@@ -25,6 +25,9 @@ export default function Modal({
   // bottom edge (Add New Item). The default body clips, because a long list
   // dialog scrolls inside .modal-grow instead.
   overflowVisible = false,
+  // An extra class on the panel, for one dialog's own sizing (the Reorder
+  // what-if is taller and scrolls its body).
+  className = '',
 }) {
   const panel = useRef(null);
 
@@ -62,7 +65,7 @@ export default function Modal({
   return createPortal(
     <div className="modal-scrim" onMouseDown={e => { if (e.target === e.currentTarget) onClose?.(); }}>
       <div
-        className="modal-panel"
+        className={`modal-panel${className ? ` ${className}` : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

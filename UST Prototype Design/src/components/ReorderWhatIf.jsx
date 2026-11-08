@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Modal from './Modal';
+import SearchSelect from './SearchSelect';
 import { getReorderWhatIf } from '../services/dataService';
 import { num, peso, FSN_LABEL } from '../lib/format';
 
@@ -60,7 +61,7 @@ export default function ReorderWhatIf({ item, onClose }) {
   const low = item.scenarios?.low_admin_cost ?? {};
 
   return (
-    <Modal open title="What if…" width={780} onClose={onClose}
+    <Modal open title="Test a change" width={780} onClose={onClose} className="whatif-modal"
            subtitle={`${item.item_name} · ${FSN_LABEL[item.fsn_class] || item.fsn_class}`
              + ` · sells ${(item.avg_daily_demand ?? 0).toFixed(2)} a day`
              + (result?.price_php != null ? ` · ${pesoExact(result.price_php)} each` : '')}>
@@ -72,17 +73,21 @@ export default function ReorderWhatIf({ item, onClose }) {
       <div className="form-grid whatif-form">
         <div className="field">
           <label htmlFor="wi-scenario">What is coming</label>
-          <select id="wi-scenario" value={form.scenario} onChange={e => set('scenario', e.target.value)}
-                  className={errors.scenario ? 'is-err' : ''}>
-            <option value="none">Nothing extra</option>
-            {['enrollment', 'term_start'].map(k => (
-              <option key={k} value={k}>
-                {presets[k]?.label ?? (k === 'enrollment' ? 'Enrollment days' : 'Start of the first term')}
-                {presets[k]?.lift != null ? ` · ${presets[k].lift.toFixed(2)}× a regular day` : ''}
-              </option>
-            ))}
-            <option value="bulk">A bulk or organization order</option>
-          </select>
+          {/* The app's own dropdown (as on the tally cards), not a native
+              <select>, so it matches the fields around it and opens below. */}
+          <SearchSelect id="wi-scenario" variant="field" minWidth={0} searchable={false}
+                        value={form.scenario} onChange={v => set('scenario', v)}
+                        invalid={!!errors.scenario}
+                        options={[
+                          { value: 'none', label: 'Nothing extra' },
+                          ...BUSY.map(k => ({
+                            value: k,
+                            label: (presets[k]?.label
+                              ?? (k === 'enrollment' ? 'Enrollment days' : 'Start of the first term'))
+                              + (presets[k]?.lift != null ? ` · ${presets[k].lift.toFixed(2)}× a regular day` : ''),
+                          })),
+                          { value: 'bulk', label: 'A bulk or organization order' },
+                        ]} />
           {errors.scenario && <span className="field__err">{errors.scenario}</span>}
         </div>
 
@@ -173,7 +178,7 @@ function ResultTable({ cur, next }) {
       <table className="tbl whatif-tbl">
         <thead>
           <tr>
-            <th />
+            <th>Figure</th>
             <th className="num">Now</th>
             <th className="num">What if</th>
           </tr>

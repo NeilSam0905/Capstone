@@ -4,6 +4,7 @@ import useData from '../hooks/useData';
 import { shortMonth, longMonth } from '../lib/format';
 import Icon from './Icon';
 import Modal from './Modal';
+import SearchSelect from './SearchSelect';
 
 // Shortest first. "This Month" is the most recent month carrying sales,
 // which is not always the current calendar one — see catalog.range_cutoff.
@@ -83,8 +84,8 @@ export default function FilterBar({
                     options={allowCustom ? [...DATE_RANGES, CUSTOM_RANGE] : DATE_RANGES}
                     labels={{ [CUSTOM_RANGE]: customLabel }} />
           )}
-          {/* Re-picking the option already selected fires no change event,
-              so an active custom range gets its own way back into the picker. */}
+          {/* Re-picking "Custom Range" in the list also reopens the picker,
+              but a visible button is easier to find than a repeated pick. */}
           {isCustom && (
             <button type="button" className="btn btn--ghost btn--sm topbar__edit-range"
                     onClick={() => setRangeOpen(true)} title="Change the custom date range">
@@ -121,20 +122,20 @@ function CustomRangeModal({ months, initialFrom, initialTo, onApply, onClose }) 
   const count = months.filter(m => m >= from && m <= to).length;
 
   return (
-    <Modal open onClose={onClose} width={440} title="Custom Date Range"
+    <Modal open onClose={onClose} width={440} title="Custom Date Range" overflowVisible
            subtitle="Whole months, from the first to the last one inclusive.">
       <div className="form-grid">
         <div className="field">
           <label htmlFor={fromId}>From</label>
-          <select id={fromId} value={from ?? ''} onChange={e => setFrom(e.target.value)}>
-            {months.filter(m => !to || m <= to).map(m => <option key={m} value={m}>{longMonth(m)}</option>)}
-          </select>
+          <SearchSelect id={fromId} variant="field" minWidth={0} searchable={false}
+                        value={from ?? ''} onChange={setFrom}
+                        options={months.filter(m => !to || m <= to).map(m => ({ value: m, label: longMonth(m) }))} />
         </div>
         <div className="field">
           <label htmlFor={toId}>To</label>
-          <select id={toId} value={to ?? ''} onChange={e => setTo(e.target.value)}>
-            {months.filter(m => !from || m >= from).map(m => <option key={m} value={m}>{longMonth(m)}</option>)}
-          </select>
+          <SearchSelect id={toId} variant="field" minWidth={0} searchable={false}
+                        value={to ?? ''} onChange={setTo}
+                        options={months.filter(m => !from || m >= from).map(m => ({ value: m, label: longMonth(m) }))} />
         </div>
       </div>
       <div className="hint" style={{ marginTop: 10 }}>
@@ -151,36 +152,32 @@ function CustomRangeModal({ months, initialFrom, initialTo, onApply, onClose }) 
 }
 
 /* The label sits above the control rather than inside it as a placeholder:
-   a select shows its selected value, so "All" on its own never says all of
-   WHAT. The <label> is bound to the select by id, so it is also what a
-   screen reader announces. */
+   a dropdown shows its selected value, so "All" on its own never says all of
+   WHAT. The <label> is bound to the dropdown's button by id, so it is also
+   what a screen reader announces.
+
+   The app's own dropdown (SearchSelect), not a native <select>: the browser's
+   list ignored the app's styling (a bright blue highlight, square corners)
+   and looked like no other dropdown in the app. A list longer than
+   SEARCH_FROM options gets a search box - the supplier list runs to a
+   dozen and a half names. */
+const SEARCH_FROM = 10;
+
 function Filter({ value, onChange, options, icon, label, labels = {}, wide = false }) {
   const id = useId();
 
   // A selected value the list does not carry — a supplier held over from a
   // page with a wider list, or a list that has not loaded yet — would leave
-  // the select displaying something other than the filter actually in force.
+  // the dropdown displaying something other than the filter actually in force.
   const opts = value != null && !options.includes(value) ? [value, ...options] : options;
 
   return (
     <div className={'filter-field' + (wide ? ' filter-field--wide' : '')}>
       <label className="filter-field__label" htmlFor={id}>{label}</label>
-      <div className="filter">
-        {icon && (
-          <span style={{ position: 'absolute', left: 10, color: 'var(--muted)', pointerEvents: 'none' }}>
-            <Icon name={icon} size={13} />
-          </span>
-        )}
-        <select
-          id={id}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          style={icon ? { paddingLeft: 30 } : undefined}
-        >
-          {opts.map(o => <option key={o} value={o}>{labels[o] ?? o}</option>)}
-        </select>
-        <span className="filter__chev">▾</span>
-      </div>
+      <SearchSelect id={id} value={value} onChange={onChange} minWidth={0} icon={icon}
+                    searchable={opts.length > SEARCH_FROM}
+                    placeholder={`Search ${label.toLowerCase()}…`}
+                    options={opts.map(o => ({ value: o, label: labels[o] ?? o }))} />
     </div>
   );
 }

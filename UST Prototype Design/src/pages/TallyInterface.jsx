@@ -79,6 +79,18 @@ function ItemPicker({ items, value, onChange, invalid }) {
   );
 }
 
+/** The Category control of both tally cards: the app's own dropdown, like
+ *  the Item picker under it, so its list always opens below the field (a
+ *  native <select> here flew up over the notice at the top of the page).
+ *  Re-picking the category already shown changes nothing. */
+function CategoryPicker({ categories, value, onChange }) {
+  const options = [ALL_CATEGORIES, ...categories].map(c => ({ value: c, label: c }));
+  return (
+    <SearchSelect variant="field" minWidth={0} searchable={false} value={value} options={options}
+                  onChange={c => { if (c !== value) onChange(c); }} />
+  );
+}
+
 /** Import a .csv/.xlsx and report what happened to every row.
  *
  *  The server archives the upload into rawdata/ and returns counts plus a
@@ -470,15 +482,14 @@ function NamesToReview({ data, products, onChanged }) {
   return (
     <details className="card card__pad card--names-review tone-warn collapse collapse--card">
       <summary>
-        <CardTitle icon="tag">
+        <CardTitle icon="search">
           Names to review
           {names.length > 0 && <span className="tag tag--warn">{num(names.length)}</span>}
         </CardTitle>
-        <span className="hint">
-          {names.length > 0
-            ? `${num(names.length)} name${names.length === 1 ? '' : 's'} to settle`
-            : `${num(awaiting.length)} settled, waiting for the next update`}
-        </span>
+        {/* The count is already the tag beside the title. */}
+        {names.length === 0 && (
+          <span className="hint">{num(awaiting.length)} settled, waiting for the next update</span>
+        )}
       </summary>
 
       {names.length > 0 && (
@@ -732,10 +743,7 @@ function SalesTally({ products, onSaved, recent, recentLoading }) {
 
         <Field label="Category" hint={category === ALL_CATEGORIES ? undefined
                  : `${visible.length} item${visible.length === 1 ? '' : 's'} in this category`}>
-          <select value={category} onChange={e => setCategoryAndPrune(e.target.value)}>
-            <option value={ALL_CATEGORIES}>{ALL_CATEGORIES}</option>
-            {categories.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <CategoryPicker categories={categories} value={category} onChange={setCategoryAndPrune} />
         </Field>
 
         <div className="col-2">
@@ -1057,10 +1065,7 @@ function MonthlyInventoryCount({ products, onSaved }) {
 
         <Field label="Category" hint={category === ALL_CATEGORIES ? undefined
                  : `${visible.length} item${visible.length === 1 ? '' : 's'} in this category`}>
-          <select value={category} onChange={e => setCategoryAndPrune(e.target.value)}>
-            <option value={ALL_CATEGORIES}>{ALL_CATEGORIES}</option>
-            {categories.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <CategoryPicker categories={categories} value={category} onChange={setCategoryAndPrune} />
         </Field>
 
         <div className="col-2">
