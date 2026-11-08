@@ -23,6 +23,7 @@ addresses (auth.allowed_origins).
 
 Every /api route except /api/auth/* needs a signed-in session (auth.py).
 """
+import copy
 import csv
 import io
 import math
@@ -44,6 +45,7 @@ import pipeline
 import summary_report
 import validation
 import whatif
+import reorder_settings
 import names                  # after pipeline: it needs scripts/ on sys.path
 import order_types            # scripts/order_types.py
 import calendar_extent        # scripts/calendar_extent.py
@@ -1416,11 +1418,163 @@ def get_reorder_whatif(product_id):
                                   REVIEW_PERIOD_DAYS))
 
 
-def _reorder_items(c):
+@app.get("/api/reorder/method")
+def get_reorder_method():
+    """How the Reorder figures are worked out, for the page's explanation:
+    the assumptions step5 recorded in Dim_Parameters, how many items each
+    lead time and each kind of safety stock covers (Result_Prescriptive), and
+    how many items use saved settings. Read live, so the explanation follows
+    every pipeline run instead of quoting numbers that can go stale."""
+    c = con()
+    params = {r["parameter_name"]: r["value"] for r in dbmod.rows(
+        c, "SELECT parameter_name, value FROM Dim_Parameters")}
+    if not params:
+        return jsonify({"available": False})
+    lead_times = dbmod.rows(c, """
+        SELECT lead_time_days AS days, lead_time_category AS category,
+               COUNT(DISTINCT product_id) AS items
+          FROM Result_Prescriptive WHERE lead_time_days IS NOT NULL
+         GROUP BY 1, 2 ORDER BY 1, 3 DESC""")
+    buffers = {r["source"] or "none": r["items"] for r in dbmod.rows(c, """
+        SELECT buffer_source AS source, COUNT(DISTINCT product_id) AS items
+          FROM Result_Prescriptive GROUP BY 1""")}
+    names = {r["item_name"] for r in dbmod.rows(c, "SELECT item_name FROM Dim_Product")}
+    import step5a_set_lead_times as step5a
+    p = params.get
+    return jsonify({
+        "available": True,
+        "review_period_days": REVIEW_PERIOD_DAYS,
+        "min_deliveries": step5a.MIN_DELIVERIES,
+        "holding_rate": p("assumption.holding_cost_annual_rate"),
+        "inventory_value_low": p("assumption.inventory_value_php_low"),
+        "inventory_value_mid": p("assumption.inventory_value_php_mid"),
+        "inventory_value_high": p("assumption.inventory_value_php_high"),
+        "units_on_hand": p("assumption.units_on_hand_estimate"),
+        "holding_cost": p("derived.holding_cost_php_per_unit_year"),
+        "ordering_cost_low": p("assumption.ordering_cost_low_admin_php"),
+        "ordering_cost_high": p("assumption.ordering_cost_high_goods_value_php"),
+        "buffer_quantile": p("service.buffer_quantile"),
+        "z": {"F": p("service.z_value.F"), "S": p("service.z_value.S")},
+        "lead_times": lead_times,
+        "buffers": {
+            "measured": buffers.get("empirical_quantile", 0),
+            "fallback": buffers.get("normal_z_sigma_fallback", 0),
+            "not_stockable": buffers.get("no_buffer_not_stockable", 0),
+            "none": buffers.get("none", 0),
+        },
+        "adjusted": sum(1 for n in reorder_settings.load(c) if n in names),
+    })
+
+
+def _settings_item(c, product_id):
+    """(item, None) for a priced item's pipeline figures, settings left out,
+    or (None, refusal response)."""
+    items = _reorder_items(c, apply_settings=False)
+    if items is None:
+        return None, (jsonify({"ok": False, "error": "Reorder points have not been computed yet."}), 404)
+    item = next((i for i in items if i["product_id"] == product_id), None)
+    if item is None:
+        return None, (jsonify({"ok": False, "error": "That item has no reorder calculation."}), 404)
+    if item["policy_state"] != POLICY_STATE_PRICED:
+        return None, (jsonify({"ok": False,
+                               "error": item.get("policy_note") or INSUFFICIENT_DATA_NOTE}), 409)
+    return item, None
+
+
+@app.get("/api/reorder/<int:product_id>/settings")
+def get_reorder_settings(product_id):
+    """An item's saved reorder settings, its calculated figures, and a preview
+    of the figures with the settings in the query string (lead_time_days,
+    safety_stock, ordering_cost_php, holding_cost_php; blank = calculated).
+    Read-only: the form shows the preview before anything is saved."""
+    c = con()
+    item, refused = _settings_item(c, product_id)
+    if refused:
+        return refused
+    values, errors = reorder_settings.parse(request.args)
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+    saved = reorder_settings.load(c).get(item["item_name"])
+    calc = reorder_settings.figures(item, REVIEW_PERIOD_DAYS)
+    preview = (reorder_settings.figures(reorder_settings.apply(copy.deepcopy(item), values),
+                                        REVIEW_PERIOD_DAYS)
+               if reorder_settings.any_set(values) else calc)
+    return jsonify({
+        "ok": True, "product_id": product_id, "item_name": item["item_name"],
+        "avg_daily_demand": item["avg_daily_demand"], "annual_demand": item["annual_demand"],
+        "review_period_days": REVIEW_PERIOD_DAYS,
+        "saved": None if saved is None else {k: saved.get(k) for k in
+                                             (*reorder_settings.FIELDS, "note", "changed_by", "changed_at")},
+        "calculated": calc, "preview": preview,
+    })
+
+
+@app.put("/api/reorder/<int:product_id>/settings")
+def save_reorder_settings(product_id):
+    """Save an item's reorder settings: {lead_time_days, safety_stock,
+    ordering_cost_php, holding_cost_php, note}; blank keeps the calculated
+    figure. Replaces any saved before. The admin's, as it changes what the
+    store is told to order."""
+    payload = request.get_json(silent=True) or {}
+    c = con()
+    item, refused = _settings_item(c, product_id)
+    if refused:
+        return refused
+    values, errors = reorder_settings.parse(payload)
+    if not errors and not reorder_settings.any_set(values):
+        return jsonify({"ok": False, "error": "Change at least one setting, or use Back to calculated "
+                                              "to clear them."}), 400
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+    gate = _needs_admin("Changing an item's reorder settings")
+    if gate:
+        return gate
+    c.execute(dbmod.REORDER_SETTING_DDL)          # in case startup could not create it
+    c.execute("""
+        INSERT INTO Reorder_Setting (item_name, lead_time_days, safety_stock, ordering_cost_php,
+                                     holding_cost_php, note, changed_by, changed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (item_name) DO UPDATE SET
+            lead_time_days = excluded.lead_time_days, safety_stock = excluded.safety_stock,
+            ordering_cost_php = excluded.ordering_cost_php, holding_cost_php = excluded.holding_cost_php,
+            note = excluded.note, changed_by = excluded.changed_by, changed_at = excluded.changed_at
+    """, (item["item_name"], values["lead_time_days"], values["safety_stock"],
+          values["ordering_cost_php"], values["holding_cost_php"], values["note"],
+          auth.current_user(), datetime.now().isoformat(timespec="seconds")))
+    c.commit()
+    applied = reorder_settings.apply(copy.deepcopy(item), values)
+    return jsonify({"ok": True, "product_id": product_id, "item_name": item["item_name"],
+                    "figures": reorder_settings.figures(applied, REVIEW_PERIOD_DAYS)})
+
+
+@app.delete("/api/reorder/<int:product_id>/settings")
+def reset_reorder_settings(product_id):
+    """Back to calculated: remove an item's saved reorder settings."""
+    c = con()
+    p = dbmod.one(c, "SELECT item_name FROM Dim_Product WHERE product_id = ?", (product_id,))
+    if p is None:
+        return jsonify({"ok": False, "error": "No such item."}), 404
+    if p["item_name"] not in reorder_settings.load(c):
+        return jsonify({"ok": False, "error": "This item has no saved settings."}), 404
+    gate = _needs_admin("Resetting an item's reorder settings")
+    if gate:
+        return gate
+    c.execute("DELETE FROM Reorder_Setting WHERE item_name = ?", (p["item_name"],))
+    c.commit()
+    return jsonify({"ok": True, "product_id": product_id, "item_name": p["item_name"]})
+
+
+def _reorder_items(c, apply_settings=True):
     """Every SKU in Result_Prescriptive with its stock position and what to do
     about it, sorted by name - or None when the prescriptive step has nothing
     (Dim_Parameters empty). Shared by /api/reorder and the forecast guidance,
-    so the two can never suggest different order quantities for one item."""
+    so the two can never suggest different order quantities for one item.
+
+    A priced item the store has saved reorder settings for (Reorder_Setting,
+    reorder_settings.py) carries them: its figures are worked out from them,
+    the pipeline's own under `calculated`, what was set under `adjusted`.
+    `apply_settings=False` gives the pipeline's figures alone."""
+    saved = reorder_settings.load(c) if apply_settings else {}
     n_params = c.execute("SELECT COUNT(*) FROM Dim_Parameters").fetchone()[0]
     reorder_rows = dbmod.rows(c, """
         SELECT rp.*, p.item_name, p.supplier_name
@@ -1460,6 +1614,8 @@ def _reorder_items(c):
             "safety_stock_normal_legacy": r.get("safety_stock_normal_legacy"),
             "is_provisional": bool(r["is_provisional"]),
             "scenarios": {},
+            "adjusted": None,       # the store's saved settings, when any
+            "calculated": None,     # the pipeline's figures, when adjusted
         })
         item["scenarios"][r["ordering_cost_scenario"]] = {
             "ordering_cost_php": r["ordering_cost_php"],
@@ -1506,6 +1662,8 @@ def _reorder_items(c):
             continue
 
         item["policy_state"] = POLICY_STATE_PRICED
+        if item["item_name"] in saved:
+            reorder_settings.apply(item, saved[item["item_name"]])
         # A not_stockable SKU has a reorder point covering normal demand and no
         # safety stock at all. That is deliberate and the screen must say so,
         # otherwise it reads as an under-stocked item somebody should "fix".

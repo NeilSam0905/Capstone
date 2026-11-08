@@ -35,6 +35,7 @@ export default function Icon({ name, size = 18, stroke = 2 }) {
     close: <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
     sortNone: <><polyline points="7 9 12 5 17 9"/><polyline points="7 15 12 19 17 15"/></>,
     chevron: <><polyline points="9 6 15 12 9 18"/></>,
+    pencil: <><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></>,
     search: <><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></>,
   }[name];
   return (

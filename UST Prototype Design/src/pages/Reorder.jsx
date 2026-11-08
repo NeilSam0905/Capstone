@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getStockPosition, getReorderAlerts, getMeta } from '../services/dataService';
+import { getStockPosition, getReorderAlerts, getReorderMethod } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
 import DataTable from '../components/DataTable';
@@ -8,6 +8,8 @@ import InfoTip from '../components/InfoTip';
 import SearchSelect from '../components/SearchSelect';
 import Pending, { Loading, PendingValue } from '../components/Pending';
 import ReorderWhatIf from '../components/ReorderWhatIf';
+import ReorderSettings from '../components/ReorderSettings';
+import Modal from '../components/Modal';
 import { num, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
 
 /** Fast, Slow, then Non-Moving: the order the recommendations table opens in. */
@@ -28,8 +30,14 @@ const STATUS = {
 export default function Reorder({ filters }) {
   const { data: stock, loading } = useData(() => getStockPosition(filters), [filters], null,
     { key: `reorder:stock:${filters.supplier}|${filters.category}` });
-  const { data: alerts } = useData(getReorderAlerts, []);
-  const { data: meta } = useData(getMeta, []);
+  // Bumped after reorder settings are saved or reset, to fetch the table again.
+  const [reload, setReload] = useState(0);
+  const { data: alerts } = useData(getReorderAlerts, [reload]);
+  const { data: method } = useData(getReorderMethod, [reload]);
+  // The settings dialog: { id } while open (id null = pick an item there),
+  // else null; and what its save changed.
+  const [editing, setEditing] = useState(null);
+  const [savedMsg, setSavedMsg] = useState(null);
   // The item open in the what-if dialog, or null.
   const [whatIf, setWhatIf] = useState(null);
 
@@ -88,7 +96,22 @@ export default function Reorder({ filters }) {
   ];
 
   const alertColumns = [
-    { key: 'item_name', label: 'Product Name', strong: true, truncate: true, width: '21%' },
+    {
+      key: 'item_name', label: 'Product Name', strong: true, width: '21%',
+      render: (v, row) => (
+        <span className="stock-item">
+          <span className="cell-trunc" title={v}>{v}</span>
+          {row.adjusted && (
+            <span className="tag tag--gold"
+                  title={'Uses saved settings'
+                    + (row.adjusted.changed_by ? ` set by ${row.adjusted.changed_by}` : '')
+                    + (row.adjusted.note ? `: ${row.adjusted.note}` : '')}>
+              Adjusted
+            </span>
+          )}
+        </span>
+      ),
+    },
     {
       key: 'fsn_class', label: 'Class', width: '9%',
       render: v => v
@@ -128,7 +151,7 @@ export default function Reorder({ filters }) {
       key: 'what_if', label: '', width: '10%', sortable: false,
       render: (_v, row) => row.policy_state === 'priced'
         ? <button type="button" className="tag tag--info whatif-btn" onClick={() => setWhatIf(row)}
-                  title="Try a busy period, a bulk order, a new lead time or new costs for this item">
+                  title="Try a busy period, a bulk order, a new lead time or new costs for this item. Not saved.">
             What if
           </button>
         : <span className="muted">—</span>,
@@ -167,11 +190,16 @@ export default function Reorder({ filters }) {
       {!alerts?.available && (
         <Pending title="Reorder alerts are not computed yet" reason={alerts?.reason}>
           <div className="pending__body">
-            ROP = (forecasted daily demand × lead time) + safety stock, and safety stock = Z × σ<sub>demand</sub> × √lead
+            ROP = (forecasted daily demand × lead time) + Safety Stock, and Safety Stock = Z × σ<sub>demand</sub> × √lead
             time. Both need a per-supplier lead time and a forecast; neither is in the database. The table below is what
             the data does support today: measured stock on hand and how long it lasts at the observed rate.
           </div>
         </Pending>
+      )}
+
+      {alerts?.available && method?.available && (
+        <ReorderMethodCard m={method} adjusted={alertItems.filter(i => i.adjusted).length}
+                           onEdit={() => setEditing({ id: null })} />
       )}
 
       {alerts?.available && (
@@ -227,13 +255,22 @@ export default function Reorder({ filters }) {
         </div>
       )}
       <ReorderWhatIf item={whatIf} onClose={() => setWhatIf(null)} />
+      <ReorderSettings open={!!editing} initialId={editing?.id ?? null}
+                       items={alertItems.filter(i => i.policy_state === 'priced')}
+                       onClose={() => setEditing(null)}
+                       onSaved={text => { setEditing(null); setSavedMsg(text); setReload(k => k + 1); }} />
+      {savedMsg && (
+        <Modal open width={460} title="Saved" subtitle="The change is recorded." onClose={() => setSavedMsg(null)}>
+          <p style={{ margin: '0 0 16px' }}>{savedMsg}</p>
+          <button type="button" className="btn btn--ink btn--sm" onClick={() => setSavedMsg(null)}>OK</button>
+        </Modal>
+      )}
 
       <div className="card card__pad">
         <div className="card-h">
           <span className="section-h">Stock Position</span>
           <span className="hint">
             {items.length} items with an inventory count
-            {meta && ` · inventory covers ${meta.products_with_stock} of ${meta.products} products`}
           </span>
         </div>
         {items.length === 0
@@ -241,6 +278,205 @@ export default function Reorder({ filters }) {
           : <DataTable columns={columns} data={items} minWidth={900} />}
       </div>
     </div>
+  );
+}
+
+/* ---------------------------------------------------- reorder settings */
+
+/** Plain names for step5a's lead-time groups. */
+const LEAD_GROUP = {
+  simple_dtf_puff_shirt: 'printed shirts, jerseys, polos, tees',
+  embroidered_shirt: 'embroidered shirts',
+  jacket: 'jackets, windbreakers',
+  'default (confirmed non-apparel)': 'non-apparel',
+  'default (uncategorized)': 'everything else',
+};
+const leadGroup = c => LEAD_GROUP[c] ?? (String(c).startsWith('measured') ? 'measured from deliveries' : c);
+
+const peso = v => `₱${Number(v).toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
+
+const FORMULAS_OPEN_KEY = 'reorder.formulasOpen';
+
+/** "Reorder Formulas & Calculation": the four formulas behind the page, each
+ *  with an (i) that opens its inputs, their values and where they come from,
+ *  read live from the pipeline (GET /api/reorder/method) so the numbers
+ *  follow every run. The card starts folded (opening it is remembered per
+ *  browser), and is
+ *  also where the store sets its own figures for an item (Edit Reordering
+ *  Settings), next to the assumptions they replace. */
+function ReorderMethodCard({ m, adjusted, onEdit }) {
+  const [open, setOpen] = useState(() => {
+    // Folded unless this browser left it open: the formulas are reference,
+    // not something read on every visit.
+    try { return localStorage.getItem(FORMULAS_OPEN_KEY) === '1'; } catch { return false; }
+  });
+  const toggle = e => {
+    setOpen(e.currentTarget.open);
+    try { localStorage.setItem(FORMULAS_OPEN_KEY, e.currentTarget.open ? '1' : '0'); } catch { /* private window */ }
+  };
+
+  // Lead times, one line per number of days: "18 days: embroidered shirts,
+  // non-apparel, everything else (222 items)".
+  const byDays = {};
+  for (const lt of m.lead_times) {
+    (byDays[lt.days] ??= { groups: [], items: 0 });
+    byDays[lt.days].groups.push(leadGroup(lt.category));
+    byDays[lt.days].items += lt.items;
+  }
+  const b = m.buffers;
+  const q = Math.round((m.buffer_quantile ?? 0.8) * 100);
+
+  return (
+    <details className="card card__pad collapse collapse--card formulas-card" open={open} onToggle={toggle}>
+      <summary>
+        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+          Reorder Formulas &amp; Calculation
+          {adjusted > 0 && <span className="count-pill"><b>{num(adjusted)}</b> adjusted</span>}
+        </span>
+        {/* In the summary so it stays in reach while the card is folded;
+            preventDefault keeps its click from folding the card too. */}
+        <EditSettingsButton onClick={e => { e.preventDefault(); onEdit(); }} />
+      </summary>
+
+      <div className="formula-list">
+        <Formula name="Reorder Point" text="average daily demand × lead time + Safety Stock">
+          <MethodBlock title="Reorder Point (ROP)" formula="ROP = average daily demand × lead time + Safety Stock"
+          note="The stock level that should last until a new delivery arrives, with a buffer for surprises."
+          rule="Stock at or below the Reorder Point means order now.">
+          <MethodRow input="Average daily demand" value="Each item's own sales per day over the last 365 days">
+            <b>The store&rsquo;s tally sheets.</b> Days with nothing recorded are left out.
+          </MethodRow>
+          <MethodRow input="Lead time" value={
+            <div className="lead-list">
+              {Object.entries(byDays).map(([d, g]) => (
+                <div className="lead-list__row" key={d}>
+                  <span className="lead-list__days">{d} days</span>
+                  <span className="lead-list__what">{g.groups.join(', ')}</span>
+                  <span className="lead-list__n">{num(g.items)} items</span>
+                </div>
+              ))}
+            </div>
+          }>
+            <b>The USTore&rsquo;s own estimates by item type.</b> Once a supplier has {m.min_deliveries} logged
+            deliveries, its median delivery time replaces the estimate.
+          </MethodRow>
+          <MethodRow input="Safety Stock" value="The cushion for a slow delivery or a busy week">
+            Worked out per item: see the Safety Stock (i).
+          </MethodRow>
+        </MethodBlock>
+        </Formula>
+        <Formula name="Safety Stock" text={`the forecast miss over the lead time that ${q}% of past misses stayed under`}>
+          <MethodBlock title="Safety Stock" formula={`Safety Stock = the forecast miss over the lead time that ${q}% of past misses stayed under`}
+          note="Measured from each item's own history rather than assumed from a bell curve."
+          rule="A bigger buffer means fewer stockouts, but more money sitting in stock.">
+          <MethodRow input="Measured buffer" value={`${num(b.measured)} items`}>
+            <b>Each item&rsquo;s own past forecast misses</b> over its lead time: the buffer covers {q}% of them.
+          </MethodRow>
+          {b.fallback > 0 && (
+            <MethodRow input="Z × σ × √lead time" value={`${num(b.fallback)} items · Z ${m.z.F} Fast, ${m.z.S} Slow`}>
+              Used only when an item has too little history to measure its misses.
+            </MethodRow>
+          )}
+          <MethodRow input="Not worth stocking" value={`${num(b.not_stockable)} items · no buffer`}>
+            Sells too rarely for extra stock to pay off. The Reorder Point covers normal demand only.
+          </MethodRow>
+          <MethodRow input="No Reorder Point" value={`${num(b.none)} items`}>
+            Too few sale days to learn a selling rate. Shown as unknown, never as zero.
+          </MethodRow>
+        </MethodBlock>
+        </Formula>
+        <Formula name="Order Quantity" text={`Reorder Point + ${m.review_period_days} days of demand − stock on hand`}>
+          <MethodBlock title="Order Quantity staff actually see"
+          formula={`Order = Reorder Point + ${m.review_period_days} days of demand − stock on hand`}
+          note="Brings stock back up to the Reorder Point plus one more month of sales."
+          rule="Nothing is ordered while stock is above the Reorder Point.">
+          <MethodRow input={`${m.review_period_days} days of demand`} value="Average daily demand × 30">
+            One review period, so an order lasts until the next one is placed.
+          </MethodRow>
+          <MethodRow input="Stock on hand" value="The latest count">
+            <b>The Tally Interface</b> inventory counts, or the inventory workbook when it is newer.
+          </MethodRow>
+        </MethodBlock>
+        </Formula>
+        <Formula name="EOQ" text="√(2 × yearly demand × ordering cost ÷ holding cost)">
+          <MethodBlock title="EOQ" formula="EOQ = √(2 × D × S ÷ H)"
+          note="With these costs, EOQ comes out larger than a whole year of demand for almost every item."
+          rule="EOQ is for reference only. Buy the Order Quantity.">
+          <MethodRow input="D, yearly demand" value="365 × average daily demand">
+            <b>The store&rsquo;s tally sheets</b>, as above.
+          </MethodRow>
+          <MethodRow input="S, ordering cost (low)" value={`${peso(m.ordering_cost_low)} per order`}>
+            <b>Assumption:</b> the midpoint of a plausible ₱500–2,000 admin cost per order (staff time,
+            paperwork, a call to the supplier).
+          </MethodRow>
+          <MethodRow input="S, ordering cost (high)" value={`${peso(m.ordering_cost_high)} per order`}>
+            <b>The USTore&rsquo;s own figure</b> of ₱200,000–500,000 per month, taken at the low end as if it were
+            the cost of one order.
+          </MethodRow>
+          <MethodRow input="H, holding cost" value={`${peso(m.holding_cost)} per unit per year`}>
+            <b>Worked out:</b> {Math.round(m.holding_rate * 100)}% yearly holding rate (assumption)
+            × {peso(m.inventory_value_mid)} inventory value (midpoint of the store&rsquo;s{' '}
+            {peso(m.inventory_value_low)}–{peso(m.inventory_value_high)}) ÷ {num(m.units_on_hand)} units on hand
+            (inventory workbook, March 2026).
+          </MethodRow>
+        </MethodBlock>
+        </Formula>
+      </div>
+    </details>
+  );
+}
+
+/** One formula, and an (i) that opens its inputs, values and sources. */
+function Formula({ name, text, children }) {
+  return (
+    <div className="formula">
+      <span className="formula__name">{name}</span>
+      <span className="formula__eq">=</span>
+      <span className="formula__text">{text}</span>
+      <span className="formula__tip">
+        <InfoTip label={`How the ${name.toLowerCase()} is worked out`} width={560}>
+          <div className="method-stack">{children}</div>
+        </InfoTip>
+      </span>
+    </div>
+  );
+}
+
+/** One formula's tip: a heading, the formula, what it means in a sentence,
+ *  then each input as a short stacked block - its name, its value, and
+ *  where it comes from - read top to bottom rather than across a table, and
+ *  the one thing to remember as a bold line. */
+function MethodBlock({ title, formula, note, rule, children }) {
+  return (
+    <>
+      <div className="infotip__h">{title}</div>
+      <p className="tip-formula">{formula}</p>
+      {note && <p>{note}</p>}
+      <div className="infotip__h" style={{ marginTop: 12 }}>The inputs</div>
+      <div className="input-list">{children}</div>
+      {rule && <p className="reliab__rule"><Icon name="alert" size={13} /> {rule}</p>}
+    </>
+  );
+}
+
+function MethodRow({ input, value, children }) {
+  return (
+    <div className="input-row">
+      <div className="input-row__name">{input}</div>
+      <div className="input-row__value">{value}</div>
+      {children && <div className="input-row__src"><span className="input-row__label">Source</span>{children}</div>}
+    </div>
+  );
+}
+
+/** Opens Edit reordering settings (ReorderSettings). Black, as the app's
+ *  actions are, so it is not read as an explanation like the formulas' (i). */
+function EditSettingsButton({ onClick }) {
+  return (
+    <button type="button" className="btn btn--ink btn--sm settings-btn" onClick={onClick}
+            title="Set an item's lead time, Safety Stock or costs. Saved, unlike What if.">
+      <Icon name="pencil" size={13} /> Edit Reordering Settings
+    </button>
   );
 }
 
@@ -253,7 +489,7 @@ function WhatIfGuide() {
   const rows = [
     ['gold', 'Busy period', 'Enrollment or the start of a term, when sales run above a regular day. See how much more stock to keep.'],
     ['info', 'Bulk order', 'An office or organization buys many at once. See whether it leaves the shelf short.'],
-    ['warn', 'Lead time', 'The supplier takes more (or fewer) days to deliver. See how the reorder point moves.'],
+    ['warn', 'Lead time', 'The supplier takes more (or fewer) days to deliver. See how the Reorder Point moves.'],
     ['ok', 'Costs', 'A different cost per order or cost of keeping stock. This changes the EOQ only.'],
   ];
   return (
@@ -318,7 +554,7 @@ function ReorderAdvice({ items, summary }) {
           </span>
         </div>
         <div className="hint">
-          Every item with a stock count is above its reorder point.
+          Every item with a stock count is above its Reorder Point.
           {summary.no_stock_count > 0 && (
             <> {num(summary.no_stock_count)} of {num(summary.priced_skus)} priced items have no stock count,
             so they could not be checked — record counts in the Tally Interface to include them.</>
@@ -404,7 +640,7 @@ function ReorderAdvice({ items, summary }) {
 function Eoq({ scenario }) {
   if (!scenario) return <span className="muted">—</span>;
   return scenario.exceeds_annual_demand
-    ? <span className="muted" title="Exceeds a full year of demand — not a usable order quantity yet">
+    ? <span className="muted" title="Exceeds a full year of demand — not a usable Order Quantity yet">
         {num(scenario.eoq)}
       </span>
     : <span>{num(scenario.eoq)}</span>;

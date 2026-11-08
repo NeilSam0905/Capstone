@@ -977,6 +977,60 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
   background: var(--info-line); border-color: var(--info); box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
 }
 .tbl .whatif-btn:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+/* How Reorder Figures Are Worked Out (Reorder.jsx ReorderMethodCard): the
+   four formulas as plain lines; the details sit under Formula details. */
+.settings-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.formula-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
+.formula {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+  padding: 9px 12px; border-radius: var(--r-sm);
+  background: var(--bg); border: 1px solid var(--line-soft);
+  font-size: 13px; line-height: 1.45;
+}
+.formula__name { font-weight: 800; color: var(--text); white-space: nowrap; }
+.formula__eq { color: var(--muted); font-weight: 700; }
+.formula__text { color: var(--text-2); flex: 1; min-width: 0; }
+.formula__tip { flex-shrink: 0; align-self: center; margin: -4px -4px -4px 0; }
+/* The card folds (details.collapse--card). The Edit button sits at the right
+   beside the chevron, and the formulas get room under the title when open. */
+.formulas-card > summary .settings-btn { margin-left: auto; }
+/* .collapse's chevron takes margin-left:auto, which split the free space and
+   left the button floating mid-row; here it sits right after the button. */
+.formulas-card.collapse > summary::after { margin-left: 0; }
+.formulas-card[open] > summary { margin-bottom: 12px; }
+@media (max-width: 900px) { .formula-list { grid-template-columns: minmax(0, 1fr); } }
+/* A formula's (i) tip, in the reliability tip's style (.reliab): the inputs
+   table puts each input's source under its name and the value on the right.
+   Scrolls inside the tip when the window is short. */
+.method-stack { max-height: 66vh; overflow-y: auto; padding-right: 4px; }
+.infotip__pop p.tip-formula {
+  display: inline-block; margin: 0 0 8px; padding: 5px 10px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--line);
+  font-size: 12.5px; font-weight: 800; color: var(--text); line-height: 1.45;
+}
+/* Each input as a stacked block: name, value, then a muted Source line. */
+.input-list { display: flex; flex-direction: column; margin-bottom: 10px; }
+.input-row { padding: 9px 0; border-bottom: 1px solid var(--line-soft); }
+.input-row:first-child { padding-top: 2px; }
+.input-row:last-child { border-bottom: none; }
+.input-row__name { font-size: 13px; font-weight: 800; color: var(--text); }
+.input-row__value { margin-top: 2px; font-size: 13px; color: var(--text); }
+.input-row__src { margin-top: 4px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.input-row__src b { color: var(--text-2); }
+.input-row__label {
+  display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 4px;
+  font-size: 9.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); background: var(--bg); border: 1px solid var(--line-soft);
+}
+/* Lead times: days | item types | count, lined up in three columns. */
+.lead-list { display: grid; gap: 4px; margin-top: 3px; }
+.lead-list__row {
+  display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; gap: 10px; align-items: baseline;
+  padding: 5px 8px; border-radius: 6px; background: var(--bg);
+}
+.lead-list__days { font-weight: 800; color: var(--text); white-space: nowrap; }
+.lead-list__what { color: var(--text-2); }
+.lead-list__n { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .whatif-results { margin-top: 18px; }
 .whatif-tbl tbody td { padding-top: 9px; padding-bottom: 9px; }
 .whatif-tbl td.strong { white-space: normal; }
@@ -1299,6 +1353,9 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .stock-rename__input { flex: 1 1 260px; min-width: 0; font-weight: 400; }
 .stock-editrow__qty { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .stock-editrow__qty .stock-edit { width: 90px; }
+/* Mark discontinued / Restore: pushed to the far end of the open row, away
+   from Save and Cancel. */
+.stock-editrow__status { margin-left: auto; white-space: nowrap; }
 .stock-actions { display: inline-flex; gap: 6px; flex-wrap: nowrap; }
 .stock-actions.edit-dates__actions { gap: 8px; }
 

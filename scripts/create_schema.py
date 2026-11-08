@@ -300,6 +300,26 @@ CREATE TABLE IF NOT EXISTS Product_Status (
 );
 """)
 
+# ----- OPERATIONAL TABLE: Reorder_Setting --------------------------
+# An item's lead time, safety stock, ordering or holding cost as the
+# store set them on the Reorder Alerts page (backend/reorder_settings.py);
+# NULL keeps the calculated figure. Applied over Result_Prescriptive
+# when it is read, never written into it. Keyed by item_name, as
+# Product_Status is. Operational: no pipeline step clears it.
+# backend/db.py creates the same table for a database built before it.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Reorder_Setting (
+    item_name          TEXT PRIMARY KEY,
+    lead_time_days     INTEGER,
+    safety_stock       REAL,
+    ordering_cost_php  REAL,
+    holding_cost_php   REAL,
+    note               TEXT,
+    changed_by         TEXT,
+    changed_at         TEXT
+);
+""")
+
 # ----- OPERATIONAL TABLE: Pending_Import_Row -----------------------
 # Rows of a tally or stock-count file imported through the Tally
 # Interface whose item name the vocabulary does not know yet. Held, not

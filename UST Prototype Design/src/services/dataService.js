@@ -403,6 +403,20 @@ export const getReorderAlerts = () => get('/reorder');
  *  a 400 comes back as { ok: false, errors }. */
 export const getReorderWhatIf = (productId, params) =>
   get(`/reorder/${productId}/whatif${qs(params)}`);
+/** An item's saved reorder settings (backend reorder_settings.py): what is
+ *  saved, the calculated figures, and a preview with `params` (lead_time_days,
+ *  safety_stock, ordering_cost_php, holding_cost_php; blank = calculated). */
+export const getReorderSettings = (productId, params) =>
+  get(`/reorder/${productId}/settings${qs(params)}`);
+/** Save them (the admin's: anyone else is asked for the password). The
+ *  Reorder table, suggested orders and forecast guidance use them from then
+ *  on, through every Run Analytics, until reset. */
+export const saveReorderSettings = (productId, body) => put(`/reorder/${productId}/settings`, body);
+/** How the Reorder figures are worked out: the pipeline's recorded
+ *  assumptions, lead-time groups and safety-stock kinds, read live. */
+export const getReorderMethod = () => get('/reorder/method');
+/** Back to calculated: remove an item's saved settings. */
+export const resetReorderSettings = productId => del(`/reorder/${productId}/settings`);
 export const getAdvisories = () => get('/advisories');
 /** The FSN decision rules (manuscript Sec. 3.3.1): each SKU's action, and the
  *  per-semester velocity "Review for Discontinuation" was judged on.

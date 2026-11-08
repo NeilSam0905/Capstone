@@ -178,8 +178,24 @@ ITEM_PRICE_CHANGE_DDL = """CREATE TABLE IF NOT EXISTS Item_Price_Change (
 )"""
 ITEM_PRICE_CHANGE_INDEX = """CREATE INDEX IF NOT EXISTS ix_price_change_item
     ON Item_Price_Change (product_id, effective_from)"""
+# Reorder_Setting: an item's lead time, safety stock, ordering or holding cost
+# as the store set them on the Reorder Alerts page (backend/reorder_settings.py).
+# NULL = keep the calculated figure. Applied over Result_Prescriptive when it
+# is read, never written into it, so step5's gates still check the pipeline's
+# own figures. Keyed by item_name for the reason Product_Status is; no
+# pipeline step clears it, so a setting stays until the store resets it.
+REORDER_SETTING_DDL = """CREATE TABLE IF NOT EXISTS Reorder_Setting (
+    item_name          TEXT PRIMARY KEY,
+    lead_time_days     INTEGER,
+    safety_stock       REAL,
+    ordering_cost_php  REAL,
+    holding_cost_php   REAL,
+    note               TEXT,
+    changed_by         TEXT,
+    changed_at         TEXT
+)"""
 _TABLES = (PRODUCT_STATUS_DDL, PENDING_IMPORT_DDL, APP_USER_DDL, RESTOCK_LOG_DDL, UPCOMING_ORDER_DDL,
-           SALES_GOAL_DDL, ITEM_PRICE_CHANGE_DDL, ITEM_PRICE_CHANGE_INDEX)
+           SALES_GOAL_DDL, ITEM_PRICE_CHANGE_DDL, ITEM_PRICE_CHANGE_INDEX, REORDER_SETTING_DDL)
 
 # Columns added after databases already existed. CREATE TABLE IF NOT EXISTS
 # cannot add a column to a table that is already there, so each is added here

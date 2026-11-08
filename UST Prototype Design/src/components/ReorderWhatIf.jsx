@@ -162,8 +162,8 @@ const yesNo = v => (v == null ? '—' : v ? 'Yes' : 'No');
 const ROWS = [
   ['Demand during the lead time', 'lead_time_demand', units],
   ['Extra from what is coming', 'extra_units', v => (v ? num(v) : '—')],
-  ['Safety stock', 'safety_stock', units],
-  ['Reorder point', 'reorder_point', units],
+  ['Safety Stock', 'safety_stock', units],
+  ['Reorder Point', 'reorder_point', units],
   ['Stock on hand', 'stock_on_hand', units],
   ['Reorder now?', 'needs_reorder', yesNo],
   ['Suggested order (units)', 'suggested_order_qty', units],

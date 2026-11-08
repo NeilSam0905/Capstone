@@ -7,6 +7,7 @@ import {
   getStockPosition, ALL_CATEGORIES, ALL_SUPPLIERS, UNATTRIBUTED, addProduct,
   importInventoryCounts, importTallyEntries, addTallyWorkbook,
   getNamesToReview, settleName, renameProduct, getProductPrice, setProductPrice,
+  setProductDiscontinued,
   getRestocks, addRestock, markRestockDelivered, deleteRestock,
   getUpcomingOrders, addUpcomingOrder, deleteUpcomingOrder,
   editClosure, editEvent, deleteEvent, editEntry, deleteEntry,
@@ -75,7 +76,7 @@ function ItemPicker({ items, value, onChange, invalid }) {
   return (
     <SearchSelect variant="field" minWidth={0} value={String(value)} options={options}
                   onChange={onChange} invalid={invalid}
-                  emptyLabel="— Select an item —" placeholder="Search items…" />
+                  emptyLabel="Select an Item" placeholder="Search items…" />
   );
 }
 
@@ -761,15 +762,10 @@ function SalesTally({ products, onSaved, recent, recentLoading }) {
 
         {isSale && (
           <Field label="Price per unit (optional)" error={errors.entry_price_php}
-                 hint={(
-                   <>
-                     Only if this sale went at a different price. It is used for this entry only.
-                     {item && (
-                       <>{' '}<button type="button" className="linkish" onClick={() => setPricing(true)}>
-                         Edit listed price
-                       </button></>
-                     )}
-                   </>
+                 hint={item && (
+                   <button type="button" className="linkish" onClick={() => setPricing(true)}>
+                     Edit listed price
+                   </button>
                  )}>
             <input type="number" min="0" step="0.01" value={form.entry_price_php}
                    placeholder={listed != null ? `Listed price: ${pesoExact(listed)}` : 'No listed price'}
@@ -1363,7 +1359,10 @@ function AddItemModal({ open, products, onClose, onAdded }) {
  *    the name shown here; from the next update, rows under the new name count
  *    as this item (POST /api/products/<id>/rename). This was the Stock tab's
  *    Rename Item dialog.
- *  An item marked discontinued (Product_Status) is tagged here. */
+ *  The open row also marks the item discontinued, or restores it
+ *  (Product_Status, the admin's); a discontinued item is tagged here. There
+ *  is no Delete: an item is rebuilt from the controlled vocabulary on every
+ *  run and its sales history hangs off it, so discontinuing is the removal. */
 function CurrentStockModal({ open, onClose, onChanged }) {
   const [reloadKey, setReloadKey] = useState(0);
   // Only fetch once the dialog is actually opened: this is the whole catalogue
@@ -1452,6 +1451,31 @@ function CurrentStockModal({ open, onClose, onChanged }) {
     }
   }
 
+  // Discontinue or restore the open row's item (PUT /api/products/<id>/status,
+  // the admin's: anyone else is asked for the password by AdminConfirm).
+  // Reversible, and nothing is removed: the item leaves the tally item
+  // pickers and reads as discontinued in the analytics, history kept.
+  async function toggleDiscontinued(item) {
+    const next = !item.discontinued;
+    setBusyId(item.product_id);
+    try {
+      const r = await setProductDiscontinued(item.product_id, next);
+      if (!r.ok) {
+        setMessage({ ok: false, text: r.error || 'Could not change the item’s status.' });
+        return;
+      }
+      setEditing(null);
+      changed(next
+        ? `${item.item_name} is marked discontinued. It no longer appears when recording sales or counts; `
+          + 'its history and stock figures are kept. Open Edit again and click Restore to undo.'
+        : `${item.item_name} is back in stock and appears when recording sales and counts again.`);
+    } catch (err) {
+      setMessage({ ok: false, text: err.message });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   function onEditKey(e, row) {
     if (e.key === 'Enter') saveRow(row);
     if (e.key === 'Escape') { e.stopPropagation(); setEditing(null); }
@@ -1499,9 +1523,7 @@ function CurrentStockModal({ open, onClose, onChanged }) {
         // A gold Edit link, as on a row in Edit Tally Entries. The open row's
         // fields are drawn by editorFor below, so it shows no link.
         if (editing?.product_id === id) return null;
-        // A Discontinue/Restore button belongs here too (the backend's
-        // PUT /api/products/<id>/status and setProductDiscontinued are in
-        // place); held back from the UI for now.
+        // Mark discontinued / Restore is in the open row (editorFor).
         return (
           <span className="edit-dates__actions stock-actions">
             <button type="button" className="linkish" disabled={busy}
@@ -1556,6 +1578,15 @@ function CurrentStockModal({ open, onClose, onChanged }) {
             <button type="button" className="btn btn--ghost btn--sm" disabled={busy}
                     onClick={() => setEditing(null)}>Cancel</button>
           </span>
+          {/* Set apart at the far end, in red, so it is not taken for Save. */}
+          <button type="button"
+                  className={'btn btn--sm stock-editrow__status' + (row.discontinued ? ' btn--ghost' : ' btn--crit')}
+                  disabled={busy} onClick={() => toggleDiscontinued(row)}
+                  title={row.discontinued
+                    ? 'Put this item back in the tally item lists'
+                    : 'Take this item out of the tally item lists. Its history is kept, and it can be restored.'}>
+            {row.discontinued ? 'Restore item' : 'Mark discontinued'}
+          </button>
         </div>
       </div>
     );
