@@ -60,6 +60,7 @@ See `UST Prototype Design/BACKEND_TODO.md` for the full contract this implements
 | Auth (`auth.py`, open) | `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/session` |
 | Names and workbooks (`names.py`) | `GET /api/names/review`, `POST /api/names/review`, `POST /api/products/:id/rename`, `POST /api/tally/workbook` |
 | Orders and restocks | `GET/POST /api/orders/upcoming`, `DELETE /api/orders/upcoming/:id`, `GET/POST /api/restocks`, `PUT/DELETE /api/restocks/:id` |
+| What-if (`whatif.py`) | `GET /api/reorder/:id/whatif` (read-only): one item's reorder point, suggested order, EOQ and sales at stake with `lead_time_days`, `stock_on_hand`, `scenario` (`none` / `enrollment` / `term_start` / `bulk`, with `scenario_days` or `bulk_units`), `ordering_cost_php` or `holding_cost_php` changed; the busy-period lifts are measured live (`forecasting/day_kinds.py`) |
 | Summary Report (`summary_report.py`) | `GET /api/reports/summary/periods`, `GET /api/reports/summary?kind=year\|term\|quarter&key=`, `GET /api/reports/summary.pdf` (same params, `&inline=1` to view), `PUT /api/reports/summary/goal` (`{kind, key, goal_php}`; changing or removing a goal needs the admin) |
 
 **Names and workbooks** keep the system running through sheet changes without a developer.

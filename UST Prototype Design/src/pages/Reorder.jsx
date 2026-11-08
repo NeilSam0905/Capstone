@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { getStockPosition, getReorderAlerts, getMeta } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
 import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
 import Pending, { Loading, PendingValue } from '../components/Pending';
+import ReorderWhatIf from '../components/ReorderWhatIf';
 import { num, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
 
 /** Fast, Slow, then Non-Moving: the order the recommendations table opens in. */
@@ -14,6 +16,8 @@ export default function Reorder({ filters }) {
     { key: `reorder:stock:${filters.supplier}|${filters.category}` });
   const { data: alerts } = useData(getReorderAlerts, []);
   const { data: meta } = useData(getMeta, []);
+  // The item open in the what-if dialog, or null.
+  const [whatIf, setWhatIf] = useState(null);
 
   const items = stock?.items ?? [];
   const withDos = items.filter(p => p.days_of_supply != null);
@@ -51,21 +55,21 @@ export default function Reorder({ filters }) {
   ];
 
   const alertColumns = [
-    { key: 'item_name', label: 'Product Name', strong: true, truncate: true, width: '25%' },
+    { key: 'item_name', label: 'Product Name', strong: true, truncate: true, width: '21%' },
     {
-      key: 'fsn_class', label: 'Class', width: '10%',
+      key: 'fsn_class', label: 'Class', width: '9%',
       render: v => v
         ? <span className={`tag tag--${FSN_TONE[v] || 'info'}`}>{FSN_LABEL[v] || v}</span>
         : <span className="muted">—</span>,
     },
-    { key: 'lead_time_days', label: 'Lead Time', num: true, width: '8%', render: v => `${v}d` },
+    { key: 'lead_time_days', label: 'Lead Time', num: true, width: '7%', render: v => `${v}d` },
     {
-      key: 'current_stock', label: 'On Hand', num: true, width: '9%',
+      key: 'current_stock', label: 'On Hand', num: true, width: '8%',
       render: v => v == null ? <span className="muted">—</span> : num(v),
     },
     { key: 'safety_stock', label: 'Buffer Stock', num: true, width: '9%', render: v => num(Math.round(v)) },
     {
-      key: 'reorder_point', label: 'ROP', num: true, width: '8%',
+      key: 'reorder_point', label: 'ROP', num: true, width: '7%',
       render: (v, row) => (
         <span style={row.current_stock != null && row.current_stock <= v ? { color: 'var(--warn)', fontWeight: 700 } : undefined}>
           {num(Math.round(v))}
@@ -73,7 +77,7 @@ export default function Reorder({ filters }) {
       ),
     },
     {
-      key: 'suggested_order_qty', label: 'Order Qty', num: true, width: '9%',
+      key: 'suggested_order_qty', label: 'Order Qty', num: true, width: '8%',
       render: (v, row) => row.needs_reorder
         ? <span style={{ color: 'var(--warn)', fontWeight: 800 }}>{num(v)}</span>
         : <span className="muted">—</span>,
@@ -83,8 +87,18 @@ export default function Reorder({ filters }) {
       render: (_v, row) => <Eoq scenario={row.scenarios.low_admin_cost} />,
     },
     {
-      key: 'eoq_high', label: 'EOQ · high goods-value', num: true, width: '12%',
+      key: 'eoq_high', label: 'EOQ · high goods-value', num: true, width: '11%',
       render: (_v, row) => <Eoq scenario={row.scenarios.high_goods_value} />,
+    },
+    {
+      // An item with no reorder point (no sale in a year) has nothing to test.
+      key: 'what_if', label: '', width: '10%', sortable: false,
+      render: (_v, row) => row.policy_state === 'priced'
+        ? <button type="button" className="btn btn--ghost btn--sm" onClick={() => setWhatIf(row)}
+                  title="Try a busy period, a bulk order, a new lead time or new costs for this item">
+            What if
+          </button>
+        : <span className="muted">—</span>,
     },
   ];
 
@@ -131,10 +145,12 @@ export default function Reorder({ filters }) {
         <div className="card card__pad">
           <div className="card-h">
             <span className="section-h">Reorder Recommendations</span>
+            <span className="hint">What if: try a busy period, a bulk order, a new lead time or new costs for one item</span>
           </div>
-          <DataTable columns={alertColumns} data={byClass} minWidth={1080} />
+          <DataTable columns={alertColumns} data={byClass} minWidth={1100} />
         </div>
       )}
+      <ReorderWhatIf item={whatIf} onClose={() => setWhatIf(null)} />
 
       <div className="card card__pad">
         <div className="card-h">

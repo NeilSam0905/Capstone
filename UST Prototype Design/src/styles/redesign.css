@@ -924,6 +924,19 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
 .pipeline-step__dot--error   { background: var(--crit); border-color: var(--crit); }
 .pipeline-step__dot--skipped { background: var(--warn-bg); border-color: var(--warn); }
 .pipeline-step__dot--warning { background: var(--warn); border-color: var(--warn); }
+
+/* Reorder Alerts' what-if dialog: the assumptions, then now and what if. */
+/* minmax(0, 1fr): the busy-period options are long, and a plain 1fr column
+   will not shrink below its widest option, which pushed the fields past the
+   dialog's edge on a phone. */
+.whatif-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.whatif-form .field input, .whatif-form .field select { width: 100%; min-width: 0; box-sizing: border-box; }
+.whatif-results { margin-top: 18px; }
+.whatif-tbl td.strong { white-space: normal; }
+.whatif-changed { font-weight: 800; color: var(--warn); }
+.whatif-notes { margin: 10px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.whatif-notes li + li { margin-top: 4px; }
+@media (max-width: 640px) { .whatif-form { grid-template-columns: minmax(0, 1fr); } }
 .pipeline-step__dot--cancelled { background: var(--warn-bg); border-color: var(--warn); }
 .pipeline-step__dot--running {
   background: var(--info); border-color: var(--info);

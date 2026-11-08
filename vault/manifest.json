@@ -54,6 +54,8 @@
  "data/cluster_split_prophet_folds.csv": "b3d6c4fc2a030211ef500192f2913a821d8f1421deec0356cd5bfe9ec582d81a",
  "data/cold_start_donor.csv": "7fb6ba91df5f8a8821f515f38fbe6a1f22ede27d8d0a12f0bf44ea59981bdb75",
  "data/cold_start_donor_origins.csv": "54306cba916ac480fa23cb76cd522c8f404d2fb4111886465015ba954065662c",
+ "data/daily_accuracy_by_day_kind.csv": "e6eafd367d20b6d0ae3c4f7371792e232099c811f67ac72928a8eacd16d0c569",
+ "data/daily_accuracy_by_model.csv": "6c657cc48702ea7dfae969b33bf9c6974b7e373cc0aa659dd229af27a8a6fef5",
  "data/day_status_vocabulary.csv": "fda828a81c45518f39b3013b84dd9aca74715b83450960b3ce32a463a9a668e1",
  "data/demand_cluster_profiles.csv": "d85d4717bc1358d1181d2027378690e5034b9bf8291b0a4dac5d3dbc97c2bff5",
  "data/demand_clusters.csv": "53842dcc2153e5789dae5e836639df5d83667d6f317968f63edde218cd49ddc5",
@@ -175,5 +177,5 @@
  "docs/products_without_forecast.csv": "32a58460ab4ec260718a8dcf74de2b0d7e853fcbda9a089e82477e1532519c63",
  "docs/unpriced_products.csv": "dcfa730bf272c4763f325a1cf1a78bcd894fe25efb5c0607804146f54fb08554",
  "prediction_targets_results.xlsx": "4dd103bad1bb9a44c6cee84d0df20b67ef320521c483311d073090f27337158c",
- "ustore.db": "34d7a6e1d1dbaa1a65c0d60a35759e0c5d525d66266d08017b161d93d60a1a50"
+ "ustore.db": "71cbb59b644604425702936b5f0c52e214a46cd6f04df8f92c59e5e7e9e8e707"
 }

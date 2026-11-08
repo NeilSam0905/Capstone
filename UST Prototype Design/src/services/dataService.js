@@ -396,6 +396,13 @@ export const getCategoryForecast = (category, model) =>
 // categories with no Fast item, which the per-item forecasts cannot reach.
 export const getCategoryForecasts = () => get('/forecast/categories');
 export const getReorderAlerts = () => get('/reorder');
+/** One item's reorder figures with an assumption changed (backend whatif.py):
+ *  lead_time_days, stock_on_hand, scenario ('none' | 'enrollment' |
+ *  'term_start' | 'bulk') with scenario_days or bulk_units, ordering_cost_php,
+ *  holding_cost_php. A field left blank keeps the current figure. Read-only;
+ *  a 400 comes back as { ok: false, errors }. */
+export const getReorderWhatIf = (productId, params) =>
+  get(`/reorder/${productId}/whatif${qs(params)}`);
 export const getAdvisories = () => get('/advisories');
 /** The FSN decision rules (manuscript Sec. 3.3.1): each SKU's action, and the
  *  per-semester velocity "Review for Discontinuation" was judged on.

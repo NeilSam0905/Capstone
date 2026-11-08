@@ -43,6 +43,7 @@ import decision_rules
 import pipeline
 import summary_report
 import validation
+import whatif
 import names                  # after pipeline: it needs scripts/ on sys.path
 import order_types            # scripts/order_types.py
 import calendar_extent        # scripts/calendar_extent.py
@@ -1387,6 +1388,32 @@ def get_reorder():
             },
         },
     })
+
+
+@app.get("/api/reorder/<int:product_id>/whatif")
+def get_reorder_whatif(product_id):
+    """One item's figures with an assumption changed (whatif.py): lead_time_days,
+    stock_on_hand, scenario (none / enrollment / term_start / bulk) with
+    scenario_days or bulk_units, ordering_cost_php, holding_cost_php. Anything
+    left out keeps the item's current figure. Read-only."""
+    c = con()
+    items = _reorder_items(c)
+    if items is None:
+        return jsonify({"ok": False, "error": "Reorder points have not been computed yet."}), 404
+    item = next((i for i in items if i["product_id"] == product_id), None)
+    if item is None:
+        return jsonify({"ok": False, "error": "That item has no reorder calculation."}), 404
+    if item["policy_state"] != POLICY_STATE_PRICED:
+        return jsonify({"ok": False, "error": item.get("policy_note") or INSUFFICIENT_DATA_NOTE}), 409
+    params, errors = whatif.parse(request.args)
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+    p = dbmod.one(c, "SELECT unit_price_php FROM Dim_Product WHERE product_id = ?", (product_id,))
+    price = _price_on(c, product_id, p["unit_price_php"] if p else None, date.today().isoformat())
+    days = whatif.day_kinds.load_days(c)
+    return jsonify(whatif.compute(item, price, whatif.day_kinds.lifts(c, days),
+                                  whatif.day_kinds.enrollment_days_typical(c), params,
+                                  REVIEW_PERIOD_DAYS))
 
 
 def _reorder_items(c):
