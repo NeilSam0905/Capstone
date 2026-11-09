@@ -69,6 +69,47 @@ COMPARE_TABLES = {
 }
 
 
+# Each past 30-day check behind a model's accuracy figures: what it forecast
+# for that period and what actually sold, one row per fold, for the Demand
+# Forecast page's Actual vs Predicted (the adviser, Nov 2026). Written by the
+# same run that writes the metrics, so the two always describe the same
+# checks. One table for both scopes and every model, the recommended one
+# under its own id.
+CHECK_TABLE = "Result_Forecast_Check"
+
+
+def check_rows(key, folds, index, model_rows, naive_rows, snapshot_date):
+    """The CHECK_TABLE rows for one item or category: `folds` and the two
+    walk_forward_evaluate row lists scored on them (the model's and the
+    naive forecast's), `index` the series' dates (so a fold's positions
+    become the calendar days it covered)."""
+    out = []
+    for f, m, n in zip(folds, model_rows, naive_rows):
+        out.append({
+            "series_key": str(key), "fold": int(f.fold_index),
+            "start_date": index[f.test_start].strftime("%Y-%m-%d"),
+            "end_date": index[f.test_end - 1].strftime("%Y-%m-%d"),
+            "actual_30d": float(m["actual_30d"]), "pred_30d": float(m["pred_30d"]),
+            "naive_30d": float(n["pred_30d"]), "snapshot_date": snapshot_date,
+        })
+    return out
+
+
+def write_checks(con, scope, model, rows):
+    """Replace one model's checks for a scope. Does not commit."""
+    con.execute(f"""CREATE TABLE IF NOT EXISTS {CHECK_TABLE} (
+        scope TEXT NOT NULL, model TEXT NOT NULL, series_key TEXT NOT NULL, fold INTEGER NOT NULL,
+        start_date TEXT, end_date TEXT, actual_30d REAL, pred_30d REAL, naive_30d REAL,
+        snapshot_date TEXT)""")
+    con.execute(f"DELETE FROM {CHECK_TABLE} WHERE scope = ? AND model = ?", (scope, model))
+    con.executemany(
+        f"""INSERT INTO {CHECK_TABLE} (scope, model, series_key, fold, start_date, end_date,
+                                       actual_30d, pred_30d, naive_30d, snapshot_date)
+            VALUES (:scope, :model, :series_key, :fold, :start_date, :end_date, :actual_30d,
+                    :pred_30d, :naive_30d, :snapshot_date)""",
+        [{"scope": scope, "model": model, **r} for r in rows])
+
+
 def alternatives(scope):
     """The ids Run Forecast makes for comparison: every offered one but the
     recommended, which the main step makes."""

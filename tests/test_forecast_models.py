@@ -13,7 +13,9 @@ Overview's Top Sellers period (/api/overview/performance?top_range=):
   - ?model= reads another model's forecast from the comparison tables and
     leaves the recommended one - what every other page reads - as it is;
   - Top Sellers with no period is the 12-month ranking it always was, and a
-    period narrows the window.
+    period narrows the window;
+  - the Sale Overview compares with the month before unless ?compare= names
+    another tallied month.
 ------------------------------------------------------------------
 """
 import os
@@ -81,6 +83,35 @@ def test_write_compare_keeps_the_main_tables(tmp_path):
     fo.write_compare(con, "category", "tsb", rows, [])                 # replaced, not added to
     assert con.execute("SELECT model, yhat FROM Result_Category_Forecast_Compare").fetchall() == [("tsb", 9.0)]
     assert con.execute("SELECT yhat FROM Result_Category_Forecast").fetchall() == [(5.0,)]
+
+
+def test_checks_are_each_fold_on_its_calendar_days(tmp_path):
+    """Actual vs Predicted: one row per fold with the days it covered, what
+    sold, what the model and the naive forecast said; replaced per model."""
+    import numpy as np
+    import pandas as pd
+    from forecasting.evaluate import make_folds, walk_forward_evaluate
+
+    idx = pd.date_range("2025-01-01", periods=420, freq="D")     # 60 to train + 12 x 30
+    values = np.arange(420, dtype=float) % 7
+    folds = make_folds(values.size, 30, 3, 12, 60)
+    flat = lambda train, h: np.full(h, train[-30:].mean())   # noqa: E731
+    ev_m = walk_forward_evaluate("Bags", values, flat, "flat", folds=folds)
+    ev_n = walk_forward_evaluate("Bags", values, s4c.NAIVE, "naive", folds=folds)
+    rows = fo.check_rows("Bags", folds, idx, ev_m.rows, ev_n.rows, "2026-02-04")
+
+    assert len(rows) == 12 and rows[-1]["end_date"] == idx[-1].strftime("%Y-%m-%d")
+    for r, f in zip(rows, folds):
+        assert r["start_date"] == idx[f.test_start].strftime("%Y-%m-%d")
+        assert (pd.Timestamp(r["end_date"]) - pd.Timestamp(r["start_date"])).days == 29
+        assert r["actual_30d"] == pytest.approx(values[f.test_start:f.test_end].sum())
+
+    con = sqlite3.connect(tmp_path / "x.db")
+    fo.write_checks(con, "category", "tsb", rows)
+    fo.write_checks(con, "category", "tsb", rows)                      # replaced, not added to
+    fo.write_checks(con, "category", "rolling_mean_30", rows[:2])
+    assert con.execute(f"SELECT model, COUNT(*) FROM {fo.CHECK_TABLE} GROUP BY 1 ORDER BY 1").fetchall() \
+        == [("rolling_mean_30", 2), ("tsb", 12)]
 
 
 REAL_DB = os.path.join(ROOT, "ustore.db")
@@ -192,3 +223,94 @@ def test_top_sellers_period(real_api):
     everything = real_api.get("/api/overview/performance?top_range=All%20Time").get_json()["top"]
     assert everything["total_php"] >= top["total_php"]
     assert real_api.get("/api/overview/performance?top_range=Forever").status_code == 400
+
+
+def test_top_sellers_months(real_api):
+    """?top_from=&top_to= rank whole months, inclusive; one month is from = to."""
+    default = real_api.get("/api/overview/performance").get_json()
+    if not default.get("available") or len(default["compare_months"]) < 3:
+        pytest.skip("too few tallied months")
+    latest = default["latest_month"]["month"]
+    prev = default["compare_months"][0]
+    older = default["compare_months"][2]
+
+    one = real_api.get(f"/api/overview/performance?top_from={prev}&top_to={prev}").get_json()
+    assert one["top"]["range"] == backend.TOP_CUSTOM_RANGE
+    assert one["top"]["window_start"] == f"{prev}-01"
+    assert one["top"]["window_end"] == backend._month_end(prev).isoformat()
+    assert one["top"]["total_php"] == pytest.approx(default["previous_month"]["php"], abs=1)
+
+    # The latest month ends at the last tallied day, and matches "This Month".
+    now = real_api.get(f"/api/overview/performance?top_from={latest}&top_to={latest}").get_json()["top"]
+    this_month = real_api.get("/api/overview/performance?top_range=This%20Month").get_json()["top"]
+    assert now["window_end"] == default["history_end"]
+    assert now["items"] == this_month["items"]
+
+    span = real_api.get(f"/api/overview/performance?top_from={older}&top_to={prev}").get_json()["top"]
+    assert span["total_php"] >= one["top"]["total_php"]
+    for bad in (f"top_from={prev}&top_to={older}", f"top_from={prev}", "top_from=July&top_to=July"):
+        assert real_api.get(f"/api/overview/performance?{bad}").status_code == 400
+
+
+def test_forecast_carries_its_checks_and_the_days_tallied_since(real_api):
+    """Without the checks table the forecast says so (None); with it, the
+    shown model's checks come back oldest first. Days sold since the forecast
+    are only days the store tallied anything."""
+    cats = real_api.get("/api/forecast/categories").get_json()
+    names = [r["category"] for r in (cats.get("data") or {}).get("categories", [])]
+    if not names:
+        pytest.skip("no category forecast")
+    cat = names[0]
+    con = sqlite3.connect(real_api.db)
+    con.execute(f"DROP TABLE IF EXISTS {fo.CHECK_TABLE}")
+    con.commit()
+    fd = real_api.get(f"/api/forecast/category/{cat}").get_json()["data"]
+    assert fd["checks"] is None
+
+    rows = [{"series_key": cat, "fold": i, "start_date": f"2026-0{i + 1}-01", "end_date": f"2026-0{i + 1}-30",
+             "actual_30d": 10.0 * i, "pred_30d": 12.0, "naive_30d": 9.0, "snapshot_date": "x"} for i in (1, 0)]
+    fo.write_checks(con, "category", fo.DEFAULTS["category"], rows)
+    fo.write_checks(con, "category", "tsb", rows[:1])
+    con.commit()
+    fd = real_api.get(f"/api/forecast/category/{cat}").get_json()["data"]
+    assert [r["start_date"] for r in fd["checks"]] == ["2026-01-01", "2026-02-01"]
+    other = real_api.get(f"/api/forecast/category/{cat}?model=tsb").get_json()["data"]
+    if other:                                                          # tsb made for comparison
+        assert len(other["checks"]) == 1
+
+    # Tallied days only: shift the forecast back over real history and every
+    # day returned must be one the store sold something on.
+    con.execute("UPDATE Result_Category_Forecast SET forecast_date = date(forecast_date, '-45 days')")
+    con.commit()
+    fd = real_api.get(f"/api/forecast/category/{cat}").get_json()["data"]
+    tallied = {r[0] for r in con.execute("""
+        SELECT DISTINCT d.calendar_date FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+        WHERE f.quantity_sold > 0 AND LOWER(COALESCE(f.transaction_type, 'sale')) = 'sale'""")}
+    assert fd["sold_since"], "the shifted window overlaps tallied days"
+    assert all(r["date"] in tallied for r in fd["sold_since"])
+
+
+def test_sale_overview_compares_with_a_chosen_month(real_api):
+    """?compare= puts an earlier tallied month in place of the month before;
+    no compare is the month before, as it always was."""
+    default = real_api.get("/api/overview/performance").get_json()
+    if not default.get("available") or len(default["compare_months"]) < 2:
+        pytest.skip("too few tallied months")
+    latest = default["latest_month"]["month"]
+    months = default["compare_months"]
+    assert months == sorted(months, reverse=True) and all(m < latest for m in months)
+    assert default["compare_month"] == default["default_compare_month"] == backend._month_before(latest)
+    assert default["latest_month"]["days"] >= 1
+
+    older = months[-1]
+    chosen = real_api.get(f"/api/overview/performance?compare={older}").get_json()
+    assert chosen["compare_month"] == older and chosen["previous_month"]["month"] == older
+    assert chosen["latest_month"] == default["latest_month"]
+    assert chosen["top"] == default["top"]   # Top Sellers does not follow it
+    assert sum(c["previous_php"] for c in chosen["by_category"]) == pytest.approx(chosen["previous_month"]["php"],
+                                                                                  abs=1)
+
+    same = real_api.get(f"/api/overview/performance?compare={default['default_compare_month']}").get_json()
+    assert same["previous_month"] == default["previous_month"]
+    for bad in (latest, "2099-01", "July"):
+        assert real_api.get(f"/api/overview/performance?compare={bad}").status_code == 400

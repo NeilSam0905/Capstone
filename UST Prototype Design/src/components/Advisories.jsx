@@ -4,6 +4,7 @@ import useData from '../hooks/useData';
 import { Loading } from './Pending';
 import Modal from './Modal';
 import Icon from './Icon';
+import { DailyWindowBars } from './charts';
 import { num, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
 import { jumpKey, readJumpPref, writeJumpPref } from '../lib/advisoriesJump';
 
@@ -95,7 +96,8 @@ function AdvisoryCard({ advisory, setPage }) {
   const [open, setOpen] = useState(false);
   const sev = SEVERITY[advisory.severity] ?? SEVERITY.low;
   const items = advisory.items ?? [];
-  const expandable = items.length > 0 || Boolean(advisory.basis);
+  const outlook = advisory.outlook;
+  const expandable = items.length > 0 || Boolean(advisory.basis) || Boolean(outlook);
   const belowRop = items.filter(it => it.below_rop).length;
   // Slow and Non-moving items are never forecast, so on the decision-rule
   // advisories this column would be a dash on every row.
@@ -117,6 +119,7 @@ function AdvisoryCard({ advisory, setPage }) {
         <div className="advisory__meta">
           <span className="advisory__kind">{TYPE_LABEL[advisory.type] || 'Advisory'}</span>
           {dateText && <span>{dateText}</span>}
+          {outlook && <span className="advisory__expect-chip">Expect about {num(Math.round(outlook.per_day))} units a selling day</span>}
           {items.length > 0 && (
             <span>{num(items.length)} item{items.length === 1 ? '' : 's'}</span>
           )}
@@ -145,6 +148,8 @@ function AdvisoryCard({ advisory, setPage }) {
 
       {open && (
         <div className="advisory__body">
+          {outlook && <AdvisoryOutlook o={outlook} />}
+
           {advisory.basis && (
             <div className="advisory__basis">
               <span className="advisory__basis-label">Why this is showing</span>
@@ -205,6 +210,70 @@ function AdvisoryCard({ advisory, setPage }) {
             </button>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/** How a kind of day's lift reads in a sentence. */
+const PAST_DAYS = {
+  enrollment: 'Past enrollment days',
+  term_start: 'The first two weeks of past terms',
+  exam: 'Past exam days',
+  sem_break: 'Past semestral break days',
+  event: 'Past event days',
+  regular: 'Regular days',
+};
+// Fewer tallied days of a kind than this and its lift is a rough guide only.
+const FEW_DAYS = 10;
+
+/** The predictive part of a calendar advisory (the adviser, Nov 2026: "where
+ *  is the predictive part?"), from the API's `outlook` (advisory_outlook.py):
+ *  what the window should sell per selling day - a regular day's level now
+ *  times the lift measured for that kind of day - and a chart of the same
+ *  window last year, with the expectation drawn over it to compare. */
+function AdvisoryOutlook({ o }) {
+  const ly = o.last_year;
+  const kindText = PAST_DAYS[o.kind] ?? o.kind_label;
+  return (
+    <div className="advisory__outlook">
+      <div>
+        <span className="advisory__basis-label">What we expect</span>
+        <div className="advisory__expect">
+          <span>About <b>{num(Math.round(o.per_day))} units</b> per selling day</span>
+          <span className="advisory__expect-lift">{o.lift.toFixed(2)}× a regular day</span>
+        </div>
+        <div className="hint">
+          A regular day now sells about {num(Math.round(o.baseline_per_day))} units (the average of{' '}
+          {num(o.baseline_days)} tallied regular days, {usDate(o.baseline_from)} – {usDate(o.baseline_to)}).{' '}
+          {o.kind === 'regular'
+            ? 'These are regular days on the calendar.'
+            : <>{kindText} sold {o.lift.toFixed(2)}× a regular day ({num(o.past_days)} tallied days so far
+              {o.past_days < FEW_DAYS ? ', too few to be sure' : ''}).</>}
+        </div>
+      </div>
+
+      {ly ? (
+        <div>
+          <span className="advisory__basis-label">
+            Same window last year · {usDate(ly.start)}{ly.end !== ly.start ? ` – ${usDate(ly.end)}` : ''}
+          </span>
+          <DailyWindowBars data={ly.series} refValue={o.per_day} />
+          <div className="dwbars-legend">
+            <span><i style={{ background: 'var(--accent)' }} />Last year&rsquo;s window</span>
+            <span><i style={{ background: 'var(--muted)', opacity: 0.45 }} />The week either side</span>
+            <span><i className="dwbars-legend__dash" />Expected per selling day this time</span>
+            <span><i style={{ background: 'var(--line)', height: 3 }} />Nothing tallied</span>
+          </div>
+          <div className="hint">
+            {ly.per_day == null
+              ? 'Nothing was tallied in that window last year.'
+              : <>Last year it sold <b>{num(Math.round(ly.per_day))}</b> per selling day ({ly.recorded_days} of
+                its {ly.window_days} days tallied), against about {num(Math.round(o.per_day))} expected this time.</>}
+          </div>
+        </div>
+      ) : (
+        <div className="hint">There is no same window last year to compare with yet.</div>
       )}
     </div>
   );

@@ -10,7 +10,7 @@ forecast is read from.
 """
 import re
 
-from forecast_options import CATEGORY, COMPARE_TABLES, DEFAULTS, ITEM, OPTIONS  # scripts/
+from forecast_options import CATEGORY, CHECK_TABLE, COMPARE_TABLES, DEFAULTS, ITEM, OPTIONS  # scripts/
 
 _SHAPE_SUFFIX = re.compile(r"\+[a-z]+_shape$")
 

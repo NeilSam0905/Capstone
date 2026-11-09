@@ -314,8 +314,15 @@ export const getMonthlyUnits = (filters = {}) =>
  *  the items that make 80% of sales. Supplier and category narrow the sums. */
 /** `topRange` is the Top Sellers card's own period (backend
  *  TOP_EARNER_RANGES); left out, its ranking covers the last 12 months. */
-export const getOverviewPerformance = (filters = {}, topRange) =>
-  get(`/overview/performance${qs({ supplier: filters.supplier, category: filters.category, top_range: topRange })}`);
+/** `top` is Top Sellers' window: a preset name (top_range), or
+ *  { from, to } as 'YYYY-MM' for whole months, inclusive (one month: from = to).
+ *  `compare` is the month the Sale Overview compares the latest one with. */
+export const getOverviewPerformance = (filters = {}, top, compare) =>
+  get(`/overview/performance${qs({
+    supplier: filters.supplier, category: filters.category,
+    ...(typeof top === 'object' && top ? { top_from: top.from, top_to: top.to } : { top_range: top }),
+    compare,
+  })}`);
 
 /** One product's observed monthly units — measured history, no fit. */
 export const getProductHistory = productId => get(`/products/${productId}/history`);

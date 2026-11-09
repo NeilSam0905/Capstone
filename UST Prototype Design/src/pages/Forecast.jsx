@@ -6,7 +6,7 @@ import {
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
-import { LineChart, MARK_KINDS, ScrollForecastChart } from '../components/charts';
+import { ActualVsPredictedChart, LineChart, MARK_KINDS, ScrollForecastChart } from '../components/charts';
 import { num, shortMonth, longMonth, monthName, usDate, isCalendarAdjusted, roundNice, pesoK, FSN_TONE, FSN_LABEL } from '../lib/format';
 import SearchSelect from '../components/SearchSelect';
 import Icon from '../components/Icon';
@@ -315,6 +315,8 @@ function CategoryForecastPanel({ category, onPickItem, setPage, model, onModel }
                       ? `the ${fd.n_forecast} forecast item${fd.n_forecast === 1 ? '' : 's'} only`
                       : null} />
 
+      {wholeCategory && <ActualVsPredicted fd={fd} title={category} />}
+
       <CategoryTotalCard category={category} fd={fd} onPickItem={onPickItem} />
     </>
   );
@@ -568,7 +570,99 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage, model, onMo
           </div>
         )}
       </ForecastCard>
+
+      <ActualVsPredicted fd={fd} title={fd.item_name} />
     </>
+  );
+}
+
+/* ----------------------------------------------------- actual vs predicted */
+
+/** Mean of `f` over `rows`, or null for none. */
+const meanOf = (rows, f) => (rows.length ? rows.reduce((s, r) => s + f(r), 0) / rows.length : null);
+/** MAPE in percent over the periods that sold something (the pipeline's rule:
+ *  a period that sold nothing has no percentage). */
+const mapeOf = (rows, key) => meanOf(rows.filter(r => r.actual_30d > 0),
+  r => Math.abs(r[key] - r.actual_30d) / r.actual_30d * 100);
+// The manuscript's accuracy target: MAPE of 20% or lower.
+const MAPE_TARGET = 20;
+
+/**
+ * Actual vs Predicted (the adviser, Nov 2026): every past 30-day period the
+ * shown model was checked on - what it forecast for the period, using only the
+ * sales before it, and what then sold - with how far off it was in units and
+ * in percent, against simply repeating the last 30 days.
+ *
+ * The periods are the walk-forward checks behind the Reliable tag and the
+ * accuracy figures (the API's `checks`, saved by the same Run Forecast), so
+ * the averages here are those figures: the typical miss is the model's MAE,
+ * the percentage its MAPE. They follow the model dropdown.
+ */
+function ActualVsPredicted({ fd, title }) {
+  const checks = fd.checks;
+  const head = (
+    <div className="card-h">
+      <span className="section-h">Actual vs Predicted — {title}</span>
+      <span className="hint">{fd.model_label}</span>
+    </div>
+  );
+  if (checks == null || !checks.length) {
+    return (
+      <div className="card card__pad">
+        {head}
+        <div className="empty">
+          {checks == null
+            ? 'Choose Run Forecast in the Tally Interface to save the past checks behind this forecast.'
+            : 'Too little sales history to check this forecast against past periods yet.'}
+        </div>
+      </div>
+    );
+  }
+
+  const mae = meanOf(checks, r => Math.abs(r.pred_30d - r.actual_30d));
+  const naiveMae = meanOf(checks, r => Math.abs(r.naive_30d - r.actual_30d));
+  const mape = mapeOf(checks, 'pred_30d');
+  const naiveMape = mapeOf(checks, 'naive_30d');
+  const closer = checks.filter(r => Math.abs(r.pred_30d - r.actual_30d) < Math.abs(r.naive_30d - r.actual_30d)).length;
+  const first = checks[0].start_date, last = checks[checks.length - 1].end_date;
+
+  return (
+    <div className="card card__pad">
+      {head}
+      <div className="avp-stats">
+        <div className="avp-stat">
+          <span className="avp-stat__label">Typical miss</span>
+          <span className="avp-stat__val">{num(Math.round(mae))} units</span>
+          <span className="avp-stat__sub">per 30 days · repeating the last 30 days: {num(Math.round(naiveMae))}</span>
+        </div>
+        <div className="avp-stat">
+          <span className="avp-stat__label">MAPE · average % off</span>
+          <span className={`avp-stat__val ${mape != null && mape <= MAPE_TARGET ? 'is-ok' : 'is-crit'}`}>
+            {mape == null ? '—' : `${Math.round(mape)}%`}
+          </span>
+          <span className="avp-stat__sub">
+            target {MAPE_TARGET}% or lower · repeating the last 30 days: {naiveMape == null ? '—' : `${Math.round(naiveMape)}%`}
+          </span>
+        </div>
+        <div className="avp-stat">
+          <span className="avp-stat__label">Closer than repeating the last 30 days</span>
+          <span className="avp-stat__val">{closer} of {checks.length}</span>
+          <span className="avp-stat__sub">periods</span>
+        </div>
+      </div>
+
+      <ActualVsPredictedChart checks={checks} />
+      <div className="legend" style={{ justifyContent: 'center', marginTop: 8 }}>
+        <span><i style={{ background: 'var(--ink)' }} />Sold</span>
+        <span><i style={{ background: 'var(--accent)' }} />Forecast</span>
+        <span><i className="legend__dots" />Repeating the last 30 days</span>
+        <span>% over each period: how far the forecast was off (+ over, − under)</span>
+      </div>
+      <p className="hint" style={{ marginTop: 8 }}>
+        Each point is one 30-day period from {usDate(first)} to {usDate(last)}: the forecast was made with only the
+        sales before that period, then compared with what sold. Hover a period for its figures.
+      </p>
+    </div>
   );
 }
 
@@ -613,11 +707,13 @@ function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, chil
       </div>
       {scope && <div className="hint" style={{ marginTop: -6, marginBottom: 6 }}>Totals cover {scope}.</div>}
 
-      <ScrollForecastChart history={fd.history} forecast={fd.forecast} marks={fd.calendar_marks} />
+      <ScrollForecastChart history={fd.history} forecast={fd.forecast} marks={fd.calendar_marks}
+                           actuals={fd.sold_since} />
       <div className="legend" style={{ justifyContent: 'center', marginTop: 10 }}>
         <span><i style={{ background: 'var(--text-2)', opacity: 0.7 }} />Past months · average sold per day</span>
         <span><i style={{ background: 'var(--accent)' }} />Forecast per day</span>
         <span><i style={{ background: 'var(--accent)', opacity: 0.25 }} />Likely range</span>
+        {fd.sold_since?.length > 0 && <span><i style={{ background: 'var(--ink)' }} />Sold so far</span>}
         {/* Only the kinds in this window; hover a day for its name. */}
         {[...new Set((fd.calendar_marks ?? []).map(m => m.kind))].map(kind => (
           <span key={kind} title="Hover the day on the chart for its name">
@@ -627,10 +723,35 @@ function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, chil
         ))}
       </div>
 
+      <SoldSoFar fd={fd} />
+
       {children}
 
       <ForecastGuidance g={fd.guidance} title={title} setPage={setPage} />
     </div>
+  );
+}
+
+/** The forecast's own days already tallied, against what it said for them:
+ *  the dark points on the chart, added up. Nothing until a day after the
+ *  forecast was made has a tally (the next Run Analytics then makes a new
+ *  forecast from those days). */
+function SoldSoFar({ fd }) {
+  const sold = fd.sold_since ?? [];
+  if (!sold.length) return null;
+  const tallied = new Set(sold.map(r => r.date));
+  const through = sold[sold.length - 1].date;
+  const units = sold.reduce((s, r) => s + (r.units || 0), 0);
+  // Only the days tallied: an untallied day has no sales to compare with.
+  const forecast = fd.forecast.filter(r => tallied.has(r.forecast_date))
+    .reduce((s, r) => s + (r.yhat || 0), 0);
+  const off = forecast > 0 && units > 0 ? Math.round(((forecast - units) / units) * 100) : null;
+  return (
+    <p className="hint" style={{ textAlign: 'center', margin: '8px 0 0' }}>
+      Since this forecast was made: <b>{num(units)} sold</b> on the {sold.length} day{sold.length === 1 ? '' : 's'}{' '}
+      tallied so far (through {usDate(through)}), against {num(Math.round(forecast))} forecast for those days
+      {off != null && <> (forecast {Math.abs(off)}% {off >= 0 ? 'over' : 'under'})</>}.
+    </p>
   );
 }
 

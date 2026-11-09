@@ -361,6 +361,239 @@ export function HBars({ data, valueFmt = num, color = 'var(--ink)' }) {
   );
 }
 
+/* ---------- Daily bars around a window (an advisory's last year) ---------- */
+const DAY_KIND_LABEL = {
+  enrollment: 'Enrollment day', term_start: 'First two weeks of term', exam: 'Exam week',
+  sem_break: 'Semestral break', event: 'Event day', regular: 'Regular day',
+};
+const dayLabel = iso => new Date(`${iso}T00:00:00`)
+  .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+/** A round step that splits `top` into about three gridlines. */
+function niceStep(top) {
+  const raw = top / 3 || 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / mag;
+  return (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * mag;
+}
+
+/** One bar per day: the window's days in the accent, the days around it in
+ *  grey, a day with nothing tallied as a short stub (not a zero: a closure or
+ *  a day nothing was written down), and `refValue` as a dashed line - what is
+ *  expected per selling day this time. A day far above the window's own (a
+ *  bulk order) is cut at the top with its figure written over it, so it does
+ *  not flatten the bars the chart is about. `data` is
+ *  [{ date, units (null = no tally), closed, in_window, kind }]. */
+export function DailyWindowBars({ data, refValue, height = 170 }) {
+  const [hover, setHover] = useState(null);
+  const svgRef = useRef(null);
+  const [wrapRef, measured] = useWidth();
+  if (!data?.length) return null;
+
+  const W = Math.max(measured || 560, 260), H = height, padL = 40, padR = 10, padT = 16, padB = 24;
+  const n = data.length;
+  const vals = data.filter(d => d.units != null).map(d => d.units);
+  const windowMax = Math.max(0, ...data.filter(d => d.in_window && d.units != null).map(d => d.units));
+  const keep = Math.max(refValue ?? 0, windowMax, 1);
+  const allMax = Math.max(0, ...vals);
+  const raw = allMax <= keep * 1.6 ? Math.max(allMax, keep) : keep * 1.4;
+  const step = niceStep(raw);
+  const top = Math.ceil(raw / step) * step;
+  const plotW = W - padL - padR;
+  const slot = plotW / n;
+  const bw = Math.max(2, Math.min(28, slot * 0.68));
+  const xL = i => padL + i * slot + (slot - bw) / 2;
+  const y = v => padT + (1 - Math.min(v, top) / top) * (H - padT - padB);
+  const base = H - padB;
+  const first = data.findIndex(d => d.in_window);
+  const last = data.length - 1 - [...data].reverse().findIndex(d => d.in_window);
+  // Labels counted from the window's first day, so it always has one and
+  // none crowds it; the first label shown and any 1st of a month name the month.
+  const labelEvery = Math.ceil(n / Math.max(2, Math.floor(plotW / 40)));
+  const anchor = Math.max(0, first);
+  const labelled = i => (i - anchor) % labelEvery === 0;
+  const firstLabel = anchor % labelEvery;
+
+  function onMove(e) {
+    const local = svgPoint(svgRef.current, e.clientX, e.clientY);
+    if (!local) return;
+    const i = Math.floor((local.x - padL) / slot);
+    if (i < 0 || i >= n) { setHover(null); return; }
+    setHover({ i, left: svgXToLocalPx(svgRef.current, padL + (i + 0.5) * slot) });
+  }
+
+  const h = hover && data[hover.i];
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
+           style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}
+           role="img" aria-label="Daily units sold over the same window last year">
+        {first >= 0 && (
+          <rect x={padL + first * slot} y={padT - 6} width={(last - first + 1) * slot} height={base - padT + 6}
+                fill="var(--accent-wash)" rx="4" />
+        )}
+        {Array.from({ length: Math.round(top / step) + 1 }).map((_, k) => {
+          const v = k * step;
+          return (
+            <g key={k}>
+              <line x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke="var(--line)" strokeWidth="1" />
+              <text x={padL - 6} y={y(v) + 3.5} textAnchor="end" fontSize="9.5" fill="var(--muted)">{num(v)}</text>
+            </g>
+          );
+        })}
+        {data.map((d, i) => {
+          if (d.units == null) {
+            return <rect key={d.date} x={xL(i)} y={base - 3} width={bw} height={3} rx="1" fill="var(--line)" />;
+          }
+          const cut = d.units > top;
+          const fill = d.in_window ? 'var(--accent)' : 'var(--muted)';
+          return (
+            <g key={d.date} opacity={hover && hover.i !== i ? 0.55 : 1}>
+              <rect x={xL(i)} y={y(d.units)} width={bw} height={Math.max(1, base - y(d.units))} rx="2"
+                    fill={fill} fillOpacity={d.in_window ? 1 : 0.45} />
+              {cut && (
+                <>
+                  <path d={`M${xL(i) - 1},${padT + 9} l${bw + 2},-4 M${xL(i) - 1},${padT + 13} l${bw + 2},-4`}
+                        stroke="var(--card)" strokeWidth="2" />
+                  <text x={xL(i) + bw / 2} y={padT - 4} textAnchor="middle" fontSize="9.5" fontWeight="700"
+                        fill="var(--text-2)">{num(d.units)}</text>
+                </>
+              )}
+            </g>
+          );
+        })}
+        {refValue != null && (
+          <line x1={padL} y1={y(refValue)} x2={W - padR} y2={y(refValue)}
+                stroke="var(--ink)" strokeWidth="1.5" strokeDasharray="5 4" />
+        )}
+        {data.map((d, i) => (labelled(i)
+          ? (
+            <text key={d.date} x={padL + (i + 0.5) * slot} y={H - 7} textAnchor="middle" fontSize="10"
+                  fill={d.in_window ? 'var(--text)' : 'var(--muted)'} fontWeight={d.in_window ? 700 : 400}>
+              {i === firstLabel || i === first || d.date.slice(8) === '01'
+                ? dayLabel(d.date).split(', ')[1] : String(+d.date.slice(8))}
+            </text>
+          ) : null))}
+      </svg>
+      {h && hover.left != null && (
+        <div className="charttip-wrap" style={{ left: `${hover.left}px` }}>
+          <ChartTip label={dayLabel(h.date)}
+                    value={h.units != null ? `${num(h.units)} units` : h.closed ? 'Store closed' : 'Nothing tallied'}
+                    sub={(DAY_KIND_LABEL[h.kind] ?? h.kind) + (h.in_window ? ' · in the window' : '')} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Actual vs predicted, period by period (Demand Forecast) ---------- */
+const shortDay = iso => new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const shortDayYear = iso => new Date(`${iso}T00:00:00`)
+  .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+/** How far a forecast was off, signed: +40% = forecast 40% above what sold. */
+const offPct = (pred, actual) => (actual > 0 ? ((pred - actual) / actual) * 100 : null);
+
+/** Each past 30-day check: what sold (ink) and what the model had forecast
+ *  for it (accent), joined by a line the length of the miss, with the miss in
+ *  percent over each period - so how far off it was, and which way, reads at
+ *  a glance. `naive` adds what repeating the last 30 days would have said, as
+ *  a faint dotted line. `checks` is [{ start_date, end_date, actual_30d,
+ *  pred_30d, naive_30d }], oldest first. */
+export function ActualVsPredictedChart({ checks, naive = true, height = 230 }) {
+  const [hover, setHover] = useState(null);
+  const svgRef = useRef(null);
+  const [wrapRef, measured] = useWidth();
+  if (!checks?.length) return null;
+
+  const W = Math.max(measured || 640, 280), H = height, padL = 48, padR = 12, padT = 30, padB = 26;
+  const n = checks.length;
+  const plotW = W - padL - padR;
+  const slot = plotW / n;
+  const cx = i => padL + (i + 0.5) * slot;
+  const peak = Math.max(1, ...checks.flatMap(c => [c.actual_30d, c.pred_30d, naive ? c.naive_30d : 0]));
+  const step = niceStep(peak);
+  const top = Math.ceil(peak / step) * step;
+  const y = v => padT + (1 - v / top) * (H - padT - padB);
+  const path = key => checks.map((c, i) => `${i ? 'L' : 'M'}${cx(i).toFixed(1)},${y(c[key]).toFixed(1)}`).join(' ');
+  const labelEvery = Math.ceil(n / Math.max(2, Math.floor(plotW / 64)));
+  // Every period's % when there is room for it (about 34px), else every few,
+  // counted from the latest; hovering a period always shows its own.
+  const pctEvery = slot >= 34 ? 1 : Math.ceil(34 / slot);
+  const tone = p => (p == null ? 'var(--muted)' : Math.abs(p) <= 20 ? 'var(--ok)' : Math.abs(p) <= 50 ? 'var(--warn)' : 'var(--crit)');
+
+  function onMove(e) {
+    const local = svgPoint(svgRef.current, e.clientX, e.clientY);
+    if (!local) return;
+    const i = Math.floor((local.x - padL) / slot);
+    if (i < 0 || i >= n) { setHover(null); return; }
+    setHover({ i, left: svgXToLocalPx(svgRef.current, cx(i)) });
+  }
+
+  const h = hover && checks[hover.i];
+  const hp = h && offPct(h.pred_30d, h.actual_30d);
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
+           style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}
+           role="img" aria-label="Units sold against units forecast in each past 30-day period">
+        {Array.from({ length: Math.round(top / step) + 1 }).map((_, k) => (
+          <g key={k}>
+            <line x1={padL} y1={y(k * step)} x2={W - padR} y2={y(k * step)} stroke="var(--line)" />
+            <text x={padL - 6} y={y(k * step) + 3.5} textAnchor="end" fontSize="9.5" fill="var(--muted)">
+              {num(k * step)}
+            </text>
+          </g>
+        ))}
+        {hover && (
+          <rect x={padL + hover.i * slot} y={padT - 22} width={slot} height={H - padB - padT + 22}
+                fill="var(--accent-wash)" rx="4" />
+        )}
+        {/* The miss: from what sold to what was forecast */}
+        {checks.map((c, i) => (
+          <line key={`m${c.start_date}`} x1={cx(i)} y1={y(c.actual_30d)} x2={cx(i)} y2={y(c.pred_30d)}
+                stroke={tone(offPct(c.pred_30d, c.actual_30d))} strokeWidth="3" strokeOpacity="0.35"
+                strokeLinecap="round" />
+        ))}
+        {naive && (
+          <path d={path('naive_30d')} fill="none" stroke="var(--muted)" strokeWidth="1.5"
+                strokeDasharray="2 4" strokeLinecap="round" />
+        )}
+        <path d={path('pred_30d')} fill="none" stroke="var(--accent)" strokeWidth="2.2" strokeLinejoin="round" />
+        <path d={path('actual_30d')} fill="none" stroke="var(--ink)" strokeWidth="2.2" strokeLinejoin="round" />
+        {checks.map((c, i) => {
+          const p = offPct(c.pred_30d, c.actual_30d);
+          return (
+            <g key={c.start_date}>
+              <circle cx={cx(i)} cy={y(c.pred_30d)} r="4" fill="var(--card)" stroke="var(--accent)" strokeWidth="2.2" />
+              <circle cx={cx(i)} cy={y(c.actual_30d)} r="4" fill="var(--ink)" />
+              {((n - 1 - i) % pctEvery === 0 || hover?.i === i) && (
+                <text x={cx(i)} y={padT - 10} textAnchor="middle" fontSize="10" fontWeight="700" fill={tone(p)}>
+                  {p == null ? '—' : `${p > 0 ? '+' : p < 0 ? '−' : ''}${Math.abs(Math.round(p))}%`}
+                </text>
+              )}
+            </g>
+          );
+        })}
+        {checks.map((c, i) => (i % labelEvery === (n - 1) % labelEvery ? (
+          <text key={`x${c.start_date}`} x={cx(i)} y={H - 8} textAnchor="middle" fontSize="10" fill="var(--muted)">
+            {shortDay(c.start_date)}
+          </text>
+        ) : null))}
+      </svg>
+      {h && hover.left != null && (
+        <div className="charttip-wrap" style={{ left: `${hover.left}px` }}>
+          <ChartTip label={`${shortDayYear(h.start_date)} – ${shortDayYear(h.end_date)}`}
+                    value={`Sold ${num(Math.round(h.actual_30d))} · forecast ${num(Math.round(h.pred_30d))}`}
+                    sub={hp == null ? 'Nothing sold, so no percentage'
+                      : `${hp >= 0 ? 'Over' : 'Under'} by ${num(Math.abs(Math.round(h.pred_30d - h.actual_30d)))} units (${Math.abs(Math.round(hp))}%)`}
+                    notes={naive ? [`Repeating the last 30 days: ${num(Math.round(h.naive_30d))}`] : undefined} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- Grouped vertical bars (FSN threshold sensitivity) ---------- */
 export function GroupedBars({ groups, series, height = 190 }) {
   const W = 460, H = height, padL = 34, padR = 8, padT = 12, padB = 34;
@@ -579,8 +812,10 @@ function niceAxis(v) {
  *  never tallied and is left off the timeline (the line joins its neighbours;
  *  the month labels show the jump) rather than dipping to zero.
  *  `forecast` is the Result_Forecast rows [{ forecast_date, yhat, yhat_lower,
- *  yhat_upper }]. */
-export function ScrollForecastChart({ history, forecast, marks, height = 290, monthMax = 56, dayMin = 16 }) {
+ *  yhat_upper }]. `actuals` ([{ date, units }]) are the forecast days already
+ *  tallied, drawn over the forecast as dark points as they come in (the
+ *  adviser, Nov 2026: actuals on top of the predictions). */
+export function ScrollForecastChart({ history, forecast, marks, actuals, height = 290, monthMax = 56, dayMin = 16 }) {
   const scrollRef = useRef(null);
   const dragRef = useRef(null);
   const frameRef = useRef(0);
@@ -601,16 +836,18 @@ export function ScrollForecastChart({ history, forecast, marks, height = 290, mo
         perDay: r.units / r.tally_days,
       }))
       .sort((a, b) => a.k - b.k);
+    const sold = new Map((actuals ?? []).map(a => [a.date, a.units]));
     const days = (forecast ?? []).map(r => ({
       date: r.forecast_date,
       yhat: r.yhat,
       lo: r.yhat_lower ?? r.yhat,
       hi: r.yhat_upper ?? r.yhat,
+      actual: sold.get(r.forecast_date) ?? null,
     }));
     const total = days.reduce((s, d) => s + (d.yhat ?? 0), 0);
-    const peak = Math.max(0, ...months.map(m => m.perDay), ...days.map(d => d.hi ?? 0));
+    const peak = Math.max(0, ...months.map(m => m.perDay), ...days.map(d => Math.max(d.hi ?? 0, d.actual ?? 0)));
     return { months, days, total, peak };
-  }, [history, forecast]);
+  }, [history, forecast, actuals]);
 
   // The visible width of the timeline, so the history can be squeezed into a
   // compact overview beside the forecast instead of running off-screen.
@@ -783,7 +1020,8 @@ export function ScrollForecastChart({ history, forecast, marks, height = 290, mo
     const d = days[hover.i];
     tip = { label: `${fmtIsoDay(d.date)} · forecast`, value: num(Math.round(d.yhat)),
             sub: `likely ${num(Math.round(d.lo))} – ${num(Math.round(d.hi))} units`,
-            notes: dayMarks.filter(m => m.from <= hover.i && hover.i <= m.to).map(m => m.name) };
+            notes: [...(d.actual != null ? [`Sold: ${num(d.actual)}`] : []),
+              ...dayMarks.filter(m => m.from <= hover.i && hover.i <= m.to).map(m => m.name)] };
   }
 
   return (
@@ -893,6 +1131,20 @@ export function ScrollForecastChart({ history, forecast, marks, height = 290, mo
                               fill={hover?.kind === 'day' && hover.i === j ? 'var(--accent)' : 'var(--card)'}
                               stroke="var(--accent)" strokeWidth="2" />
                     ))}
+                  </g>
+                )}
+
+                {/* What has sold on the forecast days tallied so far */}
+                {days.some(d => d.actual != null) && (
+                  <g>
+                    <path fill="none" stroke="var(--ink)" strokeWidth="1.8" strokeLinejoin="round"
+                          d={days.map((d, j) => (d.actual == null ? null
+                            : `${j > 0 && days[j - 1].actual != null ? 'L' : 'M'}${dx(j).toFixed(1)},${y(d.actual).toFixed(1)}`))
+                            .filter(Boolean).join(' ')} />
+                    {days.map((d, j) => (d.actual == null ? null : (
+                      <circle key={`a${d.date}`} cx={dx(j)} cy={y(d.actual)} r="3.5"
+                              fill="var(--ink)" stroke="var(--card)" strokeWidth="1.2" />
+                    )))}
                   </g>
                 )}
 

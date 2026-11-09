@@ -369,11 +369,21 @@ def error_metrics(actual, pred, scales):
 def validate(category, values, model, model_type):
     """Walk-forward metrics for one category, or None if its history cannot
     support MIN_FOLDS folds (the forecast is then flagged heuristic)."""
+    metrics, reason, _ = validate_with_checks(category, values, model, model_type)
+    return metrics, reason
+
+
+def validate_with_checks(category, values, model, model_type, index=None, snapshot_date=None):
+    """validate(), plus each fold as a forecast_options.CHECK_TABLE row (what
+    was forecast for that 30-day period and what sold) when `index` - the
+    series' dates - is given; [] otherwise or when there are no folds."""
     folds = make_folds(values.size, HORIZON, MIN_FOLDS, MAX_FOLDS, MIN_TRAIN)
     ev_m = walk_forward_evaluate(category, values, model, model_type, folds=folds)
     if not ev_m.sufficient:
-        return None, ev_m.reason
+        return None, ev_m.reason, []
     ev_n = walk_forward_evaluate(category, values, NAIVE, "repeat_last_30d", folds=folds)
+    checks = ([] if index is None else
+              forecast_options.check_rows(category, folds, index, ev_m.rows, ev_n.rows, snapshot_date))
 
     actual = np.array([r["actual_30d"] for r in ev_m.rows])
     m_pred = np.array([r["pred_30d"] for r in ev_m.rows])
@@ -389,7 +399,7 @@ def validate(category, values, model, model_type):
         naive_mae=n_mae, naive_mase=n_mase,
         beats_naive_mae=int(mae < n_mae),
         mean_actual_30d=float(actual.mean()),
-    ), ""
+    ), "", checks
 
 
 def main():
@@ -448,10 +458,12 @@ def main():
               f"calendar flags are treated as 0.")
     print()
 
-    forecast_rows, metric_rows, report, shape_used = [], [], [], {}
+    forecast_rows, metric_rows, report, shape_used, check_rows = [], [], [], {}, []
     for cat in series.columns:
         v = series[cat].to_numpy(float)
-        metrics, reason = validate(cat, v, model, model_type)
+        metrics, reason, checks = validate_with_checks(cat, v, model, model_type,
+                                                       series.index, snapshot_date)
+        check_rows += checks
         out = np.asarray(model(v, HORIZON), dtype=float).ravel()
         if curve:
             # Its own curve: no negative days, the total is their sum.
@@ -512,6 +524,7 @@ def main():
         create_result_tables(con)              # the comparison tables copy their columns
         forecast_options.write_compare(con, forecast_options.CATEGORY, model_type,
                                        forecast_df.to_dict("records"), metrics_df.to_dict("records"))
+        forecast_options.write_checks(con, forecast_options.CATEGORY, model_type, check_rows)
         con.commit()
     elif not args.no_db_write:
         create_result_tables(con)
@@ -535,6 +548,7 @@ def main():
                        :rmse,:mape,:mase,:naive_mae,:naive_mase,:beats_naive_mae,
                        :mean_actual_30d,:snapshot_date)""",
             metrics_df.to_dict("records"))
+        forecast_options.write_checks(con, forecast_options.CATEGORY, model_type, check_rows)
         con.commit()
 
     # Informational: how far the sum of the Fast items' own forecasts sits from

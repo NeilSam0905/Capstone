@@ -35,6 +35,7 @@ from pathlib import Path
 from flask import Flask, Response, g, jsonify, request
 from flask_cors import CORS
 
+import advisory_outlook
 import auth
 import batch_export
 import batch_pdf
@@ -778,6 +779,8 @@ TOP_EARNER_WINDOW_DAYS = 365
 # latest tallied month and "All Time" has no start (handled in the route).
 TOP_EARNER_RANGES = {"This Month": None, "Last 3 Months": 91, "Last 6 Months": 183,
                      "Last 12 Months": TOP_EARNER_WINDOW_DAYS, "All Time": None}
+# What `top.range` says when ?top_from= / ?top_to= set the window instead.
+TOP_CUSTOM_RANGE = "Custom Range"
 TOP_EARNER_SHARE = 0.80          # list items down to this share of sales
 SMALL_SELLER_UNITS = 10          # "sold this many or fewer" = negligible
 STOPPED_MIN_UNITS = 5            # sold this many last month, none this month
@@ -789,6 +792,12 @@ def _month_before(month, years=0, months=1):
     while m < 1:
         y, m = y - 1, m + 12
     return f"{y:04d}-{m:02d}"
+
+
+def _month_end(month):
+    """'2026-02' -> date(2026, 2, 28)."""
+    y, m = int(month[:4]), int(month[5:7])
+    return date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)
 
 
 @app.get("/api/overview/performance")
@@ -807,10 +816,31 @@ def get_overview_performance():
     Overview can say where sales moved rather than only that they did, and
     names the items that moved each one most. `stopped_selling` lists the
     items that sold last month and not once this month: one that suddenly
-    stops has often run out, so they are the ones to check first."""
+    stops has often run out, so they are the ones to check first.
+
+    `?compare=YYYY-MM` puts any earlier tallied month in place of "the month
+    before" for all of that (the adviser, Nov 2026: compare a chosen month
+    with the current one). `compare_months` lists the months it can be, and
+    each month figure carries `days`, the days it has sales on, since months
+    were tallied on very different numbers of days.
+
+    Top Sellers' window is `?top_range=` (one of TOP_EARNER_RANGES) or
+    `?top_from=YYYY-MM&top_to=YYYY-MM`, whole months inclusive, which takes
+    precedence (the adviser, Nov 2026: a chosen range or month, not only the
+    presets; one month is top_from = top_to)."""
     top_range = request.args.get("top_range") or "Last 12 Months"
     if top_range not in TOP_EARNER_RANGES:
         return jsonify({"available": False, "reason": f"Unknown period {top_range!r}."}), 400
+    top_from, top_to = request.args.get("top_from"), request.args.get("top_to")
+    if top_from or top_to:
+        if not (catalog._month_or_none(top_from) and catalog._month_or_none(top_to)):
+            return jsonify({"available": False,
+                            "reason": "Give both top_from and top_to as YYYY-MM."}), 400
+        if top_from > top_to:
+            return jsonify({"available": False,
+                            "reason": f"{top_from} is after {top_to}."}), 400
+        top_range = TOP_CUSTOM_RANGE
+    compare = request.args.get("compare") or None
     c = con()
     cat = catalog.compute_catalog(c)
     supplier = request.args.get("supplier") or None
@@ -831,13 +861,22 @@ def get_overview_performance():
     end = date.fromisoformat(history_end)
     daily_start = (end - timedelta(days=PERFORMANCE_DAILY_DAYS - 1)).isoformat()
     latest = history_end[:7]
-    if top_range == "This Month":
+    window_end = history_end
+    if top_range == TOP_CUSTOM_RANGE:
+        window_start = f"{top_from}-01"
+        window_end = min(history_end, _month_end(top_to).isoformat())
+    elif top_range == "This Month":
         window_start = f"{latest}-01"
     elif top_range == "All Time":
         window_start = min(r["day"] for r in rows)
     else:
         window_start = (end - timedelta(days=TOP_EARNER_RANGES[top_range] - 1)).isoformat()
-    previous = _month_before(latest)
+    # Store-wide, so the list does not change with the supplier or category.
+    compare_months = sorted({r["day"][:7] for r in rows if r["day"][:7] < latest}, reverse=True)
+    if compare is not None and compare not in compare_months:
+        return jsonify({"available": False,
+                        "reason": f"No tallied month {compare!r} before {latest} to compare with."}), 400
+    previous = compare or _month_before(latest)
 
     daily, monthly, items, by_category, by_item = {}, {}, {}, {}, {}
     units_all = units_priced = 0
@@ -848,12 +887,14 @@ def get_overview_performance():
         php = dbmod.pesos(r["units"], (by_id.get(pid) or {}).get("unit_price_php"),
                           r["entry_units"], r["entry_php"])
         month = r["day"][:7]
-        m = monthly.setdefault(month, {"month": month, "php": 0.0, "units": 0})
+        m = monthly.setdefault(month, {"month": month, "php": 0.0, "units": 0, "days": set()})
         m["units"] += r["units"]
+        m["days"].add(r["day"])
         if month in (latest, previous):
             bi = by_item.setdefault(pid, {"units": 0, "previous_units": 0, "php": 0.0, "previous_php": 0.0})
             bi["units" if month == latest else "previous_units"] += r["units"]
-        if r["day"] >= window_start:
+        in_window = window_start <= r["day"] <= window_end
+        if in_window:
             units_all += r["units"]
         if php is None:
             continue
@@ -865,7 +906,7 @@ def get_overview_performance():
             by_item[pid]["php" if month == latest else "previous_php"] += php
         if r["day"] >= daily_start:
             daily[r["day"]] = daily.get(r["day"], 0.0) + php
-        if r["day"] >= window_start:
+        if in_window:
             units_priced += r["units"]
             it = items.setdefault(pid, {"php": 0.0, "units": 0})
             it["php"] += php
@@ -873,11 +914,11 @@ def get_overview_performance():
 
     def month_figure(mo):
         m = monthly.get(mo)
-        return None if not m else {"month": mo, "php": round(m["php"], 2), "units": m["units"]}
+        return None if not m else {"month": mo, "php": round(m["php"], 2), "units": m["units"],
+                                   "days": len(m["days"])}
 
     # The latest month is complete only if the tallies run to its last day.
-    month_end = (date(int(latest[:4]) + (latest[5:] == "12"), int(latest[5:]) % 12 + 1, 1)
-                 - timedelta(days=1))
+    month_end = _month_end(latest)
     days = [(end - timedelta(days=i)).isoformat() for i in range(PERFORMANCE_DAILY_DAYS - 1, -1, -1)]
 
     ranked = sorted(items.items(), key=lambda kv: -kv[1]["php"])
@@ -919,6 +960,9 @@ def get_overview_performance():
         "latest_month": month_figure(latest),
         "latest_month_complete": end == month_end,
         "previous_month": month_figure(previous),
+        "compare_month": previous,
+        "default_compare_month": _month_before(latest),
+        "compare_months": compare_months,
         "same_month_last_year": month_figure(_month_before(latest, years=1, months=0)),
         "by_category": sorted(
             ({"category": v["category"], "php": round(v["php"], 2),
@@ -930,7 +974,7 @@ def get_overview_performance():
         "daily": [{"date": d, "php": round(daily.get(d, 0.0), 2)} for d in days],
         "priced_unit_share": units_priced / units_all if units_all else None,
         "top": {
-            "window_start": window_start, "window_end": history_end, "range": top_range,
+            "window_start": window_start, "window_end": window_end, "range": top_range,
             "total_php": round(total, 2), "n_selling": len(top),
             "n_for_share": n_for_share, "share": TOP_EARNER_SHARE,
             "top10_share": top[min(10, len(top)) - 1]["cum_share"] if top else 0.0,
@@ -3367,6 +3411,8 @@ def get_forecast(product_id):
             "history": history,
             "metrics": metrics,
             "model_metrics": _model_metrics(c, forecast_models.ITEM, product_id),
+            "checks": _forecast_checks(c, forecast_models.ITEM, product_id),
+            "sold_since": _sold_since_forecast(c, [product_id], forecast_rows),
             "calendar_marks": _chart_marks(c, forecast_rows),
             "range_30d": _range_30d(total, rmse),
             "guidance": _forecast_guidance(c, forecast_rows, history, [product_id],
@@ -3378,6 +3424,51 @@ def get_forecast(product_id):
 def _table_names(c):
     return {r[0] for r in c.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+def _forecast_checks(c, scope, key):
+    """Actual vs predicted (the adviser, Nov 2026): each past 30-day period
+    the shown model was checked on - what it forecast, what sold, and what
+    simply repeating the last 30 days would have said - oldest first, from
+    the same run that wrote its accuracy figures (forecast_options.CHECK_TABLE).
+    None when Run Forecast has not saved them yet, [] when this item or
+    category could not be checked."""
+    if forecast_models.CHECK_TABLE not in _table_names(c):
+        return None
+    model = request.args.get("model") or forecast_models.DEFAULTS[scope]
+    return dbmod.rows(c, f"""
+        SELECT start_date, end_date, actual_30d, pred_30d, naive_30d
+        FROM {forecast_models.CHECK_TABLE}
+        WHERE scope = ? AND model = ? AND series_key = ?
+        ORDER BY fold
+    """, (scope, model, str(key)))
+
+
+def _sold_since_forecast(c, product_ids, forecast_rows):
+    """Walk-in units sold on each forecast day already tallied - the actuals
+    drawn over the forecast as they come in. Walk-in only, as the forecast
+    is (scripts/order_types.py). [] until a day after the forecast was made
+    has a tally; Run Analytics then makes a new forecast from them.
+
+    A day counts as tallied when the store recorded a sale of anything that
+    day: Fact_Sales carries zero rows for untallied days too, and those are
+    not days of zero demand (forecasting/day_kinds.py). On a tallied day these
+    items can still have sold 0, which is shown."""
+    if not product_ids or not forecast_rows:
+        return []
+    first, last = forecast_rows[0]["forecast_date"], forecast_rows[-1]["forecast_date"]
+    ids = ",".join("?" * len(product_ids))
+    return dbmod.rows(c, f"""
+        WITH tallied AS (
+            SELECT DISTINCT f.date_id FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+            WHERE {dbmod.SALE_ONLY} AND f.quantity_sold > 0 AND d.calendar_date BETWEEN ? AND ?)
+        SELECT d.calendar_date AS date,
+               COALESCE(SUM(CASE WHEN f.product_id IN ({ids}) AND {order_types.walk_in_only(c)}
+                                 THEN f.quantity_sold END), 0) AS units
+        FROM tallied t JOIN Dim_Date d ON d.date_id = t.date_id
+        LEFT JOIN Fact_Sales f ON f.date_id = t.date_id AND {dbmod.SALE_ONLY}
+        GROUP BY 1 ORDER BY 1
+    """, (first, last, *product_ids))
 
 
 def _range_30d(total, rmse):
@@ -3569,6 +3660,8 @@ def get_forecast_category(category):
             "contributors": contributors,
             "metrics": metrics,
             "model_metrics": _model_metrics(c, forecast_models.CATEGORY, category),
+            "checks": _forecast_checks(c, forecast_models.CATEGORY, category),
+            "sold_since": _sold_since_forecast(c, series_ids, cat_rows),
             "calendar_marks": _chart_marks(c, cat_rows),
             "guidance": _forecast_guidance(c, cat_rows, history, series_ids, single_item=False),
         },
@@ -3748,8 +3841,34 @@ def get_advisories():
         return (_us_date(run["start"]) if run["start"] == run["end"]
                 else f"{_us_date(run['start'])} to {_us_date(run['end'])}")
 
+    # The predictive part of each calendar advisory (advisory_outlook.py):
+    # what the window should sell per selling day, and the same window last
+    # year for its chart. Measured once here for every advisory. An advisory
+    # still shows without it if it cannot be worked out.
+    try:
+        days = advisory_outlook.day_kinds.load_days(c)
+        lifts = advisory_outlook.day_kinds.lifts(c, days)
+    except Exception:  # noqa: BLE001 - the advisories must not fail over their outlook
+        app.logger.exception("could not measure the advisory outlook")
+        days = lifts = None
+
+    def past_runs(flag):
+        dates = [r["calendar_date"] for r in dbmod.rows(
+            c, f"SELECT calendar_date FROM Dim_Date WHERE {flag} = 1 AND calendar_date < ?", (today,))]
+        return _date_runs(dates)
+
+    def outlook(run, runs_before, kind=None):
+        if days is None:
+            return None
+        try:
+            return advisory_outlook.outlook(days, lifts, run["start"], run["end"], runs_before, kind)
+        except Exception:  # noqa: BLE001
+            app.logger.exception("could not work out the outlook for %s", run)
+            return None
+
     # One advisory per window, so each carries its own dates.
     enrollment_runs = _date_runs([r["calendar_date"] for r in upcoming_periods if r["is_enrollment_period"]])
+    past_enrollment = past_runs("is_enrollment_period") if enrollment_runs else []
     for run in enrollment_runs:
         advisories.append({
             "type": "enrollment",
@@ -3764,9 +3883,12 @@ def get_advisories():
                      "The items below are the Fast-moving class (step3's 80th-percentile ADUS "
                      "cut), which is what an enrollment surge draws on.",
             "items": affected_items(("F",)),
+            "outlook": outlook(run, past_enrollment),
         })
 
-    for run in _date_runs([r["calendar_date"] for r in upcoming_periods if r["is_exam_week"]]):
+    exam_runs = _date_runs([r["calendar_date"] for r in upcoming_periods if r["is_exam_week"]])
+    past_exams = past_runs("is_exam_week") if exam_runs else []
+    for run in exam_runs:
         advisories.append({
             "type": "exam_week",
             "severity": "medium",
@@ -3784,9 +3906,13 @@ def get_advisories():
                      "Across past exam weeks, tallied sales averaged about the same per day "
                      "as regular days, though single weeks vary widely.",
             "items": affected_items(("F",)),
+            "outlook": outlook(run, past_exams),
         })
 
     for event in upcoming_events:
+        same_event = _date_runs([r["event_date"] for r in dbmod.rows(c, """
+            SELECT event_date FROM Event_Log WHERE event_name = ? AND event_date < ?
+        """, (event["event_name"], today))])
         advisories.append({
             "type": "event",
             "severity": "medium",
@@ -3799,6 +3925,10 @@ def get_advisories():
                      + (f", which falls in semester {event['semester_id']} week "
                         f"{event['semester_week']}." if event["semester_id"] else "."),
             "items": affected_items(("F",)),
+            # The event's own day takes the event lift even where Dim_Date does
+            # not flag it: it is in Event_Log because it is an event.
+            "outlook": outlook({"start": event["event_date"], "end": event["event_date"]},
+                               same_event, kind="event"),
         })
 
     # If forecast exists, add top fast-movers that may need restocking

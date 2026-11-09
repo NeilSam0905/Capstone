@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getProducts, getStockPosition, getReorderAlerts, getAdvisories, getMeta, getOverviewPerformance,
-  getSuppliers, getCategories,
+  getSuppliers, getCategories, getMonths,
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
@@ -11,6 +11,7 @@ import Modal from '../components/Modal';
 import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
 import InfoTip from '../components/InfoTip';
+import SearchSelect from '../components/SearchSelect';
 import { AdvisoriesPanel, AdvisoriesJump } from '../components/Advisories';
 import { ADVISORIES_ANCHOR, TALLY_TAB_KEY } from '../config';
 import { num, shortMonth, longMonth, usDate, peso, pesoK, FSN_TONE, FSN_LABEL } from '../lib/format';
@@ -130,8 +131,7 @@ export default function Overview({ filters, setPage, setView, user }) {
 
   return (
     <div className="stack">
-      <SectionLabel title="Sale Overview" hint="Latest tallied month against the month before" />
-      <PerformanceStep perf={perf} dueByCategory={dueByCategory} setPage={setPage}
+      <PerformanceStep filters={filters} dueByCategory={dueByCategory} setPage={setPage}
                        alertById={alertById} latestCount={latestCount} recount={recount} />
 
       <ReorderHero
@@ -415,15 +415,25 @@ const signedMoney = n => `${n >= 0 ? '+' : '−'}⁠${money(Math.abs(n))}`;
 /** '2026-07' -> 'July'. */
 const monthName = m => longMonth(m).split(' ')[0];
 
-/** A label over the part of the page it names. */
-function SectionLabel({ title, hint }) {
+/** A label over the part of the page it names, with any control for it. */
+function SectionLabel({ title, hint, children }) {
   return (
     <div className="step-h">
       <span className="section-h">{title}</span>
       {hint && <span className="hint">{hint}</span>}
+      {children}
     </div>
   );
 }
+
+/** '20 selling days': how many days a month has sales on, which differs a lot
+ *  between months, so a total is not read as like for like. */
+const sellingDays = m => (m?.days ? `${num(m.days)} selling ${m.days === 1 ? 'day' : 'days'}` : null);
+/** ' (a, b)' from the parts that are set, or nothing. */
+const paren = parts => {
+  const p = parts.filter(Boolean);
+  return p.length ? ` (${p.join(', ')})` : '';
+};
 
 /** "Next step: ...", the line every step ends on. */
 function NextStep({ children }) {
@@ -446,14 +456,51 @@ function NextStep({ children }) {
  *  tally rather than days with no sales; it moved to Demand Forecast, for
  *  exploring. The same month a year earlier went too: the older months were
  *  tallied on far fewer days (12 in July 2025 against 20 in July 2026), so that
- *  comparison measured record-keeping as much as sales. */
-function PerformanceStep({ perf, dueByCategory, setPage, alertById, latestCount, recount }) {
+ *  comparison measured record-keeping as much as sales.
+ *
+ *  The month it compares with is picked beside the label (the adviser, Nov
+ *  2026: compare a chosen month with the current one), the month before by
+ *  default; all three tiles and the category table follow it. Because months
+ *  were tallied on such different numbers of days, each total says how many
+ *  days it has sales on. */
+function PerformanceStep({ filters, dueByCategory, setPage, alertById, latestCount, recount }) {
   const [stoppedOpen, setStoppedOpen] = useState(false);
   const [catsOpen, setCatsOpen] = useState(false);
-  if (!perf) return <div className="card card__pad"><Loading label="Adding up sales…" /></div>;
-  if (!perf.available) return <div className="card card__pad"><div className="empty">{perf.reason}</div></div>;
+  // null = the month before. Unset rather than that month itself, so the
+  // default asks for the same URL as the rest of the page (one cached answer).
+  const [compare, setCompare] = useState(null);
+  const { data: perf } = useData(
+    () => getOverviewPerformance(filters, undefined, compare ?? undefined),
+    [filters.supplier, filters.category, compare]);
+
+  const label = picker => <SectionLabel title="Sale Overview">{picker}</SectionLabel>;
+  if (!perf) return <>{label()}<div className="card card__pad"><Loading label="Adding up sales…" /></div></>;
+  if (!perf.available) return <>{label()}<div className="card card__pad"><div className="empty">{perf.reason}</div></div></>;
 
   const cur = perf.latest_month, prev = perf.previous_month;
+  const prevMonth = compare ?? perf.compare_month ?? prev?.month;
+  const picker = (
+    <span className="step-h__compare">
+      <span className="hint">
+        {longMonth(cur.month)}{perf.latest_month_complete ? '' : ' so far'}, the latest tallied month, compared with
+      </span>
+      <SearchSelect
+        id="ov-compare"
+        value={compare ?? perf.default_compare_month}
+        options={(perf.compare_months ?? []).map(m => ({
+          value: m,
+          label: m === perf.default_compare_month ? `${longMonth(m)} (month before)` : longMonth(m),
+        }))}
+        onChange={m => setCompare(m === perf.default_compare_month ? null : m)}
+        minWidth={220}
+        placeholder="Search months…"
+        emptyLabel="Select a Month"
+      />
+      {compare && (
+        <button type="button" className="linkish" onClick={() => setCompare(null)}>Back to the month before</button>
+      )}
+    </span>
+  );
   const vsPrev = prev && change(cur.php, prev.php);
   const unpriced = perf.priced_unit_share == null ? 0 : 1 - perf.priced_unit_share;
 
@@ -484,9 +531,12 @@ function PerformanceStep({ perf, dueByCategory, setPage, alertById, latestCount,
   }
   if (!steps.length) steps.push('keep the Top Sellers in stock.');
 
-  const curName = monthName(cur.month);
-  const prevName = prev ? monthName(prev.month) : 'the month before';
-  const soFar = perf.latest_month_complete ? '' : ` (through ${usDate(perf.history_end)})`;
+  // Month names alone ("July to October") unless the two months are in
+  // different years, where "October to October" would say nothing.
+  const withYear = prevMonth && prevMonth.slice(0, 4) !== cur.month.slice(0, 4);
+  const curName = withYear ? longMonth(cur.month) : monthName(cur.month);
+  const prevName = !prevMonth ? 'the month before' : withYear ? longMonth(prevMonth) : monthName(prevMonth);
+  const through = perf.latest_month_complete ? null : `through ${usDate(perf.history_end)}`;
   const moved = mover && mover.diff !== 0 ? mover : null;
   const stopped = perf.stopped_selling?.items ?? [];
   const stoppedPhp = stopped.reduce((s, i) => s + i.previous_php, 0);
@@ -495,14 +545,16 @@ function PerformanceStep({ perf, dueByCategory, setPage, alertById, latestCount,
 
   return (
     <>
+      {label(picker)}
       <div className="grid-3">
         <KPICard
           label={prev ? `Sales, ${prevName} to ${curName}` : `Sales, ${longMonth(cur.month)}`}
           value={vsPrev == null ? pesoK(cur.php) : signedPct(vsPrev)}
           tone={vsPrev == null ? undefined : vsPrev >= 0 ? 'ok' : 'crit'}
           sub={prev
-            ? `${pesoK(prev.php)} in ${prevName}, ${pesoK(cur.php)} in ${curName}${soFar}`
-            : `No sales tallied the month before${soFar}`}
+            ? `${pesoK(prev.php)} in ${prevName}${paren([sellingDays(prev)])}, `
+              + `${pesoK(cur.php)} in ${curName}${paren([sellingDays(cur), through])}`
+            : `No sales tallied in ${prevName}${paren([through])}`}
           icon="trend"
         />
         <KPICard
@@ -513,7 +565,7 @@ function PerformanceStep({ perf, dueByCategory, setPage, alertById, latestCount,
               + (moved.drivers?.length
                 ? `, mostly ${moved.drivers.map(d => `${d.item_name} (${signedMoney(d.diff)})`).join(' and ')}`
                 : '')
-            : prev ? `Every category sold the same as in ${prevName}` : 'No sales tallied the month before'}
+            : prev ? `Every category sold the same as in ${prevName}` : `No sales tallied in ${prevName}`}
           icon="chart"
           onClick={cats.length ? () => setCatsOpen(true) : undefined}
           linkLabel="See all categories"
@@ -656,9 +708,36 @@ function StoppedModal({ open, onClose, items, minUnits, prevName, curName, alert
 }
 
 /** The Top Sellers card's own filter (the Overview has no topbar filters).
- *  Periods are the backend's TOP_EARNER_RANGES. */
+ *  The presets are the backend's TOP_EARNER_RANGES; besides them, one chosen
+ *  month or a range of whole months (the adviser, Nov 2026: "not just
+ *  presets"), held in `from` / `to` as 'YYYY-MM'. */
 const TOP_RANGES = ['This Month', 'Last 3 Months', 'Last 6 Months', 'Last 12 Months', 'All Time'];
-const TOP_DEFAULT = { supplier: ALL_SUPPLIERS, category: ALL_CATEGORIES, range: 'Last 12 Months' };
+const ONE_MONTH = 'A Specific Month';
+const MONTH_RANGE = 'Custom Range';
+const TOP_DEFAULT = {
+  supplier: ALL_SUPPLIERS, category: ALL_CATEGORIES, range: 'Last 12 Months', from: null, to: null,
+};
+// Months a freshly opened custom range starts with, ending at the latest one
+// (as the topbar's Custom Date Range does).
+const RANGE_DEFAULT_MONTHS = 6;
+
+/** What getOverviewPerformance takes for the filter's period: nothing for the
+ *  default (the URL the rest of the page asks for, so one cached answer), a
+ *  preset's name, or the months. */
+function topPeriod(tf) {
+  if (tf.range === ONE_MONTH) return { from: tf.from, to: tf.from };
+  if (tf.range === MONTH_RANGE) return { from: tf.from, to: tf.to };
+  return tf.range === TOP_DEFAULT.range ? undefined : tf.range;
+}
+
+/** 'Last 6 Months', 'July 2026' or 'May 2026 – October 2026'. */
+function periodLabel(tf) {
+  if (tf.range === ONE_MONTH) return longMonth(tf.from);
+  if (tf.range === MONTH_RANGE) {
+    return tf.from === tf.to ? longMonth(tf.from) : `${longMonth(tf.from)} – ${longMonth(tf.to)}`;
+  }
+  return tf.range;
+}
 
 /** Top Sellers: the items that sold most, top five, ranked by pesos (what
  *  earns most) or units (what moves fastest). It was two cards, Top 10
@@ -675,9 +754,10 @@ function TopSellers({ alertById, categoryOf, onBrowse }) {
   const [tf, setTf] = useState(TOP_DEFAULT);
   const [filterOpen, setFilterOpen] = useState(false);
   const { data: perf } = useData(
-    () => getOverviewPerformance(tf, tf.range === TOP_DEFAULT.range ? undefined : tf.range),
-    [tf.supplier, tf.category, tf.range]);
-  const active = [tf.range !== TOP_DEFAULT.range && tf.range,
+    () => getOverviewPerformance(tf, topPeriod(tf)),
+    [tf.supplier, tf.category, tf.range, tf.from, tf.to]);
+  const period = periodLabel(tf);
+  const active = [tf.range !== TOP_DEFAULT.range && period,
     tf.supplier !== ALL_SUPPLIERS && tf.supplier,
     tf.category !== ALL_CATEGORIES && tf.category].filter(Boolean);
   const showSupplier = tf.supplier === ALL_SUPPLIERS;
@@ -740,7 +820,7 @@ function TopSellers({ alertById, categoryOf, onBrowse }) {
           ))}
         </div>
         <span className="hint">
-          {[tf.range, ...active.filter(a => a !== tf.range)].join(' · ')} &middot; keep these in stock
+          {[period, ...active.filter(a => a !== period)].join(' · ')} &middot; keep these in stock
         </span>
       </div>
       {rows.length
@@ -767,26 +847,66 @@ function TopSellersFilter({ value, onApply, onClose }) {
   const [draft, setDraft] = useState(value);
   const { data: suppliers } = useData(() => getSuppliers(), [], []);
   const { data: categories } = useData(getCategories, [], []);
+  const { data: months } = useData(getMonths, [], []);   // months with sales, oldest first
   const set = (k, v) => setDraft(d => ({ ...d, [k]: v }));
-  const field = (key, label, options) => (
+  const latest = months[months.length - 1] ?? null;
+
+  // A month or a range starts from what was picked before, else the latest
+  // month (a range: the latest few); a preset clears them.
+  function setPeriod(range) {
+    setDraft(d => {
+      if (range === ONE_MONTH) return { ...d, range, from: d.from ?? latest, to: null };
+      if (range === MONTH_RANGE) {
+        return { ...d, range, from: d.from ?? months[Math.max(0, months.length - RANGE_DEFAULT_MONTHS)] ?? null,
+          to: d.to ?? latest };
+      }
+      return { ...d, range, from: null, to: null };
+    });
+  }
+
+  const monthOpts = list => list.map(m => ({ value: m, label: longMonth(m) }));
+  // The app's dropdown, as in the topbar; a list held over that no longer
+  // carries the value still shows it rather than something else.
+  const field = (id, label, val, onChange, options, searchable = options.length > 10) => (
     <div className="field">
-      <label htmlFor={`ts-${key}`}>{label}</label>
-      <select id={`ts-${key}`} value={draft[key]} onChange={e => set(key, e.target.value)}>
-        {(options.includes(draft[key]) ? options : [draft[key], ...options])
-          .map(o => <option key={o} value={o}>{o}</option>)}
-      </select>
+      <label htmlFor={`ts-${id}`}>{label}</label>
+      <SearchSelect id={`ts-${id}`} variant="field" minWidth={0} searchable={searchable}
+                    value={val ?? ''} onChange={onChange} placeholder={`Search ${label.toLowerCase()}…`}
+                    emptyLabel="Select a Month" options={options} />
     </div>
   );
+  const names = (list, v) => (list.includes(v) ? list : [v, ...list]).map(o => ({ value: o, label: o }));
+  const incomplete = (draft.range === ONE_MONTH && !draft.from)
+    || (draft.range === MONTH_RANGE && (!draft.from || !draft.to));
+  const inRange = draft.range === MONTH_RANGE
+    ? months.filter(m => m >= draft.from && m <= draft.to).length : 0;
+
   return (
-    <Modal open onClose={onClose} width={460} title="Filter Top Sellers"
+    <Modal open onClose={onClose} width={480} title="Filter Top Sellers" overflowVisible
            subtitle="Narrow the ranking to one period, supplier or category.">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {field('range', 'Period', TOP_RANGES)}
-        {field('supplier', 'Supplier', suppliers)}
-        {field('category', 'Category', categories)}
+        {field('range', 'Period', draft.range, setPeriod, names([...TOP_RANGES, ONE_MONTH, MONTH_RANGE], draft.range),
+          false)}
+        {draft.range === ONE_MONTH && field('month', 'Month', draft.from, v => set('from', v),
+          monthOpts([...months].reverse()), true)}
+        {draft.range === MONTH_RANGE && (
+          <div>
+            <div className="form-grid">
+              {field('from', 'From', draft.from, v => set('from', v),
+                monthOpts(months.filter(m => !draft.to || m <= draft.to)))}
+              {field('to', 'To', draft.to, v => set('to', v),
+                monthOpts(months.filter(m => !draft.from || m >= draft.from)))}
+            </div>
+            <div className="hint" style={{ marginTop: 6 }}>
+              Whole months, first to last inclusive: {inRange} month{inRange === 1 ? '' : 's'} with sales.
+            </div>
+          </div>
+        )}
+        {field('supplier', 'Supplier', draft.supplier, v => set('supplier', v), names(suppliers, draft.supplier))}
+        {field('category', 'Category', draft.category, v => set('category', v), names(categories, draft.category))}
       </div>
       <div className="btn-row" style={{ marginTop: 16 }}>
-        <button className="btn btn--ink btn--sm" onClick={() => onApply(draft)}>Apply</button>
+        <button className="btn btn--ink btn--sm" disabled={incomplete} onClick={() => onApply(draft)}>Apply</button>
         <button className="btn btn--ghost btn--sm" onClick={() => onApply(TOP_DEFAULT)}>Reset</button>
         <button className="btn btn--ghost btn--sm" onClick={onClose}>Cancel</button>
       </div>

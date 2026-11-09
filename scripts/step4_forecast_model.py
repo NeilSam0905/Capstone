@@ -697,6 +697,7 @@ def main():
     last_date = idx[-1]
 
     forecast_rows, metric_rows, unscored = [], [], []
+    check_rows = []                 # each fold: forecast vs sold (forecast_options.CHECK_TABLE)
     model_totals = {}               # product_id -> the model's own 30-day total
     by_product = dict(list(fact.groupby("product_id")))
 
@@ -730,6 +731,7 @@ def main():
 
         if scored:
             ev_n = walk_forward_evaluate(pid, values, naive, "naive", folds=folds)
+            check_rows += forecast_options.check_rows(pid, folds, idx, ev_m.rows, ev_n.rows, snapshot_date)
             for r in metrics_rows(ev_m.rows, ev_n.rows, breaks, folds):
                 metric_rows.append(dict(
                     product_id=pid, item_name=name, tier=tier,
@@ -800,6 +802,7 @@ def main():
         # in the comparison tables, replaced in one transaction.
         forecast_options.write_compare(con, forecast_options.ITEM, model_type,
                                        forecast_df.to_dict("records"), metrics_df.to_dict("records"))
+        forecast_options.write_checks(con, forecast_options.ITEM, model_type, check_rows)
         con.commit()
         con.close()
         print(f"Wrote {len(forecast_df)} {model_type} rows to the comparison tables "
@@ -830,6 +833,7 @@ def main():
                    :naive_mae, :naive_rmse, :naive_mape, :naive_mase, :beats_naive_mae, :meets_mape_threshold, :snapshot_date)""",
         metrics_df.to_dict("records"),
     )
+    forecast_options.write_checks(con, forecast_options.ITEM, model_type, check_rows)
     con.commit()
 
     # ================= REPORT =================
