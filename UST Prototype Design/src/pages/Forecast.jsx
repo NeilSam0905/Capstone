@@ -11,6 +11,7 @@ import { num, shortMonth, longMonth, monthName, usDate, isCalendarAdjusted, roun
 import SearchSelect from '../components/SearchSelect';
 import Icon from '../components/Icon';
 import InfoTip from '../components/InfoTip';
+import Modal from '../components/Modal';
 import { ALL_SUPPLIERS } from '../services/dataService';
 
 const ALL_ITEMS = '__all__';
@@ -210,22 +211,17 @@ function DailySales({ filters }) {
   const { data: perf } = useData(() => getOverviewPerformance(filters), [filters.supplier]);
   if (!perf?.available) return null;
   const daily = perf.daily.map(d => ({ label: dayLabel(d.date), value: d.php }));
-  const recorded = perf.daily.filter(d => d.php > 0).length;
 
   return (
     <div className="card card__pad">
       <div className="card-h">
         <span className="section-h">Daily Sales, Last 90 Days</span>
         <span className="hint">
-          Pesos per day, to {usDate(perf.history_end)}
-          {filters.supplier !== ALL_SUPPLIERS ? ` · ${filters.supplier} only` : ' · whole store'}
+          Sales per day to {usDate(perf.history_end)}
+          {filters.supplier !== ALL_SUPPLIERS ? ` · ${filters.supplier} only` : ''}
         </span>
       </div>
       <LineChart data={daily} tickFmt={pesoK} unit="" />
-      <div className="hint" style={{ marginTop: 8 }}>
-        Sales were recorded on {num(recorded)} of these {num(daily.length)} days. A day at ₱0 usually means
-        no sales were recorded that day (Sundays, and days the tally sheets skipped), not that nothing sold.
-      </div>
     </div>
   );
 }
@@ -311,11 +307,10 @@ function CategoryForecastPanel({ category, onPickItem, setPage, model, onModel }
                     modelScope={wholeCategory ? 'category' : 'item'}
                     model={wholeCategory ? model : null} onModel={wholeCategory ? onModel : null}
                     tags={wholeCategory && <Reliability fd={fd} model={model} />}
+                    checkable={wholeCategory}
                     scope={!wholeCategory && fd.n_forecast < fd.n_products
                       ? `the ${fd.n_forecast} forecast item${fd.n_forecast === 1 ? '' : 's'} only`
                       : null} />
-
-      {wholeCategory && <ActualVsPredicted fd={fd} title={category} />}
 
       <CategoryTotalCard category={category} fd={fd} onPickItem={onPickItem} />
     </>
@@ -537,7 +532,7 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage, model, onMo
 
   return (
     <>
-      <ForecastCard key={productId} title={fd.item_name} fd={fd} setPage={setPage}
+      <ForecastCard key={productId} title={fd.item_name} fd={fd} setPage={setPage} checkable
                     modelScope="item" model={model} onModel={onModel} tags={<Reliability fd={fd} model={model} />}>
         {/* Same reasoning as the category note: a shaped line draws ups and downs
             that are not predicted spikes. An item's own days are too sparse to
@@ -570,8 +565,6 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage, model, onMo
           </div>
         )}
       </ForecastCard>
-
-      <ActualVsPredicted fd={fd} title={fd.item_name} />
     </>
   );
 }
@@ -597,24 +590,24 @@ const MAPE_TARGET = 20;
  * accuracy figures (the API's `checks`, saved by the same Run Forecast), so
  * the averages here are those figures: the typical miss is the model's MAE,
  * the percentage its MAPE. They follow the model dropdown.
+ *
+ * A dialog, opened from the forecast card's "Check Actual vs Predicted"
+ * button beside Open Reorder Alerts, rather than a card of its own under it.
  */
-function ActualVsPredicted({ fd, title }) {
+function ActualVsPredictedModal({ fd, title, onClose }) {
   const checks = fd.checks;
-  const head = (
-    <div className="card-h">
-      <span className="section-h">Actual vs Predicted — {title}</span>
-      <span className="hint">{fd.model_label}</span>
-    </div>
+  const frame = body => (
+    <Modal open onClose={onClose} width={1080} title={`Actual vs Predicted — ${title}`}
+           subtitle={`${fd.model_label ?? 'Forecast'}: what it forecast for each past 30-day period, against what sold.`}>
+      <div className="modal-grow">{body}</div>
+    </Modal>
   );
   if (checks == null || !checks.length) {
-    return (
-      <div className="card card__pad">
-        {head}
-        <div className="empty">
-          {checks == null
-            ? 'Choose Run Forecast in the Tally Interface to save the past checks behind this forecast.'
-            : 'Too little sales history to check this forecast against past periods yet.'}
-        </div>
+    return frame(
+      <div className="empty">
+        {checks == null
+          ? 'Choose Run Forecast in the Tally Interface to save the past checks behind this forecast.'
+          : 'Too little sales history to check this forecast against past periods yet.'}
       </div>
     );
   }
@@ -624,11 +617,9 @@ function ActualVsPredicted({ fd, title }) {
   const mape = mapeOf(checks, 'pred_30d');
   const naiveMape = mapeOf(checks, 'naive_30d');
   const closer = checks.filter(r => Math.abs(r.pred_30d - r.actual_30d) < Math.abs(r.naive_30d - r.actual_30d)).length;
-  const first = checks[0].start_date, last = checks[checks.length - 1].end_date;
 
-  return (
-    <div className="card card__pad">
-      {head}
+  return frame(
+    <>
       <div className="avp-stats">
         <div className="avp-stat">
           <span className="avp-stat__label">Typical miss</span>
@@ -651,18 +642,15 @@ function ActualVsPredicted({ fd, title }) {
         </div>
       </div>
 
-      <ActualVsPredictedChart checks={checks} />
-      <div className="legend" style={{ justifyContent: 'center', marginTop: 8 }}>
+      {/* naive off: no "repeating the last 30 days" line or hover note -
+          the stat tiles above still compare against it. */}
+      <ActualVsPredictedChart checks={checks} naive={false} />
+      <div className="legend" style={{ justifyContent: 'center', marginTop: 10 }}>
         <span><i style={{ background: 'var(--ink)' }} />Sold</span>
         <span><i style={{ background: 'var(--accent)' }} />Forecast</span>
-        <span><i className="legend__dots" />Repeating the last 30 days</span>
         <span>% over each period: how far the forecast was off (+ over, − under)</span>
       </div>
-      <p className="hint" style={{ marginTop: 8 }}>
-        Each point is one 30-day period from {usDate(first)} to {usDate(last)}: the forecast was made with only the
-        sales before that period, then compared with what sold. Hover a period for its figures.
-      </p>
-    </div>
+    </>
   );
 }
 
@@ -681,7 +669,10 @@ function ActualVsPredicted({ fd, title }) {
  * Callers key this on the item/category, so switching either reopens the
  * chart on the forecast instead of wherever the last one was scrolled to.
  */
-function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, children, setPage }) {
+function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, children, setPage, checkable = false }) {
+  // `checkable`: this forecast has past checks to compare (every item, and a
+  // category's own model), opened as Actual vs Predicted in a dialog.
+  const [avpOpen, setAvpOpen] = useState(false);
   return (
     <div className="card card__pad">
       {/* Left: the title, and under it the model that made the figures (a
@@ -727,7 +718,10 @@ function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, chil
 
       {children}
 
-      <ForecastGuidance g={fd.guidance} title={title} setPage={setPage} />
+      <ForecastGuidance g={fd.guidance} title={title} setPage={setPage}
+                        onCheck={checkable ? () => setAvpOpen(true) : null} />
+
+      {avpOpen && <ActualVsPredictedModal fd={fd} title={title} onClose={() => setAvpOpen(false)} />}
     </div>
   );
 }
@@ -786,7 +780,7 @@ function calendarSentence(cal) {
  * _forecast_guidance); nothing is calculated here but the wording. Figures
  * are rounded as the Expected Demand card rounds them (roundNice).
  */
-function ForecastGuidance({ g, title, setPage }) {
+function ForecastGuidance({ g, title, setPage, onCheck }) {
   if (!g) return null;
   const e = g.expected;
   const change = g.change_pct;
@@ -822,10 +816,19 @@ function ForecastGuidance({ g, title, setPage }) {
             </p>
           </InfoTip>
         </span>
-        {setPage && (
-          <button className="btn btn--ink btn--sm" onClick={() => setPage('reorder')}>
-            Open Reorder Alerts <Icon name="arrow" size={12} />
-          </button>
+        {(onCheck || setPage) && (
+          <span className="btn-row">
+            {onCheck && (
+              <button className="btn btn--ghost btn--sm" onClick={onCheck}>
+                <Icon name="chart" size={12} /> Check Actual vs Predicted
+              </button>
+            )}
+            {setPage && (
+              <button className="btn btn--ink btn--sm" onClick={() => setPage('reorder')}>
+                Open Reorder Alerts <Icon name="arrow" size={12} />
+              </button>
+            )}
+          </span>
         )}
       </div>
     </div>
@@ -867,9 +870,19 @@ function Reliability({ fd, model }) {
     );
   }
   const reliable = !!m.beats_naive_mae;
+  // The same MAPE the Actual vs Predicted dialog shows (from its periods),
+  // else the recorded check's. Red above the 20% target, green within it.
+  const mape = (fd.checks?.length ? mapeOf(fd.checks, 'pred_30d') : null) ?? m.mape;
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <span className={`tag tag--${reliable ? 'ok' : 'warn'}`}>{reliable ? 'Reliable' : 'Rough estimate'}</span>
+      {mape != null && (
+        <span className={`tag tag--${mape <= MAPE_TARGET ? 'ok' : 'crit'}`}
+              title={`Average % off over the past 30-day checks (target ${MAPE_TARGET}% or lower). `
+                + 'Check Actual vs Predicted shows each period.'}>
+          MAPE {Math.round(mape)}%
+        </span>
+      )}
       <InfoTip label="How reliable is this forecast?" width={540}>
         <ReliabilityDetail m={m} reliable={reliable} model={model} fd={fd} />
       </InfoTip>

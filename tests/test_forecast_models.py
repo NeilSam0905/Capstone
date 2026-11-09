@@ -314,3 +314,56 @@ def test_sale_overview_compares_with_a_chosen_month(real_api):
     assert same["previous_month"] == default["previous_month"]
     for bad in (latest, "2099-01", "July"):
         assert real_api.get(f"/api/overview/performance?compare={bad}").status_code == 400
+
+
+def test_sale_overview_compares_two_chosen_months(real_api):
+    """?month= moves the later month too (the topbar's month comparator); no
+    month is the latest tallied one, as it always was."""
+    default = real_api.get("/api/overview/performance").get_json()
+    if not default.get("available") or len(default["compare_months"]) < 3:
+        pytest.skip("too few tallied months")
+    latest = default["latest_month"]["month"]
+    assert default["latest_tallied_month"] == latest
+    assert default["months"][0] == latest and default["months"][1:] == default["compare_months"]
+
+    later, earlier = default["compare_months"][0], default["compare_months"][-1]
+    pair = real_api.get(f"/api/overview/performance?month={later}&compare={earlier}").get_json()
+    assert pair["latest_month"]["month"] == later and pair["previous_month"]["month"] == earlier
+    assert pair["latest_tallied_month"] == latest and pair["latest_month_complete"] is True
+    assert pair["compare_months"] == [m for m in default["months"] if m < later]
+    assert pair["default_compare_month"] == backend._month_before(later)
+    assert pair["top"] == default["top"]   # Top Sellers does not follow it
+    assert sum(c["php"] for c in pair["by_category"]) == pytest.approx(pair["latest_month"]["php"], abs=1)
+
+    alone = real_api.get(f"/api/overview/performance?month={later}").get_json()
+    assert alone["compare_month"] == backend._month_before(later)
+    same = real_api.get(f"/api/overview/performance?month={latest}").get_json()
+    assert same["latest_month"] == default["latest_month"] and same["previous_month"] == default["previous_month"]
+
+    for bad in ("2099-01", "July"):
+        assert real_api.get(f"/api/overview/performance?month={bad}").status_code == 400
+    # The compared month has to come before the chosen one.
+    assert real_api.get(f"/api/overview/performance?month={earlier}&compare={later}").status_code == 400
+
+
+def test_product_movement_lists_every_tallied_month(real_api):
+    """/movement (the advisories' item detail) gives an item's units in every
+    month the store tallied sales - 0 where it sold none, so a non-moving item
+    is a full row of zeros, not an empty list - and its inventory counts."""
+    months = real_api.get("/api/overview/performance").get_json().get("months")
+    if not months:
+        pytest.skip("no tallied months")
+    advs = real_api.get("/api/advisories").get_json()["advisories"]
+    items = [i for a in advs for i in a["items"]]
+    if not items:
+        pytest.skip("no advisory items")
+    for item in items[:3] + [i for a in advs if a["type"] == "non_moving" for i in a["items"][:1]]:
+        m = real_api.get(f"/api/products/{item['product_id']}/movement").get_json()
+        assert [r["month"] for r in m["months"]] == sorted(months)
+        assert m["total_units"] == sum(r["units"] for r in m["months"])
+        assert m["months_sold"] == sum(1 for r in m["months"] if r["units"] > 0)
+        assert (m["last_sale"] is None) == (m["total_units"] == 0)
+        assert [s["month"] for s in m["stock"]] == sorted({s["month"] for s in m["stock"]})
+        if item.get("fsn_class") == "N":
+            assert m["total_units"] == 0
+    assert real_api.get("/api/products/999999999/movement").status_code == 404

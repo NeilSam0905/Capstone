@@ -65,6 +65,30 @@ def load_counted_stock(con):
     }
 
 
+def stock_history(con, product_id, item_name):
+    """Every month one item was counted, oldest first, from both sources
+    load_current_stock reads: [{month, qty, source}]. A month in both takes
+    the staff count, as load_current_stock does."""
+    by_month = {}
+    if INVENTORY_CSV.exists():
+        with open(INVENTORY_CSV, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if r["canonical_item_name"].strip() != item_name:
+                    continue
+                try:
+                    qty = float(r["Quantity"] or 0)
+                except ValueError:
+                    continue
+                m = by_month.setdefault(r["Date"][:7], {"month": r["Date"][:7], "qty": 0.0, "source": "workbook"})
+                m["qty"] += qty
+    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='Inventory_Count'").fetchone():
+        for r in rows(con, "SELECT count_month, quantity FROM Inventory_Count WHERE product_id = ?",
+                      (product_id,)):
+            by_month[r["count_month"]] = {"month": r["count_month"], "qty": float(r["quantity"]),
+                                          "source": "counted"}
+    return [{**v, "qty": int(v["qty"])} for _, v in sorted(by_month.items())]
+
+
 def load_discontinued(con):
     """Item names the store has marked discontinued (Product_Status). Empty
     on a database that predates the table."""

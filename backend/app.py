@@ -352,6 +352,11 @@ def _bool_flag(v):
     return request.args.get(v) in ("1", "true", "True")
 
 
+def _days(n):
+    """5 -> '5 days', 1 -> '1 day', for the advisory sentences."""
+    return f"{n} day{'' if n == 1 else 's'}"
+
+
 def _us_date(iso):
     """'2026-10-09' -> '10/09/2026', for dates baked into prose the frontend
     renders as-is. Structured date fields stay ISO - the frontend formats
@@ -736,6 +741,45 @@ def get_product_history(product_id):
     return jsonify(rows)
 
 
+@app.get("/api/products/<int:product_id>/movement")
+def get_product_movement(product_id):
+    """Whether one item moves: its units sold in EVERY month the store tallied
+    sales (a month it sold none is a 0, not missing - /history leaves those
+    out, which is all of them for a non-moving item), and every inventory count
+    of it. The advisories open this when an item is clicked, so "no sales,
+    stock still on the shelf" is shown, not only said."""
+    c = con()
+    product = dbmod.one(c, """
+        SELECT product_id, item_name, fsn_class, category,
+               COALESCE(supplier_name, ?) AS supplier_name
+          FROM Dim_Product WHERE product_id = ?
+    """, (catalog.UNATTRIBUTED, product_id))
+    if not product:
+        return jsonify({"error": f"No product {product_id}."}), 404
+    tallied = [r["month"] for r in dbmod.rows(c, f"""
+        SELECT DISTINCT substr(d.calendar_date, 1, 7) AS month
+          FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+         WHERE {dbmod.SALE_ONLY} AND f.quantity_sold > 0
+         ORDER BY 1
+    """)]
+    sold = {r["month"]: r for r in dbmod.rows(c, f"""
+        SELECT substr(d.calendar_date, 1, 7) AS month, SUM(f.quantity_sold) AS units,
+               MAX(d.calendar_date) AS last_day
+          FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+         WHERE f.product_id = ? AND {dbmod.SALE_ONLY} AND f.quantity_sold > 0
+         GROUP BY 1
+    """, (product_id,))}
+    months = [{"month": m, "units": sold[m]["units"] if m in sold else 0} for m in tallied]
+    return jsonify({
+        **product,
+        "months": months,
+        "total_units": sum(m["units"] for m in months),
+        "months_sold": sum(1 for m in months if m["units"] > 0),
+        "last_sale": max((r["last_day"] for r in sold.values()), default=None),
+        "stock": catalog.stock_history(c, product_id, product["item_name"]),
+    })
+
+
 # ------------------------------------------------------------------ sales
 
 @app.get("/api/sales/monthly")
@@ -824,6 +868,13 @@ def get_overview_performance():
     each month figure carries `days`, the days it has sales on, since months
     were tallied on very different numbers of days.
 
+    `?month=YYYY-MM` moves the other side too: any tallied month in place of
+    the latest one, so the topbar's month comparator can set both months (the
+    adviser, Nov 2026). `latest_month` then carries that month's figure,
+    `compare_months` the tallied months before it, and the default compare is
+    the month before it. `months` lists every tallied month it can be, newest
+    first; `latest_tallied_month` stays the latest one whatever is chosen.
+
     Top Sellers' window is `?top_range=` (one of TOP_EARNER_RANGES) or
     `?top_from=YYYY-MM&top_to=YYYY-MM`, whole months inclusive, which takes
     precedence (the adviser, Nov 2026: a chosen range or month, not only the
@@ -841,6 +892,7 @@ def get_overview_performance():
                             "reason": f"{top_from} is after {top_to}."}), 400
         top_range = TOP_CUSTOM_RANGE
     compare = request.args.get("compare") or None
+    chosen_month = request.args.get("month") or None
     c = con()
     cat = catalog.compute_catalog(c)
     supplier = request.args.get("supplier") or None
@@ -871,12 +923,17 @@ def get_overview_performance():
         window_start = min(r["day"] for r in rows)
     else:
         window_start = (end - timedelta(days=TOP_EARNER_RANGES[top_range] - 1)).isoformat()
-    # Store-wide, so the list does not change with the supplier or category.
-    compare_months = sorted({r["day"][:7] for r in rows if r["day"][:7] < latest}, reverse=True)
+    # Store-wide, so the lists do not change with the supplier or category.
+    tallied_months = sorted({r["day"][:7] for r in rows}, reverse=True)
+    if chosen_month is not None and chosen_month not in tallied_months:
+        return jsonify({"available": False,
+                        "reason": f"No tallied month {chosen_month!r} to compare."}), 400
+    current = chosen_month or latest
+    compare_months = [m for m in tallied_months if m < current]
     if compare is not None and compare not in compare_months:
         return jsonify({"available": False,
-                        "reason": f"No tallied month {compare!r} before {latest} to compare with."}), 400
-    previous = compare or _month_before(latest)
+                        "reason": f"No tallied month {compare!r} before {current} to compare with."}), 400
+    previous = compare or _month_before(current)
 
     daily, monthly, items, by_category, by_item = {}, {}, {}, {}, {}
     units_all = units_priced = 0
@@ -890,20 +947,20 @@ def get_overview_performance():
         m = monthly.setdefault(month, {"month": month, "php": 0.0, "units": 0, "days": set()})
         m["units"] += r["units"]
         m["days"].add(r["day"])
-        if month in (latest, previous):
+        if month in (current, previous):
             bi = by_item.setdefault(pid, {"units": 0, "previous_units": 0, "php": 0.0, "previous_php": 0.0})
-            bi["units" if month == latest else "previous_units"] += r["units"]
+            bi["units" if month == current else "previous_units"] += r["units"]
         in_window = window_start <= r["day"] <= window_end
         if in_window:
             units_all += r["units"]
         if php is None:
             continue
         m["php"] += php
-        if month in (latest, previous):
+        if month in (current, previous):
             name = (by_id.get(pid) or {}).get("category") or "Uncategorised"
             bc = by_category.setdefault(name, {"category": name, "php": 0.0, "previous_php": 0.0})
-            bc["php" if month == latest else "previous_php"] += php
-            by_item[pid]["php" if month == latest else "previous_php"] += php
+            bc["php" if month == current else "previous_php"] += php
+            by_item[pid]["php" if month == current else "previous_php"] += php
         if r["day"] >= daily_start:
             daily[r["day"]] = daily.get(r["day"], 0.0) + php
         if in_window:
@@ -957,11 +1014,14 @@ def get_overview_performance():
     return jsonify({
         "available": True,
         "history_end": history_end,
-        "latest_month": month_figure(latest),
-        "latest_month_complete": end == month_end,
+        "latest_month": month_figure(current),
+        # A month before the latest tallied one is over, so it is complete.
+        "latest_month_complete": current != latest or end == month_end,
+        "latest_tallied_month": latest,
+        "months": tallied_months,
         "previous_month": month_figure(previous),
         "compare_month": previous,
-        "default_compare_month": _month_before(latest),
+        "default_compare_month": _month_before(current),
         "compare_months": compare_months,
         "same_month_last_year": month_figure(_month_before(latest, years=1, months=0)),
         "by_category": sorted(
@@ -3879,9 +3939,10 @@ def get_advisories():
                            "ensure Fast-moving items (uniforms, IDs, school supplies) are stocked.",
             "date_range": [run["start"], run["end"]],
             "has_forecast": has_forecast,
-            "basis": f"{run['days']} upcoming date(s) in Dim_Date carry is_enrollment_period = 1. "
-                     "The items below are the Fast-moving class (step3's 80th-percentile ADUS "
-                     "cut), which is what an enrollment surge draws on.",
+            # Plain words, for store staff: no table, column or script names.
+            "basis": f"The school calendar marks {_days(run['days'])} coming up as enrollment, "
+                     "the store's busiest time of year. The items listed are the fast-moving "
+                     "ones, which are what enrollment buyers come for.",
             "items": affected_items(("F",)),
             "outlook": outlook(run, past_enrollment),
         })
@@ -3902,9 +3963,9 @@ def get_advisories():
                            "restock as usual.",
             "date_range": [run["start"], run["end"]],
             "has_forecast": has_forecast,
-            "basis": f"{run['days']} upcoming date(s) in Dim_Date carry is_exam_week = 1. "
-                     "Across past exam weeks, tallied sales averaged about the same per day "
-                     "as regular days, though single weeks vary widely.",
+            "basis": f"The school calendar marks {_days(run['days'])} coming up as exam week. "
+                     "In past exam weeks the store sold about as much a day as on regular "
+                     "days, though some weeks were busier or quieter than others.",
             "items": affected_items(("F",)),
             "outlook": outlook(run, past_exams),
         })
@@ -3921,9 +3982,11 @@ def get_advisories():
                            f"Event on {_us_date(event['event_date'])}. Check stock for high-demand items.",
             "date_range": [event["event_date"], event["event_date"]],
             "has_forecast": has_forecast,
-            "basis": f"Logged in Event_Log for {_us_date(event['event_date'])}"
-                     + (f", which falls in semester {event['semester_id']} week "
-                        f"{event['semester_week']}." if event["semester_id"] else "."),
+            "basis": f"This event is on the store's calendar for {_us_date(event['event_date'])}"
+                     + (f", week {event['semester_week']} of the semester."
+                        if event["semester_id"] and event["semester_week"] else ".")
+                     + " Events bring more buyers than a regular day, so the fast-moving "
+                       "items are listed to check.",
             "items": affected_items(("F",)),
             # The event's own day takes the event lift even where Dim_Date does
             # not flag it: it is in Event_Log because it is an event.
@@ -3946,18 +4009,41 @@ def get_advisories():
         """)
         if fast_items:
             top_names = ", ".join(i["item_name"] for i in fast_items[:3])
+            items = affected_items(("F",), limit=5)
+            # Counted, and on hand less than the month's expected sales: these
+            # run out before the 30 days are up unless they are reordered.
+            short = sum(1 for i in items if i["current_stock"] is not None
+                        and i["forecast_30d"] and i["current_stock"] < i["forecast_30d"])
+            uncounted = sum(1 for i in items if i["current_stock"] is None)
+            notes = []
+            if short:
+                notes.append(f"{short} of the {len(items)} {'does' if short == 1 else 'do'} not "
+                             "have enough on hand to last the month.")
+            elif not uncounted:
+                notes.append("Each has enough on hand to last the month.")
+            if uncounted == len(items):
+                notes.append("None of them has an inventory count yet, so the system cannot "
+                             "tell whether the stock will last.")
+            elif uncounted:
+                notes.append(f"{uncounted} {'has' if uncounted == 1 else 'have'} no inventory "
+                             "count yet, so the system cannot tell for "
+                             f"{'it' if uncounted == 1 else 'those'}.")
+            stock_note = " ".join(notes)
             advisories.insert(0, {
                 "type": "forecast_alert",
                 "severity": "high",
                 "title": "Top Forecasted Demand — Next 30 Days",
-                "description": f"Highest projected demand: {top_names}. "
-                               "Review stock levels against the forecast on the Demand Forecast page.",
+                "description": f"Expected to sell the most in the next 30 days: {top_names}. "
+                               + stock_note,
                 "date_range": None,
                 "has_forecast": True,
-                "basis": "Ranked by SUM(yhat) over the 30-day horizon in Result_Forecast, "
-                         "Fast class only. Stock and reorder point come from the latest "
-                         "count and Result_Prescriptive.",
-                "items": affected_items(("F",), limit=5),
+                "basis": "The demand forecast looks at each item's recent sales and the school "
+                         "calendar to estimate how many units it will sell over the next 30 days. "
+                         "These are the fast-moving items it expects to sell the most. Each is "
+                         "compared with the stock from its last inventory count: an item with "
+                         "less on hand than it is expected to sell will run out before the month "
+                         "is over unless it is reordered.",
+                "items": items,
             })
 
     if not advisories:
@@ -3973,8 +4059,8 @@ def get_advisories():
                                    "forecast-based advisories."),
             "date_range": None,
             "has_forecast": has_forecast,
-            "basis": "No upcoming row in Dim_Date has is_enrollment_period, is_exam_week or "
-                     "is_event_day set, and Event_Log has no future entry.",
+            "basis": "Nothing on the school calendar is coming up: no enrollment, no exam "
+                     "week and no store event.",
             "items": [],
         })
 
@@ -4044,10 +4130,10 @@ def _decision_rule_advisories(c, products, enrollment_runs, upcoming_events,
                            f"marketing during {during}.",
             "date_range": [window[1], window[2]] if window else None,
             "has_forecast": has_forecast,
-            "basis": "Slow-moving items sold in the records but below the Fast cut (step3's "
-                     "80th-percentile ADUS), so they get no item forecast; the manuscript's rule "
-                     "for them is promotion (Sec. 3.3.1). Listed by units on hand, then units "
-                     "sold. Items slow for two semesters running are under Review for "
+            "basis": "These items do sell, but too rarely to count as fast-moving, so the "
+                     "system does not forecast them one by one. The way to move them is a "
+                     "promotion. The items with the most stock on hand come first. Items that "
+                     "have been slow for two semesters in a row are under Review for "
                      "Discontinuation instead.",
             "items": affected_items(ids=most_stock_first(promote)),
         })
@@ -4064,10 +4150,11 @@ def _decision_rule_advisories(c, products, enrollment_runs, upcoming_events,
                            "Decide whether to keep carrying them.",
             "date_range": None,
             "has_forecast": has_forecast,
-            "basis": "Velocity is ADUS per regular semester, measured as the FSN model measures "
-                     "it. An item carried before a semester but absent from its tally sheets "
-                     "counts as 0 for it. The threshold can be changed on the FSN Classification "
-                     f"page; this card uses the default, {rules['default_threshold']:g}.",
+            "basis": "Each item's average sales per selling day were worked out for each of the "
+                     "last two semesters. An item the store carried but that is missing from a "
+                     "semester's tally sheets counts as selling none that semester. The limit "
+                     "can be changed on the FSN Classification page; this card uses the "
+                     f"default, {rules['default_threshold']:g} a day.",
             "items": affected_items(ids=most_stock_first(review)),
         })
 
@@ -4086,9 +4173,9 @@ def _decision_rule_advisories(c, products, enrollment_runs, upcoming_events,
                            "marking them down for clearance, or discontinuing them.",
             "date_range": None,
             "has_forecast": has_forecast,
-            "basis": "Non-moving items have no recorded sale (step3) and are left out of every "
-                     "reorder calculation (Sec. 3.3.1). Only those with a stock count above zero "
-                     "are listed: without stock there is nothing to clear out.",
+            "basis": "These items have never recorded a sale, so the system leaves them out of "
+                     "every reorder suggestion. Only the ones that still have stock on hand are "
+                     "listed: without stock there is nothing to clear out.",
             "items": affected_items(ids=most_stock_first(holding)),
         })
 

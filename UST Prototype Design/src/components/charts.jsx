@@ -486,6 +486,76 @@ export function DailyWindowBars({ data, refValue, height = 170 }) {
   );
 }
 
+/** One bar per month, for one item's movement (the advisories' item detail).
+ *  A zero is drawn as a short stub on the baseline rather than nothing, so a
+ *  run of months with no sales reads as a flat row of stubs - the item did
+ *  not move - instead of an empty chart. `data` is [{ label, value, tip }],
+ *  oldest first; `tip` is the hover's first line (the full month). */
+export function MonthBars({ data, height = 150, color = 'var(--accent)', unit = 'units', ariaLabel }) {
+  const [hover, setHover] = useState(null);
+  const svgRef = useRef(null);
+  const [wrapRef, measured] = useWidth();
+  if (!data?.length) return null;
+
+  const W = Math.max(measured || 560, 260), H = height, padL = 40, padR = 10, padT = 12, padB = 24;
+  const n = data.length;
+  const allMax = Math.max(0, ...data.map(d => d.value));
+  const step = niceStep(Math.max(allMax, 3));
+  const top = Math.max(step, Math.ceil(allMax / step) * step);
+  const plotW = W - padL - padR;
+  const slot = plotW / n;
+  const bw = Math.max(2, Math.min(28, slot * 0.68));
+  const xL = i => padL + i * slot + (slot - bw) / 2;
+  const y = v => padT + (1 - v / top) * (H - padT - padB);
+  const base = H - padB;
+  const labelEvery = Math.ceil(n / Math.max(2, Math.floor(plotW / 52)));
+  // Counted back from the newest month, so the latest one always has a label.
+  const labelled = i => (n - 1 - i) % labelEvery === 0;
+
+  function onMove(e) {
+    const local = svgPoint(svgRef.current, e.clientX, e.clientY);
+    if (!local) return;
+    const i = Math.floor((local.x - padL) / slot);
+    if (i < 0 || i >= n) { setHover(null); return; }
+    setHover({ i, left: svgXToLocalPx(svgRef.current, padL + (i + 0.5) * slot) });
+  }
+
+  const h = hover && data[hover.i];
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
+           style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}
+           role="img" aria-label={ariaLabel}>
+        {Array.from({ length: Math.round(top / step) + 1 }).map((_, k) => {
+          const v = k * step;
+          return (
+            <g key={k}>
+              <line x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke="var(--line)" strokeWidth="1" />
+              <text x={padL - 6} y={y(v) + 3.5} textAnchor="end" fontSize="9.5" fill="var(--muted)">{num(v)}</text>
+            </g>
+          );
+        })}
+        {data.map((d, i) => (
+          <g key={d.label + i} opacity={hover && hover.i !== i ? 0.55 : 1}>
+            {d.value > 0
+              ? <rect x={xL(i)} y={y(d.value)} width={bw} height={Math.max(1, base - y(d.value))} rx="2" fill={color} />
+              : <rect x={xL(i)} y={base - 3} width={bw} height={3} rx="1" fill="var(--muted)" fillOpacity="0.45" />}
+          </g>
+        ))}
+        {data.map((d, i) => (labelled(i)
+          ? <text key={`l${d.label}${i}`} x={padL + (i + 0.5) * slot} y={H - 7} textAnchor="middle" fontSize="10"
+                  fill="var(--muted)">{d.label}</text>
+          : null))}
+      </svg>
+      {h && hover.left != null && (
+        <div className="charttip-wrap" style={{ left: `${hover.left}px` }}>
+          <ChartTip label={h.tip ?? h.label} value={`${num(h.value)} ${unit}`} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- Actual vs predicted, period by period (Demand Forecast) ---------- */
 const shortDay = iso => new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 const shortDayYear = iso => new Date(`${iso}T00:00:00`)
@@ -499,28 +569,38 @@ const offPct = (pred, actual) => (actual > 0 ? ((pred - actual) / actual) * 100 
  *  percent over each period - so how far off it was, and which way, reads at
  *  a glance. `naive` adds what repeating the last 30 days would have said, as
  *  a faint dotted line. `checks` is [{ start_date, end_date, actual_30d,
- *  pred_30d, naive_30d }], oldest first. */
-export function ActualVsPredictedChart({ checks, naive = true, height = 230 }) {
+ *  pred_30d, naive_30d }], oldest first.
+ *
+ *  Drawn in the Demand Forecast chart's style (ScrollForecastChart): a tinted
+ *  plot with its title written inside it, the value axis named at its top, the
+ *  forecast as an accent line with hollow points over a fading fill, what sold
+ *  as an ink line with solid points, and a dashed guide on hover. */
+export function ActualVsPredictedChart({ checks, naive = true, height = 300 }) {
   const [hover, setHover] = useState(null);
   const svgRef = useRef(null);
   const [wrapRef, measured] = useWidth();
   if (!checks?.length) return null;
 
-  const W = Math.max(measured || 640, 280), H = height, padL = 48, padR = 12, padT = 30, padB = 26;
+  const W = Math.max(measured || 640, 280), H = height, padL = 54, padR = 20, padT = 58, padB = 28;
   const n = checks.length;
   const plotW = W - padL - padR;
+  const plotBottom = H - padB;
   const slot = plotW / n;
   const cx = i => padL + (i + 0.5) * slot;
   const peak = Math.max(1, ...checks.flatMap(c => [c.actual_30d, c.pred_30d, naive ? c.naive_30d : 0]));
-  const step = niceStep(peak);
-  const top = Math.ceil(peak / step) * step;
-  const y = v => padT + (1 - v / top) * (H - padT - padB);
+  const { max: top, step } = niceAxis(peak);
+  const y = v => padT + (1 - v / top) * (plotBottom - padT);
   const path = key => checks.map((c, i) => `${i ? 'L' : 'M'}${cx(i).toFixed(1)},${y(c[key]).toFixed(1)}`).join(' ');
+  const predArea = n > 1
+    ? `${path('pred_30d')} L${cx(n - 1).toFixed(1)},${plotBottom} L${cx(0).toFixed(1)},${plotBottom} Z` : '';
+  const ticks = [];
+  for (let v = 0; v <= top + 1e-9; v += step) ticks.push(v);
   const labelEvery = Math.ceil(n / Math.max(2, Math.floor(plotW / 64)));
   // Every period's % when there is room for it (about 34px), else every few,
   // counted from the latest; hovering a period always shows its own.
   const pctEvery = slot >= 34 ? 1 : Math.ceil(34 / slot);
   const tone = p => (p == null ? 'var(--muted)' : Math.abs(p) <= 20 ? 'var(--ok)' : Math.abs(p) <= 50 ? 'var(--warn)' : 'var(--crit)');
+  const isHover = i => hover?.i === i;
 
   function onMove(e) {
     const local = svgPoint(svgRef.current, e.clientX, e.clientY);
@@ -537,38 +617,62 @@ export function ActualVsPredictedChart({ checks, naive = true, height = 230 }) {
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
            style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}
            role="img" aria-label="Units sold against units forecast in each past 30-day period">
-        {Array.from({ length: Math.round(top / step) + 1 }).map((_, k) => (
-          <g key={k}>
-            <line x1={padL} y1={y(k * step)} x2={W - padR} y2={y(k * step)} stroke="var(--line)" />
-            <text x={padL - 6} y={y(k * step) + 3.5} textAnchor="end" fontSize="9.5" fill="var(--muted)">
-              {num(k * step)}
-            </text>
+        <defs>
+          <linearGradient id="avp-pred-grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.16" />
+            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* The checked periods' region, titled inside it, as the forecast
+            chart titles its forecast month */}
+        <rect x={padL - 4} y={4} width={plotW + 8} height={plotBottom - 4}
+              fill="var(--accent)" fillOpacity="0.06" rx="6" />
+        <text x={padL + 8} y={20} fontSize="11" fontWeight="700" fill="var(--accent-deep)">
+          {`Past checks · ${n} period${n === 1 ? '' : 's'} of 30 days · forecast made before each one`}
+        </text>
+        <text x={padL - 8} y={padT - 22} textAnchor="end" fontSize="9.5" fill="var(--muted)">units</text>
+
+        {ticks.map(v => (
+          <g key={v}>
+            <line x1={padL - 4} y1={y(v)} x2={W - padR + 4} y2={y(v)} stroke="var(--line)" strokeWidth="1" />
+            <text x={padL - 8} y={y(v) + 3.5} textAnchor="end" fontSize="10" fill="var(--muted)">{num(v)}</text>
           </g>
         ))}
+
+        {/* Hover guide */}
         {hover && (
-          <rect x={padL + hover.i * slot} y={padT - 22} width={slot} height={H - padB - padT + 22}
-                fill="var(--accent-wash)" rx="4" />
+          <line x1={cx(hover.i)} y1={padT} x2={cx(hover.i)} y2={plotBottom}
+                stroke="var(--accent)" strokeWidth="1" strokeDasharray="3 3" />
         )}
+
         {/* The miss: from what sold to what was forecast */}
         {checks.map((c, i) => (
           <line key={`m${c.start_date}`} x1={cx(i)} y1={y(c.actual_30d)} x2={cx(i)} y2={y(c.pred_30d)}
-                stroke={tone(offPct(c.pred_30d, c.actual_30d))} strokeWidth="3" strokeOpacity="0.35"
+                stroke={tone(offPct(c.pred_30d, c.actual_30d))} strokeWidth="2.5" strokeOpacity="0.35"
                 strokeLinecap="round" />
         ))}
+
+        {predArea && <path d={predArea} fill="url(#avp-pred-grad)" />}
         {naive && (
           <path d={path('naive_30d')} fill="none" stroke="var(--muted)" strokeWidth="1.5"
                 strokeDasharray="2 4" strokeLinecap="round" />
         )}
-        <path d={path('pred_30d')} fill="none" stroke="var(--accent)" strokeWidth="2.2" strokeLinejoin="round" />
-        <path d={path('actual_30d')} fill="none" stroke="var(--ink)" strokeWidth="2.2" strokeLinejoin="round" />
+        <path d={path('pred_30d')} fill="none" stroke="var(--accent)" strokeWidth="2.5"
+              strokeLinejoin="round" strokeLinecap="round" />
+        <path d={path('actual_30d')} fill="none" stroke="var(--ink)" strokeWidth="1.8"
+              strokeLinejoin="round" strokeLinecap="round" />
+
         {checks.map((c, i) => {
           const p = offPct(c.pred_30d, c.actual_30d);
           return (
             <g key={c.start_date}>
-              <circle cx={cx(i)} cy={y(c.pred_30d)} r="4" fill="var(--card)" stroke="var(--accent)" strokeWidth="2.2" />
-              <circle cx={cx(i)} cy={y(c.actual_30d)} r="4" fill="var(--ink)" />
-              {((n - 1 - i) % pctEvery === 0 || hover?.i === i) && (
-                <text x={cx(i)} y={padT - 10} textAnchor="middle" fontSize="10" fontWeight="700" fill={tone(p)}>
+              <circle cx={cx(i)} cy={y(c.pred_30d)} r={isHover(i) ? 5 : 3}
+                      fill={isHover(i) ? 'var(--accent)' : 'var(--card)'} stroke="var(--accent)" strokeWidth="2" />
+              <circle cx={cx(i)} cy={y(c.actual_30d)} r={isHover(i) ? 5 : 3.5}
+                      fill="var(--ink)" stroke="var(--card)" strokeWidth="1.2" />
+              {((n - 1 - i) % pctEvery === 0 || isHover(i)) && (
+                <text x={cx(i)} y={padT - 8} textAnchor="middle" fontSize="10" fontWeight="700" fill={tone(p)}>
                   {p == null ? '—' : `${p > 0 ? '+' : p < 0 ? '−' : ''}${Math.abs(Math.round(p))}%`}
                 </text>
               )}
@@ -576,7 +680,8 @@ export function ActualVsPredictedChart({ checks, naive = true, height = 230 }) {
           );
         })}
         {checks.map((c, i) => (i % labelEvery === (n - 1) % labelEvery ? (
-          <text key={`x${c.start_date}`} x={cx(i)} y={H - 8} textAnchor="middle" fontSize="10" fill="var(--muted)">
+          <text key={`x${c.start_date}`} x={cx(i)} y={plotBottom + 16} textAnchor="middle" fontSize="10.5"
+                fill="var(--muted)">
             {shortDay(c.start_date)}
           </text>
         ) : null))}
@@ -1026,18 +1131,18 @@ export function ScrollForecastChart({ history, forecast, marks, actuals, height 
 
   return (
     <div className="sfc">
-      <div className="sfc__bar">
-        <span className="hint">
-          {atStart && atEnd
-            ? 'Past months · average units sold per day, then the forecast day by day'
-            : atEnd ? '← Scroll or drag left to see earlier months' : 'Past months · average units sold per day'}
-        </span>
-        {!atEnd && (
-          <button type="button" className="btn btn--ghost btn--sm" onClick={toForecast}>
-            Back to forecast →
-          </button>
-        )}
-      </div>
+      {/* Only while the timeline scrolls: how to reach the earlier months,
+          and the way back to the forecast. */}
+      {!(atStart && atEnd) && (
+        <div className="sfc__bar">
+          <span className="hint">{atEnd ? '← Scroll or drag left to see earlier months' : ''}</span>
+          {!atEnd && (
+            <button type="button" className="btn btn--ghost btn--sm" onClick={toForecast}>
+              Back to forecast →
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="sfc__body">
         {/* Pinned value axis: stays put while the timeline scrolls under it */}

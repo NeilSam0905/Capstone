@@ -316,16 +316,24 @@ export const getMonthlyUnits = (filters = {}) =>
  *  TOP_EARNER_RANGES); left out, its ranking covers the last 12 months. */
 /** `top` is Top Sellers' window: a preset name (top_range), or
  *  { from, to } as 'YYYY-MM' for whole months, inclusive (one month: from = to).
- *  `compare` is the month the Sale Overview compares the latest one with. */
-export const getOverviewPerformance = (filters = {}, top, compare) =>
+ *  `compare` and `month` are the two months the Sale Overview compares (the
+ *  topbar's month comparator): left out, the month before and the latest
+ *  tallied month. */
+export const getOverviewPerformance = (filters = {}, top, compare, month) =>
   get(`/overview/performance${qs({
     supplier: filters.supplier, category: filters.category,
     ...(typeof top === 'object' && top ? { top_from: top.from, top_to: top.to } : { top_range: top }),
-    compare,
+    compare, month,
   })}`);
 
 /** One product's observed monthly units — measured history, no fit. */
 export const getProductHistory = productId => get(`/products/${productId}/history`);
+
+/** Whether one item moves: units sold in every month with tallied sales (0
+ *  where it sold none) and every inventory count of it.
+ *  -> { item_name, fsn_class, supplier_name, category, months:[{month, units}],
+ *  total_units, months_sold, last_sale, stock:[{month, qty, source}] }. */
+export const getProductMovement = productId => get(`/products/${productId}/movement`);
 
 /** Per-supplier unit counts and remittance line totals for one period —
  *  `period` is { month: 'YYYY-MM' } or { start, end } ('YYYY-MM-DD'; one day

@@ -362,7 +362,6 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
 /* Overview: the labels over its peso sections (Overview.jsx). */
 .step-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 -4px; }
 /* The Sale Overview's "compared with [month]" picker, beside its label. */
-.step-h__compare { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .step-next { margin-top: 10px; }
 .kpi__sub { font-size: 12px; color: var(--muted); font-weight: 500; }
 
@@ -387,7 +386,7 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
 .legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
 .legend i.legend__dots { width: 16px; height: 0; border-radius: 0; border-top: 2px dotted var(--muted); }
 
-/* Demand Forecast: Actual vs Predicted (Forecast.jsx ActualVsPredicted). */
+/* Demand Forecast: Actual vs Predicted (Forecast.jsx ActualVsPredictedModal). */
 .avp-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 4px 0 14px; }
 .avp-stat {
   display: flex; flex-direction: column; gap: 3px; min-width: 0;
@@ -805,7 +804,8 @@ tfoot td.subtotal { background: var(--gold-wash); font-weight: 700; color: var(-
    enough to read "All Time" / "All Categories" until the very narrowest. */
 .topbar__right .filter-field { min-width: 104px; flex: 0 1 170px; }
 .topbar__right .filter-field--wide { min-width: 110px; flex: 1 4 280px; max-width: 520px; }
-.topbar__right .filter select { min-width: 0; width: 100%; text-overflow: ellipsis; }
+/* The Overview's month comparator: room for "September 2026 (month before)". */
+.topbar__right .filter-field--month { min-width: 150px; flex: 0 1 250px; }.topbar__right .filter select { min-width: 0; width: 100%; text-overflow: ellipsis; }
 /* Narrower windows: the Advisories button keeps its bell and red count but
    drops the word, and the filter glyph goes - the room goes to the selects. */
 @media (max-width: 1080px) {
@@ -1598,6 +1598,18 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 .dwbars-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11px; color: var(--muted); margin: 6px 0; }
 .dwbars-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .dwbars-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+/* An advisory item's sales and stock (Advisories.jsx ItemMovement), opened
+   under its row: the two charts side by side, stacked on a narrow screen. */
+.advisory__item-name { display: inline-flex; align-items: center; gap: 8px; }
+.advisory__chev--sm { width: 6px; height: 6px; flex-shrink: 0; margin-top: -3px; }
+.advisory__chev--sm.is-open { margin-top: 2px; }
+.tbl tbody tr.is-open > td { background: var(--bg); }
+.tbl tbody tr.advisory__item-detail > td { background: var(--bg); padding: 4px 14px 16px; }
+.advisory__movement { display: grid; grid-template-columns: 3fr 2fr; gap: 18px; }
+.advisory__movement .hint { margin: 2px 0 6px; }
+@media (max-width: 720px) {
+  .advisory__movement { grid-template-columns: 1fr; }
+}
 .dwbars-legend__dash { width: 16px !important; height: 0 !important; border-top: 2px dashed var(--ink); border-radius: 0 !important; }
 
 @media (max-width: 620px) {

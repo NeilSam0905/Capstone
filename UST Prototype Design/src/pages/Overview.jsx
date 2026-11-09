@@ -40,7 +40,9 @@ import { ALL_CATEGORIES, ALL_SUPPLIERS } from '../services/dataService';
 const SHORT_LIST_ROWS = 5;
 const HERO_LIST_ROWS = 5;
 
-export default function Overview({ filters, setPage, setView, user }) {
+const DEFAULT_SALE_MONTHS = { month: null, compare: null };
+
+export default function Overview({ filters, setPage, setView, user, saleMonths = DEFAULT_SALE_MONTHS }) {
   const [productsOpen, setProductsOpen] = useState(false);
   const advisoriesRef = useRef(null);
   const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
@@ -131,7 +133,7 @@ export default function Overview({ filters, setPage, setView, user }) {
 
   return (
     <div className="stack">
-      <PerformanceStep filters={filters} dueByCategory={dueByCategory} setPage={setPage}
+      <PerformanceStep filters={filters} saleMonths={saleMonths} dueByCategory={dueByCategory} setPage={setPage}
                        alertById={alertById} latestCount={latestCount} recount={recount} />
 
       <ReorderHero
@@ -458,49 +460,30 @@ function NextStep({ children }) {
  *  tallied on far fewer days (12 in July 2025 against 20 in July 2026), so that
  *  comparison measured record-keeping as much as sales.
  *
- *  The month it compares with is picked beside the label (the adviser, Nov
- *  2026: compare a chosen month with the current one), the month before by
- *  default; all three tiles and the category table follow it. Because months
- *  were tallied on such different numbers of days, each total says how many
- *  days it has sales on. */
-function PerformanceStep({ filters, dueByCategory, setPage, alertById, latestCount, recount }) {
+ *  The two months it compares are picked in the topbar's month comparator
+ *  (the adviser, Nov 2026: compare two chosen months), by default the month
+ *  before against the latest tallied month; all three tiles and the category
+ *  table follow them. Because months were tallied on such different numbers
+ *  of days, each total says how many days it has sales on. */
+function PerformanceStep({ filters, saleMonths, dueByCategory, setPage, alertById, latestCount, recount }) {
   const [stoppedOpen, setStoppedOpen] = useState(false);
   const [catsOpen, setCatsOpen] = useState(false);
-  // null = the month before. Unset rather than that month itself, so the
-  // default asks for the same URL as the rest of the page (one cached answer).
-  const [compare, setCompare] = useState(null);
+  // null for either month is its default, so the default asks for the same
+  // URL as the rest of the page (one cached answer).
+  const { month, compare } = saleMonths;
   const { data: perf } = useData(
-    () => getOverviewPerformance(filters, undefined, compare ?? undefined),
-    [filters.supplier, filters.category, compare]);
+    () => getOverviewPerformance(filters, undefined, compare ?? undefined, month ?? undefined),
+    [filters.supplier, filters.category, compare, month]);
 
-  const label = picker => <SectionLabel title="Sale Overview">{picker}</SectionLabel>;
+  const label = hint => <SectionLabel title="Sale Overview" hint={hint} />;
   if (!perf) return <>{label()}<div className="card card__pad"><Loading label="Adding up sales…" /></div></>;
   if (!perf.available) return <>{label()}<div className="card card__pad"><div className="empty">{perf.reason}</div></div></>;
 
   const cur = perf.latest_month, prev = perf.previous_month;
-  const prevMonth = compare ?? perf.compare_month ?? prev?.month;
-  const picker = (
-    <span className="step-h__compare">
-      <span className="hint">
-        {longMonth(cur.month)}{perf.latest_month_complete ? '' : ' so far'}, the latest tallied month, compared with
-      </span>
-      <SearchSelect
-        id="ov-compare"
-        value={compare ?? perf.default_compare_month}
-        options={(perf.compare_months ?? []).map(m => ({
-          value: m,
-          label: m === perf.default_compare_month ? `${longMonth(m)} (month before)` : longMonth(m),
-        }))}
-        onChange={m => setCompare(m === perf.default_compare_month ? null : m)}
-        minWidth={220}
-        placeholder="Search months…"
-        emptyLabel="Select a Month"
-      />
-      {compare && (
-        <button type="button" className="linkish" onClick={() => setCompare(null)}>Back to the month before</button>
-      )}
-    </span>
-  );
+  const prevMonth = perf.compare_month ?? prev?.month;
+  const isLatest = cur.month === (perf.latest_tallied_month ?? cur.month);
+  const heading = `${longMonth(prevMonth)} vs ${longMonth(cur.month)}`
+    + (isLatest ? `${perf.latest_month_complete ? '' : ' so far'}, the latest tallied month` : '');
   const vsPrev = prev && change(cur.php, prev.php);
   const unpriced = perf.priced_unit_share == null ? 0 : 1 - perf.priced_unit_share;
 
@@ -545,7 +528,7 @@ function PerformanceStep({ filters, dueByCategory, setPage, alertById, latestCou
 
   return (
     <>
-      {label(picker)}
+      {label(heading)}
       <div className="grid-3">
         <KPICard
           label={prev ? `Sales, ${prevName} to ${curName}` : `Sales, ${longMonth(cur.month)}`}
@@ -820,7 +803,7 @@ function TopSellers({ alertById, categoryOf, onBrowse }) {
           ))}
         </div>
         <span className="hint">
-          {[period, ...active.filter(a => a !== period)].join(' · ')} &middot; keep these in stock
+          {[period, ...active.filter(a => a !== period)].join(' · ')}
         </span>
       </div>
       {rows.length

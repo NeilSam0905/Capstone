@@ -1,7 +1,12 @@
 /** Shared formatters and chart palette (kept out of charts.jsx so that file
  *  only exports components — see react-refresh/only-export-components). */
 export const peso = n => '₱' + Math.round(n).toLocaleString();
-export const pesoK = n => n >= 1e6 ? '₱' + (n / 1e6).toFixed(2) + 'M' : '₱' + (n / 1e3).toFixed(0) + 'K';
+// Under ₱1,000 in plain pesos: a chart's zero reads "₱0", not "₱0K", and a
+// small figure is not rounded away to "₱0K".
+export const pesoK = n => {
+  if (Math.abs(n) < 1e3) return peso(n);
+  return n >= 1e6 ? '₱' + (n / 1e6).toFixed(2) + 'M' : '₱' + (n / 1e3).toFixed(0) + 'K';
+};
 export const num = n => Math.round(n).toLocaleString();
 
 /** 'staff' -> 'Staff'. A username as shown on screen; the stored and

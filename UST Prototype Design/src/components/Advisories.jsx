@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
-import { getAdvisories } from '../services/dataService';
+import { Fragment, useEffect, useState } from 'react';
+import { getAdvisories, getProductMovement } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from './Pending';
 import Modal from './Modal';
 import Icon from './Icon';
-import { DailyWindowBars } from './charts';
-import { num, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { DailyWindowBars, MonthBars } from './charts';
+import { num, usDate, shortMonth, longMonth, FSN_TONE, FSN_LABEL } from '../lib/format';
 import { jumpKey, readJumpPref, writeJumpPref } from '../lib/advisoriesJump';
 
 /**
@@ -94,6 +94,8 @@ export function AdvisoriesPanel({ advisories, setPage }) {
  */
 function AdvisoryCard({ advisory, setPage }) {
   const [open, setOpen] = useState(false);
+  // The item whose sales and stock are open under its row, if any.
+  const [openItem, setOpenItem] = useState(null);
   const sev = SEVERITY[advisory.severity] ?? SEVERITY.low;
   const items = advisory.items ?? [];
   const outlook = advisory.outlook;
@@ -148,14 +150,18 @@ function AdvisoryCard({ advisory, setPage }) {
 
       {open && (
         <div className="advisory__body">
-          {outlook && <AdvisoryOutlook o={outlook} />}
-
           {advisory.basis && (
             <div className="advisory__basis">
-              <span className="advisory__basis-label">Why this is showing</span>
+              <span className="advisory__basis-label">Explanation for Advisory</span>
               {advisory.basis}
             </div>
           )}
+
+          {outlook && <AdvisoryOutlook o={outlook} />}
+
+          {items.length > 0 && <div className="hint" style={{ marginBottom: 6 }}>
+            Click an item to see its sales and stock over time.
+          </div>}
 
           {items.length > 0 && (
             <div style={{ overflowX: 'auto' }}>
@@ -164,16 +170,23 @@ function AdvisoryCard({ advisory, setPage }) {
                   <tr>
                     <th>Item</th>
                     <th>Class</th>
-                    {showForecast && <th className="num">Forecast 30d</th>}
+                    {showForecast && <th className="num">Expected sales, 30 days</th>}
                     <th className="num">On hand</th>
-                    <th className="num">ROP</th>
+                    <th className="num" title="The stock level at which to order again">Reorder point</th>
                   </tr>
                 </thead>
                 <tbody>
                   {items.map(it => (
-                    <tr key={it.product_id}>
+                    <Fragment key={it.product_id}>
+                    <tr className={'is-clickable' + (openItem === it.product_id ? ' is-open' : '')}
+                        onClick={() => setOpenItem(o => (o === it.product_id ? null : it.product_id))}
+                        aria-expanded={openItem === it.product_id}>
                       <td>
-                        <b>{it.item_name}</b>
+                        <span className="advisory__item-name">
+                          <span className={'advisory__chev advisory__chev--sm' + (openItem === it.product_id ? ' is-open' : '')}
+                                aria-hidden="true" />
+                          <b>{it.item_name}</b>
+                        </span>
                         <div className="hint">{it.supplier_name}</div>
                       </td>
                       <td><span className={`tag tag--${FSN_TONE[it.fsn_class] || 'info'}`}>{FSN_LABEL[it.fsn_class] || '—'}</span></td>
@@ -195,6 +208,12 @@ function AdvisoryCard({ advisory, setPage }) {
                             </span>}
                       </td>
                     </tr>
+                    {openItem === it.product_id && (
+                      <tr className="advisory__item-detail">
+                        <td colSpan={showForecast ? 5 : 4}><ItemMovement productId={it.product_id} /></td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -211,6 +230,65 @@ function AdvisoryCard({ advisory, setPage }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** One item's movement, opened under its row in an advisory: units sold in
+ *  every month the store tallied sales, and the units on hand at every
+ *  inventory count. For a non-moving item that is a flat row of zero stubs
+ *  over a stock that never went down - the advisory's claim, shown. */
+function ItemMovement({ productId }) {
+  const { data, error } = useData(() => getProductMovement(productId), [productId]);
+  if (error) return <div className="hint">Could not load this item&rsquo;s sales: {String(error.message ?? error)}</div>;
+  if (!data) return <Loading label="Loading the item's sales…" />;
+
+  const months = data.months ?? [];
+  const stock = data.stock ?? [];
+  const span = months.length
+    ? `${longMonth(months[0].month)} – ${longMonth(months[months.length - 1].month)}` : '';
+
+  let salesLine;
+  if (!months.length) salesLine = 'No sales have been tallied yet.';
+  else if (data.total_units === 0) {
+    salesLine = <>No sales recorded in any of the <b>{num(months.length)} months</b> the store tallied ({span}).</>;
+  } else {
+    salesLine = <>Sold <b>{num(data.total_units)} units</b> in {num(data.months_sold)} of the {num(months.length)} months
+      tallied ({span}){data.last_sale ? <>; last sale on {usDate(data.last_sale)}</> : null}.</>;
+  }
+
+  let stockLine;
+  if (!stock.length) stockLine = 'This item has never been counted.';
+  else if (stock.length === 1) {
+    stockLine = <><b>{num(stock[0].qty)}</b> on hand at its only count, {longMonth(stock[0].month)}.</>;
+  } else {
+    const last = stock[stock.length - 1];
+    stockLine = <><b>{num(last.qty)}</b> on hand at the last count, {longMonth(last.month)}.{' '}
+      Counted {num(stock.length)} times since {longMonth(stock[0].month)}.</>;
+  }
+
+  return (
+    <div className="advisory__movement">
+      <div>
+        <span className="advisory__basis-label">Units sold each month</span>
+        <div className="hint">{salesLine}</div>
+        <MonthBars data={months.map(m => ({ label: shortMonth(m.month), tip: longMonth(m.month), value: m.units }))}
+                   unit="sold" ariaLabel={`Units of ${data.item_name} sold each month`} />
+        {data.total_units === 0 && months.length > 0 && (
+          <div className="dwbars-legend">
+            <span><i style={{ background: 'var(--muted)', opacity: 0.45, height: 3 }} />No units sold that month</span>
+          </div>
+        )}
+      </div>
+      <div>
+        <span className="advisory__basis-label">Units on hand at each inventory count</span>
+        <div className="hint">{stockLine}</div>
+        {stock.length > 0 && (
+          <MonthBars data={stock.map(s => ({ label: shortMonth(s.month), tip: longMonth(s.month), value: s.qty }))}
+                     color="var(--ink)" unit="on hand" height={130}
+                     ariaLabel={`Units of ${data.item_name} on hand at each count`} />
+        )}
+      </div>
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { useId, useState } from 'react';
-import { getSuppliers, getCategories, getMonths, CUSTOM_RANGE } from '../services/dataService';
+import {
+  getSuppliers, getCategories, getMonths, getOverviewPerformance, CUSTOM_RANGE, ALL_SUPPLIERS, ALL_CATEGORIES,
+} from '../services/dataService';
 import useData from '../hooks/useData';
 import { shortMonth, longMonth } from '../lib/format';
 import Icon from './Icon';
@@ -22,10 +24,14 @@ const CUSTOM_DEFAULT_MONTHS = 6;
  *
  * `action` is a control that belongs on every page whatever its filters (the
  * Advisories button); it sits at the end of the row, after the filters.
+ *
+ * 'saleMonths' is the Overview's month comparator: `saleMonths` holds the two
+ * months its Sale Overview compares, null for each default (App.jsx).
  */
 export default function FilterBar({
   filters, setFilters, pageTitle, show = [],
   forecastableSuppliers = false, supplierPeriod, action = null,
+  saleMonths, setSaleMonths,
 }) {
   const { data: suppliers } = useData(
     () => getSuppliers({ forecastable: forecastableSuppliers, period: supplierPeriod }),
@@ -78,6 +84,9 @@ export default function FilterBar({
               <Icon name="filter" size={15} />
             </span>
           )}
+          {show.includes('saleMonths') && saleMonths && (
+            <MonthCompare value={saleMonths} onChange={setSaleMonths} />
+          )}
           {show.includes('dateRange') && (
             <Filter label="Date Range" icon="cal" value={rangeValue}
                     onChange={setDateRange}
@@ -108,6 +117,74 @@ export default function FilterBar({
         </div>
       )}
     </header>
+  );
+}
+
+/** '2026-10' -> '2026-09' (backend _month_before). */
+function monthBefore(m) {
+  const y = Number(m.slice(0, 4)), mo = Number(m.slice(5, 7));
+  return mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, '0')}`;
+}
+
+/* The Overview's month comparator: the two months its Sale Overview compares,
+   the earlier one first. By default the month before against the latest
+   tallied month; either can be any tallied month, as long as From comes
+   before To.
+
+   `value` is { month, compare } with null for each default, so the default
+   asks for the same URL as the rest of the Overview (one cached answer).
+   Picking a To at or before From puts From back to the month before it,
+   rather than leaving a pair the backend would refuse.
+
+   The months come from /api/overview/performance itself (the store-wide
+   default, already cached for the Overview), not /api/months: it lists only
+   months with sales tallied, which are the ones the backend accepts. */
+function MonthCompare({ value, onChange }) {
+  const { data: perf } = useData(
+    () => getOverviewPerformance({ supplier: ALL_SUPPLIERS, category: ALL_CATEGORIES }), []);
+  // Newest first. A backend older than `months` / `latest_tallied_month`
+  // still says the same through its default answer, so the control shows
+  // rather than vanishing.
+  const latest = perf?.latest_tallied_month ?? perf?.latest_month?.month;
+  const months = perf?.months ?? (latest ? [latest, ...(perf?.compare_months ?? [])] : []);
+  if (!latest) return null;
+
+  const to = value.month ?? latest;
+  const before = monthBefore(to);
+  const from = value.compare ?? before;
+  const isDefault = value.month == null && value.compare == null;
+
+  function setTo(m) {
+    const keep = value.compare && value.compare < m && value.compare !== monthBefore(m) ? value.compare : null;
+    onChange({ month: m === latest ? null : m, compare: keep });
+  }
+  function setFrom(m) {
+    onChange({ ...value, compare: m === before ? null : m });
+  }
+
+  // To can be any month that has one before it to compare with.
+  const toOptions = months.slice(0, -1);
+  const fromOptions = months.filter(m => m < to);
+  // The month before is labelled even when it has no sales and so is not in
+  // the list: Filter still shows it, since it is what is being compared.
+  const fromLabels = Object.fromEntries(fromOptions.map(m => [m, longMonth(m)]));
+  fromLabels[before] = `${longMonth(before)} (month before)`;
+  const toLabels = Object.fromEntries(toOptions.map(m => [m, longMonth(m)]));
+  toLabels[latest] = `${longMonth(latest)} (latest)`;
+  return (
+    <>
+      <Filter label="From Month" icon="cal" value={from} onChange={setFrom} className="filter-field--month"
+              options={fromOptions} labels={fromLabels} />
+      <Filter label="To Month" icon="cal" value={to} onChange={setTo} className="filter-field--month"
+              options={toOptions} labels={toLabels} />
+      {!isDefault && (
+        <button type="button" className="btn btn--ghost btn--sm topbar__edit-range"
+                onClick={() => onChange({ month: null, compare: null })}
+                title="Back to the month before against the latest month">
+          Reset
+        </button>
+      )}
+    </>
   );
 }
 
@@ -163,7 +240,7 @@ function CustomRangeModal({ months, initialFrom, initialTo, onApply, onClose }) 
    dozen and a half names. */
 const SEARCH_FROM = 10;
 
-function Filter({ value, onChange, options, icon, label, labels = {}, wide = false }) {
+function Filter({ value, onChange, options, icon, label, labels = {}, wide = false, className = '' }) {
   const id = useId();
 
   // A selected value the list does not carry — a supplier held over from a
@@ -172,7 +249,7 @@ function Filter({ value, onChange, options, icon, label, labels = {}, wide = fal
   const opts = value != null && !options.includes(value) ? [value, ...options] : options;
 
   return (
-    <div className={'filter-field' + (wide ? ' filter-field--wide' : '')}>
+    <div className={'filter-field' + (wide ? ' filter-field--wide' : '') + (className ? ` ${className}` : '')}>
       <label className="filter-field__label" htmlFor={id}>{label}</label>
       <SearchSelect id={id} value={value} onChange={onChange} minWidth={0} icon={icon}
                     searchable={opts.length > SEARCH_FROM}

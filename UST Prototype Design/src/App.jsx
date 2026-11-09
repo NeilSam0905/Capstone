@@ -73,14 +73,17 @@ const UNFILTERED = {
  *     would empty the page under them by excluding the very category they
  *     had just selected. Classification keeps its: there category is a
  *     refinement of what is shown, not the subject of it.
- *   - overview takes none: it is the whole store at a glance, and the one
- *     ranking worth narrowing, Top Sellers, carries its own Filter button
- *     (supplier, category and period) inside the card.
+ *   - overview takes no supplier, category or date range: it is the whole
+ *     store at a glance, and the one ranking worth narrowing, Top Sellers,
+ *     carries its own Filter button (supplier, category and period) inside
+ *     the card. Its topbar holds 'saleMonths' instead: the two months the
+ *     Sale Overview compares (the adviser, Nov 2026), by default the month
+ *     before against the latest tallied month.
  *   - 'customRange' adds "Custom Range" (From/To months) to the date range.
  *     A page without it that inherits a custom range sees "All Time" instead,
  *     since its topbar could neither show nor clear the months. */
 const PAGE_FILTERS = {
-  overview:       [],
+  overview:       ['saleMonths'],
   classification: ['dateRange', 'supplier', 'category'],
   forecast:       ['supplier'],
   reorder:        [],
@@ -196,6 +199,12 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
   const [reportMode, setReportMode] = useState('batch');
   const summaryShown = page === 'report' && reportMode === 'summary';
 
+  // The Overview's month comparator, here for the same reason as the report
+  // period: the topbar sets it and the page reads it. null for each default
+  // (the latest tallied month, the month before it), so the default asks for
+  // the same URL as the rest of the Overview.
+  const [saleMonths, setSaleMonths] = useState({ month: null, compare: null });
+
   // The advisories are the prescriptive half of the dashboard, so they are
   // one click away on every page, through the topbar's Advisories button.
   // The Overview already shows them in full,
@@ -291,6 +300,8 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
           forecastableSuppliers={page === 'forecast'}
           supplierPeriod={page === 'report' ? reportParams ?? undefined : undefined}
           action={<AdvisoriesButton onClick={openAdvisories} />}
+          saleMonths={saleMonths}
+          setSaleMonths={setSaleMonths}
         />
         <AdvisoriesModal open={advisoriesOpen} onClose={closeAdvisories} page={page} setPage={setPage} />
         <div className="scroll" ref={scrollRef}>
@@ -306,6 +317,7 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
             {...(page === 'report' ? {
               period: reportPeriod, setPeriod: setReportPeriod, mode: reportMode, setMode: setReportMode,
             } : {})}
+            {...(page === 'overview' ? { saleMonths } : {})}
           />
         </div>
       </div>
