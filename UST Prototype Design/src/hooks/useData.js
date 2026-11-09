@@ -33,6 +33,16 @@ import { getCacheVersion, peekCached } from '../services/dataService';
  */
 const snapshots = new Map();   // key -> { version, data }
 
+/* ## Stale data (`stale`)
+ *
+ * Keeping the previous answer on screen during a refetch is right when the
+ * question barely changed (another model for the same item), wrong when it
+ * changed altogether (another item: its title and chart would show the old
+ * one until the new one lands). So the state remembers which dependencies its
+ * data answers (`for`), and `stale` is true while that is not the current
+ * ones. The screen decides what to do with it. */
+const sameDeps = (a, b) => a.length === b.length && a.every((d, i) => Object.is(d, b[i]));
+
 /* ## Cache peek
  *
  * Without a snapshot, the hook also asks dataService whether the loader's
@@ -45,11 +55,11 @@ export default function useData(loader, deps = [], initial = null, { key } = {})
   const fresh = seed && seed.version === getCacheVersion();
 
   const [state, setState] = useState(() => {
-    if (fresh) return { data: seed.data, loading: false, error: null };
+    if (fresh) return { data: seed.data, loading: false, error: null, for: deps };
     const cached = peekCached(loader);
     return cached !== undefined
-      ? { data: cached, loading: false, error: null }
-      : { data: initial, loading: true, error: null };
+      ? { data: cached, loading: false, error: null, for: deps }
+      : { data: initial, loading: true, error: null, for: deps };
   });
   // A dependency changed (a filter, a category): show the new value at once
   // if it is already cached, instead of the previous one until it loads.
@@ -59,7 +69,7 @@ export default function useData(loader, deps = [], initial = null, { key } = {})
   if (deps.some((d, i) => !Object.is(d, seededDeps[i]))) {
     setSeededDeps(deps);
     const cached = peekCached(loader);
-    if (cached !== undefined) setState({ data: cached, loading: false, error: null });
+    if (cached !== undefined) setState({ data: cached, loading: false, error: null, for: deps });
   }
 
   // Which key the current state belongs to. When the key changes (a filter
@@ -69,11 +79,12 @@ export default function useData(loader, deps = [], initial = null, { key } = {})
 
   useEffect(() => {
     let cancelled = false;
+    const asked = deps;
 
     if (key != null && seededFor.current !== key) {
       const snap = snapshots.get(key);
       if (snap && snap.version === getCacheVersion()) {
-        setState({ data: snap.data, loading: false, error: null });
+        setState({ data: snap.data, loading: false, error: null, for: asked });
       }
       seededFor.current = key;
     }
@@ -82,13 +93,15 @@ export default function useData(loader, deps = [], initial = null, { key } = {})
       .then(loader)
       .then(data => {
         if (key != null) snapshots.set(key, { version: getCacheVersion(), data });
-        if (!cancelled) setState({ data, loading: false, error: null });
+        if (!cancelled) setState({ data, loading: false, error: null, for: asked });
       })
-      .catch(error => { if (!cancelled) setState(s => ({ ...s, loading: false, error })); });
+      // A failed load answers this question too (with an error), so it is
+      // not left waiting as stale.
+      .catch(error => { if (!cancelled) setState(s => ({ ...s, loading: false, error, for: asked })); });
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
-  return state;
+  return { ...state, stale: !sameDeps(state.for, deps) };
 }

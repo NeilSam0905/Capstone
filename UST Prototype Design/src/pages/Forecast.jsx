@@ -7,7 +7,7 @@ import {
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
 import { ActualVsPredictedChart, LineChart, MARK_KINDS, ScrollForecastChart } from '../components/charts';
-import { num, shortMonth, longMonth, monthName, usDate, isCalendarAdjusted, roundNice, pesoK, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, shortMonth, longMonth, monthName, usDate, roundNice, pesoK, FSN_TONE, FSN_LABEL } from '../lib/format';
 import SearchSelect from '../components/SearchSelect';
 import Icon from '../components/Icon';
 import InfoTip from '../components/InfoTip';
@@ -43,10 +43,13 @@ export default function Forecast({ filters, setPage }) {
     getCategoryForecasts, [], null, { key: 'forecast:categories' });
   const [category, setCategory] = useState(null);
   const [selectedId, setSelectedId] = useState(ALL_ITEMS);
-  // Which model's forecast is shown, per scope; null is the recommended one,
-  // the forecast the rest of the dashboard uses (ModelSelect).
+  // Which model's forecast is shown, per scope; null is the one recommended for
+  // the item or category on screen (its own lowest error - ModelSelect).
   const [shown, setShown] = useState({ item: null, category: null });
   const showModel = scope => model => setShown(s => ({ ...s, [scope]: model }));
+  // A pick is about the item or category it was made on: another one opens on
+  // its own recommended model rather than carrying the last pick over.
+  const pickItem = id => { setSelectedId(id); setShown(s => ({ ...s, item: null })); };
 
   // Only SKUs step4_forecast_model.py actually produced a forecast for
   // (the Fast tier) belong in the item dropdown - every other SKU would just
@@ -142,7 +145,11 @@ export default function Forecast({ filters, setPage }) {
                 <SearchSelect
                   id="fc-category"
                   value={activeCategory}
-                  onChange={c => { if (c !== activeCategory) { setCategory(c); setSelectedId(ALL_ITEMS); } }}
+                  onChange={c => {
+                    if (c !== activeCategory) {
+                      setCategory(c); setSelectedId(ALL_ITEMS); setShown({ item: null, category: null });
+                    }
+                  }}
                   minWidth={210}
                   searchable={categories.length > 10}
                   placeholder="Search categories…"
@@ -159,7 +166,7 @@ export default function Forecast({ filters, setPage }) {
               <SearchSelect
                 id="fc-item"
                 value={selectedId}
-                onChange={setSelectedId}
+                onChange={id => { if (id !== selectedId) pickItem(id); }}
                 minWidth={300}
                 placeholder="Search items…"
                 options={itemOptions}
@@ -188,7 +195,7 @@ export default function Forecast({ filters, setPage }) {
         ? <ForecastPanel productId={product.product_id} itemName={product.item_name}
                          forecastMeta={forecastMeta} setPage={setPage}
                          model={shown.item} onModel={showModel('item')} />
-        : <CategoryForecastPanel category={activeCategory} onPickItem={setSelectedId} setPage={setPage}
+        : <CategoryForecastPanel category={activeCategory} onPickItem={pickItem} setPage={setPage}
                                  model={shown.category} onModel={showModel('category')} />}
 
       <DailySales filters={filters} />
@@ -282,12 +289,11 @@ function CategoryContents({ category, products, supplier }) {
  * covers the whole category would over-order.
  */
 function CategoryForecastPanel({ category, onPickItem, setPage, model, onModel }) {
-  const { data: forecast, loading } = useData(
-    () => getCategoryForecast(category, model), [category, model], null,
-    { key: `forecast:category:${category}:${model ?? ''}` }
-  );
-
-  if (loading) return <Loading label="Loading category forecast…" />;
+  // As for an item: it opens on the model recommended for this category.
+  const { forecast, waiting, best, effective } = useRecommendedForecast(
+    getCategoryForecast, category, model,
+    f => f?.data?.category === category, `forecast:category:${category}`);
+  if (waiting) return <Loading label="Loading category forecast…" />;
 
   if (!forecast?.available) {
     return (
@@ -306,7 +312,8 @@ function CategoryForecastPanel({ category, onPickItem, setPage, model, onModel }
       <ForecastCard key={category} title={category} fd={fd} setPage={setPage}
                     modelScope={wholeCategory ? 'category' : 'item'}
                     model={wholeCategory ? model : null} onModel={wholeCategory ? onModel : null}
-                    tags={wholeCategory && <Reliability fd={fd} model={model} />}
+                    recommendedId={wholeCategory ? best?.id ?? null : null}
+                    tags={wholeCategory && <Reliability fd={fd} model={effective} />}
                     checkable={wholeCategory}
                     scope={!wholeCategory && fd.n_forecast < fd.n_products
                       ? `the ${fd.n_forecast} forecast item${fd.n_forecast === 1 ? '' : 's'} only`
@@ -493,13 +500,42 @@ function CategoryTotalCard({ category, fd, onPickItem }) {
   );
 }
 
-function ForecastPanel({ productId, itemName, forecastMeta, setPage, model, onModel }) {
-  const { data: forecast, loading } = useData(
-    () => getProductForecast(productId, model), [productId, model], null,
-    { key: `forecast:${productId}:${model ?? ''}` }
-  );
+/**
+ * The forecast to show for one item or category, opening on the model
+ * RECOMMENDED FOR IT: the one with the lowest scaled miss (MASE) on its own
+ * past 30-day checks (bestModelOf). Every forecast response carries every
+ * model's checks (`model_metrics`), so the store-wide answer - the plain URL,
+ * usually cached, and the forecast the rest of the dashboard reads - says
+ * which model that is before its forecast is fetched.
+ *
+ * `model` is the reader's own pick from the menu; null means the recommended
+ * one. `isFor(response)` says whether a response is for this item/category.
+ *
+ * `waiting` is true until the forecast on screen would be the right one: a
+ * new item or category loads (rather than showing the last one, or opening on
+ * the store-wide model and then gliding to its own), while another model of
+ * the SAME one keeps the current forecast up, dimmed, and glides.
+ */
+function useRecommendedForecast(load, id, model, isFor, keyBase) {
+  const { data: base, loading: baseLoading, stale: baseStale } = useData(
+    () => load(id), [id], null, { key: `${keyBase}:` });
+  const baseReady = !baseLoading && !baseStale;
+  const best = baseReady ? bestModelOf(base?.data?.model_metrics) : null;
+  // By id only when it is not the store-wide model, whose URL `base` already is.
+  const effective = model ?? (best && !best.recommended ? best.id : null);
+  const { data: forecast, loading, stale } = useData(
+    () => (baseReady ? load(id, effective ?? undefined) : Promise.resolve(null)),
+    [id, effective, baseReady], null,
+    { key: baseReady ? `${keyBase}:${effective ?? ''}` : undefined });
+  const waiting = !baseReady || loading || !forecast || (stale && !isFor(forecast));
+  return { forecast, waiting, best, effective };
+}
 
-  if (loading) return <Loading label="Loading forecast…" />;
+function ForecastPanel({ productId, itemName, forecastMeta, setPage, model, onModel }) {
+  const { forecast, waiting, best, effective } = useRecommendedForecast(
+    getProductForecast, productId, model,
+    f => String(f?.data?.product_id) === String(productId), `forecast:${productId}`);
+  if (waiting) return <Loading label="Loading forecast…" />;
 
   // No forecast available at all (pipeline not run)
   if (!forecastMeta?.available || !forecast?.available) {
@@ -528,23 +564,14 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage, model, onMo
 
   // Forecast data is available — render it
   const fd = forecast.data;
-  const shaped = /_shape$/.test(fd.model_type ?? '');
 
   return (
     <>
       <ForecastCard key={productId} title={fd.item_name} fd={fd} setPage={setPage} checkable
-                    modelScope="item" model={model} onModel={onModel} tags={<Reliability fd={fd} model={model} />}>
-        {/* Same reasoning as the category note: a shaped line draws ups and downs
-            that are not predicted spikes. An item's own days are too sparse to
-            carry a pattern, so it borrows its category's. */}
-        {shaped && (
-          <p className="hint" style={{ textAlign: 'center', margin: '8px 0 0' }}>
-            The 30-day total blends this item&rsquo;s recent sales with its category&rsquo;s 6-month
-            level{isCalendarAdjusted(fd.model_type) && ', lowered when the school calendar shows quieter days ahead'}.
-            The day-to-day pattern is the category&rsquo;s (weekdays, store closures, the
-            school calendar) — one-off bulk orders can&rsquo;t be predicted from dates.
-          </p>
-        )}
+                    modelScope="item" model={model} onModel={onModel} recommendedId={best?.id ?? null}
+                    tags={<Reliability fd={fd} model={effective} />}>
+        {/* How each model works is behind the (i) beside the model menu
+            (ModelsInfo), so no per-model note under the chart. */}
 
         {/* An item that has stopped selling is forecast near zero, and 0 on its
             own reads like a bug. `likely_discontinued` (no real sale in over a
@@ -669,10 +696,24 @@ function ActualVsPredictedModal({ fd, title, onClose }) {
  * Callers key this on the item/category, so switching either reopens the
  * chart on the forecast instead of wherever the last one was scrolled to.
  */
-function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, children, setPage, checkable = false }) {
+function ForecastCard({
+  title, fd, scope, modelScope, model, onModel, tags, children, setPage, checkable = false, recommendedId = null,
+}) {
   // `checkable`: this forecast has past checks to compare (every item, and a
   // category's own model), opened as Actual vs Predicted in a dialog.
   const [avpOpen, setAvpOpen] = useState(false);
+  // Changing the model: the forecast on screen is kept until the new one
+  // arrives (useData), dimmed meanwhile with a spinner by the menu - it is
+  // waiting while `fd` is still the one that was showing at the pick. A model
+  // already loaded once arrives at once, so it never dims. Nothing remounts
+  // when it does: the chart stays and glides from the old forecast to the new
+  // one (ScrollForecastChart's tween), and the figures update in place.
+  const [fdAtPick, setFdAtPick] = useState(null);
+  const switching = fdAtPick != null && fdAtPick === fd;
+  const pickModel = id => {
+    if ((id ?? null) !== (model ?? null)) setFdAtPick(fd);
+    onModel(id);
+  };
   return (
     <div className="card card__pad">
       {/* Left: the title, and under it the model that made the figures (a
@@ -683,7 +724,8 @@ function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, chil
           <span className="section-h">Demand Forecast — {title}</span>
           {onModel && (
             <div className="fcard__model">
-              <ModelSelect scope={modelScope} value={model} onChange={onModel} />
+              <ModelSelect scope={modelScope} value={model} onChange={pickModel} recommendedId={recommendedId} />
+              {switching && <span className="spinner" role="status" aria-label="Loading this model's forecast" />}
             </div>
           )}
         </div>
@@ -698,6 +740,7 @@ function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, chil
       </div>
       {scope && <div className="hint" style={{ marginTop: -6, marginBottom: 6 }}>Totals cover {scope}.</div>}
 
+      <div className={'model-swap' + (switching ? ' is-switching' : '')}>
       <ScrollForecastChart history={fd.history} forecast={fd.forecast} marks={fd.calendar_marks}
                            actuals={fd.sold_since} />
       <div className="legend" style={{ justifyContent: 'center', marginTop: 10 }}>
@@ -720,6 +763,7 @@ function ForecastCard({ title, fd, scope, modelScope, model, onModel, tags, chil
 
       <ForecastGuidance g={fd.guidance} title={title} setPage={setPage}
                         onCheck={checkable ? () => setAvpOpen(true) : null} />
+      </div>
 
       {avpOpen && <ActualVsPredictedModal fd={fd} title={title} onClose={() => setAvpOpen(false)} />}
     </div>
@@ -819,8 +863,8 @@ function ForecastGuidance({ g, title, setPage, onCheck }) {
         {(onCheck || setPage) && (
           <span className="btn-row">
             {onCheck && (
-              <button className="btn btn--ghost btn--sm" onClick={onCheck}>
-                <Icon name="chart" size={12} /> Check Actual vs Predicted
+              <button className="btn btn--gold btn--sm" onClick={onCheck}>
+                <Icon name="compare" size={14} /> Check Actual vs Predicted
               </button>
             )}
             {setPage && (
@@ -903,12 +947,21 @@ function rankModels(rows) {
   return [...scored, ...rows.filter(r => r.mase == null)];
 }
 
+/** The model recommended for one item or category: the lowest scaled miss
+ *  (MASE) on its own past 30-day checks, from the API's model_metrics. Null
+ *  when no model has been checked for it yet. Its `recommended` flag says
+ *  whether it is also the store-wide model the rest of the dashboard uses. */
+function bestModelOf(metrics) {
+  const top = rankModels(metrics ?? [])[0];
+  return top?.mase != null && top.made ? top : null;
+}
+
 function ReliabilityDetail({ m, reliable, model, fd }) {
   const periods = `${num(m.n_obs)} past 30-day period${m.n_obs === 1 ? '' : 's'}`;
   const ofMonth = m.mean_actual_30d > 0 ? Math.round(m.mae / m.mean_actual_30d * 100) : null;
   const rows = rankModels(fd.model_metrics ?? []);
   const shownId = model ?? rows.find(r => r.recommended)?.id;
-  const bestId = rows[0]?.mase != null ? rows[0].id : null;
+  const bestId = bestModelOf(fd.model_metrics)?.id ?? null;
   const mapeSwells = rows.some(r => (r.mape ?? 0) > 100);
   const missing = rows.filter(r => !r.made).length;
   return (
@@ -960,11 +1013,12 @@ function ReliabilityDetail({ m, reliable, model, fd }) {
                   .filter(Boolean).join(' ') || undefined}>
                   <td>
                     <div className="reliab__name">{r.label}</div>
-                    {(r.id === shownId || r.id === bestId || r.recommended) && (
+                    {/* Recommended is the lowest error here (bestModelOf), so
+                        one green tag says both. */}
+                    {(r.id === shownId || r.id === bestId) && (
                       <div className="reliab__tags">
                         {r.id === shownId && <span className="tag tag--info">Shown</span>}
-                        {r.id === bestId && <span className="tag tag--ok">Lowest error</span>}
-                        {r.recommended && <span className="tag">Recommended</span>}
+                        {r.id === bestId && <span className="tag tag--ok">Recommended</span>}
                       </div>
                     )}
                   </td>
@@ -987,7 +1041,8 @@ function ReliabilityDetail({ m, reliable, model, fd }) {
         <b>Percent error</b> is how far off the guess was, as a share of what actually sold. <b>Scaled
         miss</b> is the same miss measured against a simple day-to-day guess, so items that sell a lot and
         items that sell a little can be compared fairly. Lower is better for both; models are ranked by
-        scaled miss{mapeSwells ? ', because percent error swells when a period sold very little' : ''}.
+        scaled miss{mapeSwells ? ', because percent error swells when a period sold very little' : ''}, and
+        the one with the lowest is Recommended.
       </p>
     </>
   );
@@ -999,11 +1054,12 @@ function ReliabilityDetail({ m, reliable, model, fd }) {
  * Which model's forecast this card shows, as a dropdown under its title:
  * categories have their own models, items theirs (scripts/forecast_options.py).
  *
- * A comparison, nothing more: Run Forecast makes every model's forecast, and
- * picking one here only changes what this page shows - nothing is saved, and
- * every other page keeps the recommended model's figures, which the line
- * beside the dropdown says while another is shown. A model Run Forecast has
- * not made yet is listed, greyed out.
+ * Run Forecast makes every model's forecast. This page opens each item or
+ * category on the model RECOMMENDED FOR IT - its own lowest error on past
+ * checks (useRecommendedForecast) - and the menu switches to any other.
+ * Nothing is saved: every other page uses the store-wide model (the one
+ * forecast_options.py marks recommended) for everything, as the (i) says. A
+ * model Run Forecast has not made yet is listed, greyed out.
  */
 /** Under a comparison model that has nothing for this item or category, the
  *  way back - the card holding the dropdown is not shown then. */
@@ -1017,20 +1073,26 @@ function BackToRecommended({ onModel }) {
   );
 }
 
-function ModelSelect({ scope, value, onChange }) {
+/** The model menu. `recommendedId` is the model recommended for THIS item or
+ *  category - its lowest scaled miss on its own past checks - which the menu
+ *  tags and opens on; without one (nothing checked yet) it falls back to the
+ *  store-wide model. `value` null means the recommended one. */
+function ModelSelect({ scope, value, onChange, recommendedId }) {
   const { data } = useData(getForecastModels, [], null);
   const s = data?.[scope];
   if (!s) return null;
-  const current = value ?? s.default;
-  const recommended = s.options.find(o => o.id === s.default);
+  const recId = recommendedId ?? s.default;
+  const current = value ?? recId;
   // A model Run Forecast has not made is listed but cannot be picked; hovering
-  // it says why. The recommended one is the dashboard's own forecast, never
-  // held back here (the page says so itself when there is no forecast at all).
+  // it says why. The store-wide model and the recommended one are never held
+  // back here (the page says so itself when there is no forecast at all).
   const options = s.options.map(o => {
-    const ready = Boolean(o.made) || Boolean(o.recommended);
+    const ready = Boolean(o.made) || Boolean(o.recommended) || o.id === recId;
     return {
       value: o.id,
-      label: `${o.label}${o.recommended ? ' (Recommended)' : ''}`,
+      label: o.label,
+      // A green pill like the Reliable tag, rather than "(Recommended)" in the name.
+      tag: o.id === recId ? { text: 'Recommended', tone: 'ok' } : undefined,
       disabled: !ready,
       title: ready ? o.desc : 'You need to Run the Forecast',
     };
@@ -1038,31 +1100,37 @@ function ModelSelect({ scope, value, onChange }) {
   return (
     <>
       <SearchSelect value={current} options={options} searchable={false} minWidth={280}
-                    onChange={id => onChange(id === s.default ? null : id)} />
-      <ModelsInfo options={s.options} />
-      {current !== s.default && (
-        <span className="hint" title="Nothing else on the dashboard changes">
-          For comparison · the dashboard uses {recommended?.label}
-        </span>
-      )}
+                    onChange={id => onChange(id === recId ? null : id)} />
+      <ModelsInfo options={s.options} recId={recId} scope={scope} />
     </>
   );
 }
 
 /** How each model makes its forecast, in words a store reader can follow:
  *  the (i) beside the model menu. Each line is the option's `desc`
- *  (scripts/forecast_options.py), the same text the menu shows on hover. */
-function ModelsInfo({ options }) {
+ *  (scripts/forecast_options.py), the same text the menu shows on hover.
+ *  It also says what Recommended means here, and that the rest of the
+ *  dashboard uses one store-wide model for everything. */
+function ModelsInfo({ options, recId, scope }) {
+  const storeWide = options.find(o => o.recommended);
+  const what = scope === 'category' ? 'category' : 'item';
   return (
     <InfoTip label="How do the models work?" width={460}>
       <div className="infotip__h">How each model works</div>
       <p>
-        Every model looks at past sales and guesses the next 30 days, each in its own way. Pick one in
-        the menu to compare its forecast; the rest of the dashboard always uses the Recommended one.
+        Every model looks at past sales and guesses the next 30 days, each in its own way.{' '}
+        <b>Recommended</b> is the one whose guesses came closest for this {what} when it was checked against
+        its past months of sales. Pick another in the menu to compare.
       </p>
+      {storeWide && (
+        <p className="hint">
+          The rest of the dashboard (advisories and other pages) uses one model for every {what}:{' '}
+          {storeWide.label}.
+        </p>
+      )}
       <ul className="infotip__bullets">
         {options.map(o => (
-          <li key={o.id}><b>{o.label}{o.recommended ? ' (Recommended)' : ''}</b>: {o.desc}</li>
+          <li key={o.id}><b>{o.label}{o.id === recId ? ' (Recommended)' : ''}</b>: {o.desc}</li>
         ))}
       </ul>
     </InfoTip>

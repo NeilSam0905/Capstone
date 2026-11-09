@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
+import { POP_EXIT_MS, reducedMotion } from '../lib/motion';
 
 const GAP = 8;      // between the button and the panel
 const MARGIN = 12;  // kept clear of the window's edges
@@ -27,9 +28,22 @@ const MARGIN = 12;  // kept clear of the window's edges
  *  portal's events up to its parent components too, hence the panel as well. */
 export default function InfoTip({ label = 'More information', text, link, width = 340, children }) {
   const [open, setOpen] = useState(false);
+  // The panel stays mounted for its short exit back into the (i).
+  const [closing, setClosing] = useState(false);
+  const exitTimer = useRef(0);
+  useEffect(() => () => clearTimeout(exitTimer.current), []);
   const btnRef = useRef(null);
   const popRef = useRef(null);
   const id = useId();
+
+  const show = () => { clearTimeout(exitTimer.current); setClosing(false); setOpen(true); };
+  const hide = useCallback(() => {
+    const finish = () => { setOpen(false); setClosing(false); };
+    if (reducedMotion()) { finish(); return; }
+    setClosing(true);
+    clearTimeout(exitTimer.current);
+    exitTimer.current = setTimeout(finish, POP_EXIT_MS);
+  }, []);
 
   // Placed after the panel renders, so its real height decides above or
   // below. Written straight to the element: it is a measurement of the page,
@@ -49,8 +63,12 @@ export default function InfoTip({ label = 'More information', text, link, width 
         ? 'above' : 'below';
     }
     const top = side.current === 'above' ? b.top - GAP - h : b.bottom + GAP;
-    pop.style.left = `${Math.max(MARGIN, Math.min(b.left, window.innerWidth - w - MARGIN))}px`;
+    const left = Math.max(MARGIN, Math.min(b.left, window.innerWidth - w - MARGIN));
+    pop.style.left = `${left}px`;
     pop.style.top = `${top}px`;
+    // Grow out of the (i) and shrink back into it: the scale's origin is the
+    // button's centre, on the edge of the panel that faces it.
+    pop.style.transformOrigin = `${b.left + b.width / 2 - left}px ${side.current === 'above' ? '100%' : '0'}`;
     pop.style.visibility = 'visible';
   }, [width]);
 
@@ -65,7 +83,7 @@ export default function InfoTip({ label = 'More information', text, link, width 
   // whenever the page moved under it.
   useEffect(() => {
     if (!open) return undefined;
-    const close = () => setOpen(false);
+    const close = hide;
     const onDown = e => {
       if (!btnRef.current?.contains(e.target) && !popRef.current?.contains(e.target)) close();
     };
@@ -88,7 +106,7 @@ export default function InfoTip({ label = 'More information', text, link, width 
       window.removeEventListener('scroll', follow, true);
       window.removeEventListener('resize', follow);
     };
-  }, [open, place]);
+  }, [open, place, hide]);
 
   return (
     <>
@@ -96,16 +114,17 @@ export default function InfoTip({ label = 'More information', text, link, width 
         ref={btnRef}
         type="button"
         className={(link ? 'infotip__link' : 'infotip__btn' + (text ? ' infotip__btn--text' : ''))
-          + (open ? ' is-open' : '')}
+          + (open && !closing ? ' is-open' : '')}
         aria-label={text || link ? undefined : label}
-        aria-expanded={open}
+        aria-expanded={open && !closing}
         aria-controls={open ? id : undefined}
-        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+        onClick={e => { e.stopPropagation(); if (open && !closing) hide(); else show(); }}
       >
         {link ?? <>{text}<Icon name="info" size={15} /></>}
       </button>
       {open && createPortal(
-        <div id={id} ref={popRef} role="dialog" aria-label={label} className="infotip__pop"
+        <div id={id} ref={popRef} role="dialog" aria-label={label}
+             className={'infotip__pop' + (closing ? ' is-closing' : '')}
              onClick={e => e.stopPropagation()}
              onWheel={e => passWheel(e, popRef.current, btnRef.current)}>
           {children}

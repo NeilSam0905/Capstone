@@ -15,7 +15,12 @@ export default function PasswordInput({ inputRef, ...props }) {
               aria-label={shown ? 'Hide password' : 'Show password'}
               aria-pressed={shown}
               title={shown ? 'Hide password' : 'Show password'}>
-        <Icon name={shown ? 'eyeOff' : 'eye'} size={16} />
+        {/* Both icons stay mounted and crossfade, with a little blur, so
+            the swap reads as one icon changing rather than a flicker. */}
+        <span className="icon-swap">
+          <span className={'icon-swap__icon' + (shown ? '' : ' is-on')}><Icon name="eye" size={16} /></span>
+          <span className={'icon-swap__icon' + (shown ? ' is-on' : '')}><Icon name="eyeOff" size={16} /></span>
+        </span>
       </button>
     </div>
   );

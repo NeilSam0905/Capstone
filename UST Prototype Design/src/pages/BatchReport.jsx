@@ -3,6 +3,7 @@ import { getBatchReport, getMonths, getMeta, batchReportPdfUrl, batchReportCsvUr
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import Icon from '../components/Icon';
+import ActiveThumb from '../components/ActiveThumb';
 import InfoTip from '../components/InfoTip';
 import { peso, num, longMonth, usDate } from '../lib/format';
 import { PERIOD_KINDS, periodParams, periodLabel, periodSlug } from '../lib/reportPeriod';
@@ -20,6 +21,7 @@ export default function BatchReport({ mode = 'batch', setMode, ...props }) {
     <div className="stack">
       <div>
         <div className="period-tabs" role="tablist" aria-label="Report">
+          <ActiveThumb />
           {REPORT_MODES.map(([key, name]) => (
             <button key={key} type="button" role="tab" aria-selected={mode === key}
                     className={'period-tab' + (mode === key ? ' is-active' : '')}
@@ -103,6 +105,7 @@ function BatchSales({ filters, period, setPeriod }) {
         <div className="report-period">
           <span className="section-h">Period</span>
           <div className="period-tabs" role="tablist" aria-label="Report period">
+            <ActiveThumb />
             {PERIOD_KINDS.map(([key, name]) => (
               <button key={key} type="button" role="tab" aria-selected={period.kind === key}
                       className={'period-tab' + (period.kind === key ? ' is-active' : '')}

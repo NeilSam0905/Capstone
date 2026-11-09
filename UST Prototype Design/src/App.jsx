@@ -10,6 +10,7 @@ import BatchReport from './pages/BatchReport';
 import TallyInterface from './pages/TallyInterface';
 import PowerBIDashboard from './pages/PowerBIDashboard';
 import Icon from './components/Icon';
+import ActiveThumb from './components/ActiveThumb';
 import ErrorBanner from './components/ErrorBanner';
 import { AdvisoriesButton, AdvisoriesModal } from './components/Advisories';
 import { ADVISORIES_ANCHOR } from './config';
@@ -267,7 +268,8 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
         </div>
 
         <nav className="nav">
-          <div className="nav__label">Analytics</div>
+          {/* One highlight that slides to the page you open (ActiveThumb). */}
+          <ActiveThumb axis="y" />
           {PAGES.map(n => (
             <button
               key={n.id}
@@ -309,16 +311,19 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
           {/* setPage is handed to every page so a KPI or a chart can act as a
               link into the page that explains it — the ROP tile into Reorder
               Alerts, the FSN card into Classification. */}
-          <PageComponent
-            filters={pageFilters}
-            setPage={setPage}
-            setView={setView}
-            user={user}
-            {...(page === 'report' ? {
-              period: reportPeriod, setPeriod: setReportPeriod, mode: reportMode, setMode: setReportMode,
-            } : {})}
-            {...(page === 'overview' ? { saleMonths } : {})}
-          />
+          {/* Keyed on the page, so each page fades up as it arrives. */}
+          <div key={page} className="page-enter">
+            <PageComponent
+              filters={pageFilters}
+              setPage={setPage}
+              setView={setView}
+              user={user}
+              {...(page === 'report' ? {
+                period: reportPeriod, setPeriod: setReportPeriod, mode: reportMode, setMode: setReportMode,
+              } : {})}
+              {...(page === 'overview' ? { saleMonths } : {})}
+            />
+          </div>
         </div>
       </div>
     </div>

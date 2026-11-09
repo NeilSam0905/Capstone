@@ -25,7 +25,9 @@
   /* Text */
   --text:   #1B1813;
   --text-2: #5C574C;
-  --muted:  #8E887A;
+  /* 4.8:1 on the page background and 5.3:1 on white, so the small grey
+     hints pass WCAG AA. It was #8E887A: 3.2:1 and 3.5:1. */
+  --muted:  #716B5D;
 
   /* Status (muted, institutional) */
   --ok:    #2E7D55;  --ok-bg:    #E7F2EC;  --ok-line:    #BFE0CD;
@@ -264,7 +266,7 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
   border: 1px solid rgba(255, 255, 255, .08);
   box-shadow: 0 10px 26px rgba(20, 18, 14, .28), 0 2px 6px rgba(20, 18, 14, .16);
   animation:
-    jump-in .55s cubic-bezier(.2, .9, .3, 1.25) both,
+    jump-in .5s var(--ease-out) both,
     jump-hop 4.5s ease-in-out 1.6s infinite;
 }
 .advisories-jump__body:hover,
@@ -1601,8 +1603,16 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 /* An advisory item's sales and stock (Advisories.jsx ItemMovement), opened
    under its row: the two charts side by side, stacked on a narrow screen. */
 .advisory__item-name { display: inline-flex; align-items: center; gap: 8px; }
-.advisory__chev--sm { width: 6px; height: 6px; flex-shrink: 0; margin-top: -3px; }
-.advisory__chev--sm.is-open { margin-top: 2px; }
+.advisory__chev--sm { width: 6px; height: 6px; flex-shrink: 0; margin-top: 4px; }
+.advisory__chev--sm.is-open { margin-top: 9px; }
+/* An advisory's item table fits its card - in the Advisories dialog too -
+   instead of running past it: a long item name wraps rather than pushing
+   "Reorder point" out of view, and the figure columns stay on one line. */
+.advisory__items { width: 100%; min-width: 520px; }
+.advisory__items tbody td:first-child { white-space: normal; min-width: 200px; }
+.advisory__items .advisory__item-name { align-items: flex-start; }
+.advisory__items thead th { white-space: normal; vertical-align: bottom; }
+.advisory__items thead th.num, .advisory__items tbody td.num { width: 1%; white-space: nowrap; }
 .tbl tbody tr.is-open > td { background: var(--bg); }
 .tbl tbody tr.advisory__item-detail > td { background: var(--bg); padding: 4px 14px 16px; }
 .advisory__movement { display: grid; grid-template-columns: 3fr 2fr; gap: 18px; }
@@ -1746,6 +1756,12 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
 }
 .sselect__btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .sselect__value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* An option's status pill ("Recommended"): after the name, which still
+   truncates before the pill does. */
+.sselect__tag { flex-shrink: 0; margin-left: 8px; font-size: 9.5px; padding: 2px 7px; }
+.sselect__btn .sselect__tag { margin-right: 14px; }
+.sselect__opt.has-tag { display: flex; align-items: center; }
+.sselect__opt-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .sselect__panel {
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
   width: max(100%, 320px); max-width: calc(100vw - 32px);
@@ -2400,4 +2416,208 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
   .run-hero__icon { width: 44px; height: 44px; }
   .run-hero__text { flex-basis: calc(100% - 56px); }
   .run-hero > .btn { margin-left: 56px; }
+}
+
+/* ========================================================================
+   Motion and polish
+   One vocabulary for movement, so every part of the app moves alike:
+   - entrances ease out (a quick start, a gentle landing); something already
+     on screen that changes place eases in and out; nothing bounces;
+   - dropdowns and popovers take 180ms, dialogs 220ms, and each exit is about
+     20% shorter than its entrance (lib/motion.js waits the same before it
+     unmounts);
+   - a popover starts at 95% scale and grows out of the control that opened
+     it, then shrinks back into it;
+   - lists arrive 30ms a row; an opened section's details settle one after
+     another;
+   - a control scales to 97% while it is pressed;
+   - charts reveal through a mask, left to right, the first time they draw.
+   All of it is switched off for readers who ask for reduced motion.
+   ======================================================================== */
+:root {
+  --ease-out: cubic-bezier(.23, 1, .32, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --dur-pop: 180ms;   --dur-pop-exit: 145ms;
+  --dur-modal: 220ms; --dur-modal-exit: 175ms;
+  --dur-move: 260ms;
+  --stagger: 30ms;
+}
+
+/* ---- Press: 97% while held ---- */
+.btn { transition: filter .12s, background .12s, transform .16s var(--ease-out); }
+.nav__item { transition: background .12s, color .12s, transform .16s var(--ease-out); }
+.period-tab, .edit-dates__tab { transition: color .15s, transform .16s var(--ease-out); }
+.pw-field__toggle { transition: color .12s, background .12s, transform .16s var(--ease-out); }
+.sselect__btn, .topbar__advisories, .infotip__btn {
+  transition: color .12s, background .12s, border-color .12s, transform .16s var(--ease-out);
+}
+.btn:active:not(:disabled), .nav__item:active, .period-tab:active:not(:disabled), .edit-dates__tab:active,
+.sselect__btn:active, .pw-field__toggle:active, .infotip__btn:active, .topbar__advisories:active {
+  transform: scale(.97);
+}
+/* A whole card is a big surface: the same press, scaled down to match. */
+.kpi.is-link:active, .card.is-link:active { transform: scale(.985); }
+
+/* ---- Moves: ease in and out ---- */
+.kpi.is-link, .card.is-link {
+  transition: transform .2s var(--ease-in-out), box-shadow .2s var(--ease-in-out), border-color .2s;
+}
+.advisory__chev, .tally-banner__chev { transition: transform .22s var(--ease-in-out); }
+.sidebar { transition: width var(--dur-move) var(--ease-in-out); }
+
+/* ---- Dropdowns: grow from the control, 180ms in, 145ms out ---- */
+@keyframes pop-in  { from { opacity: 0; transform: scale(.95); } }
+@keyframes pop-out { to   { opacity: 0; transform: scale(.95); } }
+.sselect__panel { transform-origin: top left; animation: pop-in var(--dur-pop) var(--ease-out) both; }
+.sselect__panel.sselect__panel--end,
+.topbar__right .sselect__panel { transform-origin: top right; }
+@media (max-width: 640px) {
+  .topbar__right .sselect__panel:not(.sselect__panel--end) { transform-origin: top left; }
+}
+.sselect__panel.is-closing {
+  animation: pop-out var(--dur-pop-exit) var(--ease-out) both; pointer-events: none;
+}
+/* The first rows arrive 30ms apart (SearchSelect sets --i). */
+@keyframes row-in { from { opacity: 0; transform: translateY(-3px); } }
+.sselect__opt {
+  animation: row-in var(--dur-pop) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+  /* Concentric corners: the panel's radius less its 6px padding. */
+  border-radius: max(0px, calc(var(--r-sm) - 6px));
+}
+
+/* ---- Popovers (the (i) tips): from the (i), back into it ----
+   InfoTip sets transform-origin to the button's centre on the facing edge. */
+.infotip__pop { animation: pop-in var(--dur-pop) var(--ease-out) both; }
+.infotip__pop.is-closing { animation: pop-out var(--dur-pop-exit) var(--ease-out) both; pointer-events: none; }
+
+/* ---- Dialogs: 220ms in, 175ms out ---- */
+@keyframes scrim-in  { from { opacity: 0; } }
+@keyframes scrim-out { to   { opacity: 0; } }
+@keyframes dialog-in  { from { opacity: 0; transform: translateY(8px) scale(.97); } }
+@keyframes dialog-out { to   { opacity: 0; transform: translateY(4px) scale(.97); } }
+.modal-scrim { animation: scrim-in var(--dur-modal) var(--ease-out) both; }
+.modal-panel { animation: dialog-in var(--dur-modal) var(--ease-out) both; }
+.modal-scrim.is-closing { animation: scrim-out var(--dur-modal-exit) var(--ease-out) both; pointer-events: none; }
+.modal-scrim.is-closing .modal-panel { animation: dialog-out var(--dur-modal-exit) var(--ease-out) both; }
+
+/* ---- Lists: 30ms a row; details settle one after another ---- */
+.stagger > * {
+  animation: row-in .32s var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+}
+.stagger > :nth-child(2)  { --i: 1; }
+.stagger > :nth-child(3)  { --i: 2; }
+.stagger > :nth-child(4)  { --i: 3; }
+.stagger > :nth-child(5)  { --i: 4; }
+.stagger > :nth-child(6)  { --i: 5; }
+.stagger > :nth-child(7)  { --i: 6; }
+.stagger > :nth-child(8)  { --i: 7; }
+.stagger > :nth-child(9)  { --i: 8; }
+.stagger > :nth-child(n+10) { --i: 9; }
+@keyframes settle-in { from { opacity: 0; transform: translateY(6px); } }
+.stagger--settle > * {
+  animation-name: settle-in; animation-duration: .36s;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+/* ---- Bars grow from the baseline; charts reveal through a mask ---- */
+@keyframes bar-grow { from { transform: scaleX(0); } }
+.hbar-grow {
+  transform-origin: left center;
+  animation: bar-grow .5s var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger) + 60ms);
+}
+@keyframes chart-reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+.chart-reveal { animation: chart-reveal .7s var(--ease-out) both; }
+
+/* ---- A page fades in as it opens (opacity only: a transform here would
+   become the containing block of the Overview's floating pill) ---- */
+@keyframes fade-in { from { opacity: 0; } }
+.page-enter { animation: fade-in .24s var(--ease-out) both; }
+
+/* ---- One shared highlight that slides between options (ActiveThumb) ----
+   Stretches about 12% along the way it moves, then settles. */
+.period-tabs, .edit-dates__tabs, .nav { position: relative; }
+.thumb { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; opacity: 0; }
+.thumb.is-ready {
+  transition: left var(--dur-move) var(--ease-in-out), top var(--dur-move) var(--ease-in-out),
+              width var(--dur-move) var(--ease-in-out), height var(--dur-move) var(--ease-in-out),
+              opacity .15s;
+}
+@keyframes thumb-stretch-x { 45% { transform: scaleX(1.12); } }
+@keyframes thumb-stretch-y { 45% { transform: scaleY(1.12); } }
+.thumb--x.is-moving { animation: thumb-stretch-x var(--dur-move) var(--ease-in-out); }
+.thumb--y.is-moving { animation: thumb-stretch-y var(--dur-move) var(--ease-in-out); }
+.period-tabs > .thumb, .edit-dates__tabs > .thumb { background: var(--ink); border-radius: 999px; }
+.period-tab, .edit-dates__tab { position: relative; z-index: 1; }
+.period-tab.is-active, .edit-dates__tab.is-active { background: transparent; }
+.nav > .thumb { background: var(--nav-active-bg); border-radius: var(--r-sm); }
+.nav__item { position: relative; z-index: 1; }
+.nav__item.active, .nav__item.active:hover { background: transparent; }
+
+/* ---- Demand Forecast: changing the model (Forecast.jsx ForecastCard) ----
+   While the new model's forecast loads, the old one stays, dimmed. When it
+   arrives nothing redraws: the chart glides to the new figures
+   (ScrollForecastChart's tween) as the dim lifts. */
+.model-swap > * { transition: opacity .2s var(--ease-out); }
+.model-swap.is-switching > * { opacity: .45; }
+
+/* ---- Feedback ---- */
+/* A save: the check pulses once as the confirmation opens. */
+@keyframes success-pulse {
+  0%   { opacity: 0; transform: scale(.6); }
+  45%  { opacity: 1; transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+.saved-dialog__text > svg { animation: success-pulse .5s var(--ease-out) .12s both; }
+/* A field marked wrong nudges sideways once as the mark appears. */
+@keyframes err-nudge { 25% { transform: translateX(-4px); } 60% { transform: translateX(3px); } }
+.field input.is-err, .field select.is-err, .sselect__btn.is-err { animation: err-nudge .3s var(--ease-out); }
+
+/* ---- Loading: a spinner beside what is loading, after a short delay so a
+   fast answer never flashes it ---- */
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  animation: fade-in .2s var(--ease-out) .15s both;
+}
+.spinner {
+  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--line); border-top-color: var(--accent-deep);
+  animation: spin .7s linear infinite;
+}
+
+/* ---- Icons that swap crossfade, with a little blur ---- */
+.icon-swap { display: inline-grid; }
+.icon-swap__icon {
+  grid-area: 1 / 1; display: inline-grid; place-items: center;
+  opacity: 0; filter: blur(3px); transform: scale(.8);
+  transition: opacity .18s var(--ease-out), filter .18s var(--ease-out), transform .18s var(--ease-out);
+}
+.icon-swap__icon.is-on { opacity: 1; filter: none; transform: none; }
+
+/* ---- Type: headlines balance their lines, paragraphs avoid a lone last
+   word, and figures line up ---- */
+.section-h, .topbar__title, .hero__title, .kpi__label, .advisory__title,
+.pending__title, .card-h__title { text-wrap: balance; }
+p, .hint, .advisory__desc, .advisory__basis, .hero__sub, .kpi__sub, .pending__body { text-wrap: pretty; }
+.kpi__val, .kpi__sub, .hero__title, .hero__sub, .hero__row-qty, .avp-stat__val, .ftotal__val,
+.tag, .topbar__badge, .charttip, .stockcheck, .tnum, svg text { font-variant-numeric: tabular-nums; }
+
+/* ---- Optical alignment: an icon at a button's edge sits a little further
+   out, so the padding looks even rather than measures even ---- */
+.btn > svg:first-child:not(:only-child) { margin-left: -2px; }
+.btn > svg:last-child:not(:only-child)  { margin-right: -2px; }
+
+/* ---- Reduced motion: nothing moves ---- */
+@media (prefers-reduced-motion: reduce) {
+  .sselect__panel, .sselect__opt, .infotip__pop, .modal-scrim, .modal-panel,
+  .stagger > *, .hbar-grow, .chart-reveal, .page-enter, .thumb, .loading,
+  .saved-dialog__text > svg, .icon-swap__icon,
+  .field input.is-err, .field select.is-err, .sselect__btn.is-err { animation: none; transition: none; }
+  .spinner { animation-duration: 1.6s; }
+  .btn:active, .nav__item:active, .period-tab:active, .edit-dates__tab:active, .sselect__btn:active,
+  .pw-field__toggle:active, .infotip__btn:active, .topbar__advisories:active,
+  .kpi.is-link:active, .card.is-link:active { transform: none; }
 }

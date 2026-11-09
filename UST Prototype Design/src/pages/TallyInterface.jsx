@@ -17,6 +17,7 @@ import { Loading } from '../components/Pending';
 import DataTable from '../components/DataTable';
 import ErrorBanner from '../components/ErrorBanner';
 import Icon from '../components/Icon';
+import ActiveThumb from '../components/ActiveThumb';
 import ComboBox from '../components/ComboBox';
 import InfoTip from '../components/InfoTip';
 import SearchSelect from '../components/SearchSelect';
@@ -2085,6 +2086,7 @@ function EditCalendarModal({ onClose, closed, events, onSaved }) {
         <div className="edit-dates">
           <div className="edit-dates__bar">
             <div className="edit-dates__tabs" role="tablist" aria-label="Which dates">
+              <ActiveThumb />
               {[['upcoming', 'Upcoming'], ['previous', 'Previous']].map(([key, label]) => (
                 <button key={key} type="button" role="tab" aria-selected={tab === key}
                         className={'edit-dates__tab' + (tab === key ? ' is-active' : '')}
@@ -2711,7 +2713,7 @@ function StalenessBanner({ staleness, goTo }) {
         ) : (
           <>
             {what} recorded since the last completed run
-            {lastRun?.finished_at ? <> on <span className="mono">{usDateTime(lastRun.finished_at)}</span></> : null}.
+            {lastRun?.finished_at ? <> on <span className="tnum">{usDateTime(lastRun.finished_at)}</span></> : null}.
             FSN classes, forecasts and reorder points do not include {parts.length > 1 ? 'them' : 'it'} yet.
           </>
         )}
@@ -3073,7 +3075,7 @@ function FullPipelineRun({ onChanged, attention = false }) {
                 {s.label}{s.optional ? <span className="muted"> (optional)</span> : null}
               </span>
               {s.duration_s != null
-                ? <span className="hint mono">{dur(s.duration_s)}</span>
+                ? <span className="hint tnum">{dur(s.duration_s)}</span>
                 : s.estimate && <span className="hint">{s.estimate}</span>}
               {s.status !== 'pending' && (
                 <span className={`tag ${STEP_TAG[s.status].cls}`}>{STEP_TAG[s.status].label}</span>

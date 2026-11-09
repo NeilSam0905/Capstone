@@ -10,6 +10,7 @@ import { HBars } from '../components/charts';
 import Modal from '../components/Modal';
 import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
+import ActiveThumb from '../components/ActiveThumb';
 import InfoTip from '../components/InfoTip';
 import SearchSelect from '../components/SearchSelect';
 import { AdvisoriesPanel, AdvisoriesJump } from '../components/Advisories';
@@ -583,8 +584,8 @@ function PerformanceStep({ filters, saleMonths, dueByCategory, setPage, alertByI
         <Modal
           open
           onClose={() => setCatsOpen(false)}
-          title="What Changed This Month"
-          subtitle={`By category${prev ? `, ${longMonth(prev.month)} to ${longMonth(cur.month)}` : ''}`}
+          title={prev ? `What Changed by Category, ${prevName} to ${curName}` : `Sales by Category, ${curName}`}
+          subtitle="Each category's sales in pesos, and how many of its items are due for reorder."
           width={860}
         >
           <div className="modal-grow" style={{ overflowX: 'auto' }}>
@@ -795,6 +796,7 @@ function TopSellers({ alertById, categoryOf, onBrowse }) {
       {filterModal}
       <div className="topsellers__bar">
         <div className="period-tabs period-tabs--sm" role="tablist" aria-label="Rank by">
+          <ActiveThumb />
           {[['php', 'Sales (₱)'], ['units', 'Units']].map(([k, label]) => (
             <button key={k} type="button" role="tab" aria-selected={by === k}
                     className={'period-tab' + (by === k ? ' is-active' : '')} onClick={() => setBy(k)}>
@@ -1069,7 +1071,7 @@ function OrderFirst({ due, showSupplier, setPage, latestCount, recount }) {
                   </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="stagger">
                 {rows.map(a => (
                   <tr key={a.product_id} className="is-clickable" onClick={() => setPage?.('reorder')}>
                     <td className="strong overview-order__item" title={a.item_name}>{a.item_name}</td>

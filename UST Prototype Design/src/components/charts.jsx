@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { num, DONUT_COLORS } from '../lib/format';
+import { reducedMotion } from '../lib/motion';
 
 /** Map a pointer event into an SVG's own viewBox coordinates, and back again.
  *
@@ -59,7 +60,7 @@ export const MARK_KINDS = {
   closed:     { label: 'Store closed',   color: 'var(--crit)' },
   enrollment: { label: 'Enrollment',     color: 'var(--ok)' },
   exams:      { label: 'Exams',          color: 'var(--hvl)' },
-  break:      { label: 'Semester break', color: 'var(--muted)' },
+  break:      { label: 'Event/Holiday', color: 'var(--muted)' },
 };
 
 /** [callback ref, width in px] for an element, kept current as it resizes.
@@ -131,7 +132,7 @@ export function LineChart({ data, height = 210, xKey = 'label', yKey = 'value', 
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
+    <svg ref={svgRef} className="chart-reveal" viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
          style={{ display: 'block' }}
          onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
       <defs>
@@ -322,13 +323,17 @@ export function HBars({ data, valueFmt = num, color = 'var(--ink)' }) {
   if (!data.length) return <div className="empty">No data.</div>;
   const max = Math.max(...data.map(d => d.value)) || 1;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+    // Rows arrive 30ms apart (.stagger) and each bar grows from the baseline
+    // (.hbar-grow); switching what is ranked morphs the bars to their new
+    // lengths rather than redrawing them.
+    <div className="stagger" style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
       {data.map((d, i) => (
         <div
           key={i}
           onMouseEnter={() => setHover(i)}
           onMouseLeave={() => setHover(null)}
           style={{
+            '--i': i,
             display: 'grid', gridTemplateColumns: '170px 1fr auto', alignItems: 'center', gap: 12,
             background: hover === i ? 'var(--bg)' : 'transparent',
             borderRadius: 6, padding: '3px 5px', margin: '-3px -5px',
@@ -345,11 +350,11 @@ export function HBars({ data, valueFmt = num, color = 'var(--ink)' }) {
             )}
           </span>
           <div style={{ height: 14, background: 'var(--bg)', borderRadius: 4, overflow: 'hidden', outline: hover === i ? '1px solid var(--line)' : 'none' }}>
-            <div style={{
+            <div className="hbar-grow" style={{
               width: `${(d.value / max) * 100}%`, height: '100%',
               background: d.color || color, borderRadius: 4,
               filter: hover === i ? 'none' : hover == null ? 'none' : 'saturate(.4) opacity(.55)',
-              transition: 'filter .12s',
+              transition: 'filter .12s, width .32s var(--ease-in-out)',
             }} />
           </div>
           <span style={{ fontSize: 11.5, color: hover === i ? 'var(--text)' : 'var(--muted)', fontWeight: hover === i ? 700 : 400, fontVariantNumeric: 'tabular-nums', minWidth: 56, textAlign: 'right' }}>
@@ -425,7 +430,7 @@ export function DailyWindowBars({ data, refValue, height = 170 }) {
   const h = hover && data[hover.i];
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
+      <svg ref={svgRef} className="chart-reveal" viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
            style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}
            role="img" aria-label="Daily units sold over the same window last year">
         {first >= 0 && (
@@ -523,7 +528,7 @@ export function MonthBars({ data, height = 150, color = 'var(--accent)', unit = 
   const h = hover && data[hover.i];
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
+      <svg ref={svgRef} className="chart-reveal" viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
            style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}
            role="img" aria-label={ariaLabel}>
         {Array.from({ length: Math.round(top / step) + 1 }).map((_, k) => {
@@ -614,7 +619,7 @@ export function ActualVsPredictedChart({ checks, naive = true, height = 300 }) {
   const hp = h && offPct(h.pred_30d, h.actual_30d);
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
+      <svg ref={svgRef} className="chart-reveal" viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
            style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}
            role="img" aria-label="Units sold against units forecast in each past 30-day period">
         <defs>
@@ -828,7 +833,7 @@ export function ForecastChart({ data, height = 260 }) {
 
   return (
     <div style={{ position: 'relative' }}>
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
+    <svg ref={svgRef} className="chart-reveal" viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet"
          style={{ display: 'block' }}
          onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
       <defs>
@@ -892,6 +897,41 @@ const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep
 const ymIndex = ym => +ym.slice(0, 4) * 12 + (+ym.slice(5, 7) - 1);
 const fmtYm = k => `${MONTH_ABBR[k % 12]} ${Math.floor(k / 12)}`;
 const fmtIsoDay = s => `${MONTH_ABBR[+s.slice(5, 7) - 1]} ${+s.slice(8, 10)}, ${s.slice(0, 4)}`;
+
+/** Ease-in-out (cubic): what already on screen moves with. */
+const easeInOut = t => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
+
+/** The numbers in `target`, eased over `duration` ms from what was on screen
+ *  to the new values whenever `target` changes (by identity - memoise it),
+ *  so a chart whose data changes glides there instead of redrawing. A change
+ *  mid-tween starts from wherever the tween had got to. Not on the first
+ *  render, not when the length changes (nothing to pair up), and not for a
+ *  reader who asks for reduced motion. */
+function useTween(target, duration = 520) {
+  const [tw, setTw] = useState({ from: target, to: target, p: 1 });
+  const at = s => (s.p >= 1 ? s.to : s.to.map((v, i) => s.from[i] + (v - s.from[i]) * easeInOut(s.p)));
+  // Adjusted during render (React's pattern for state that follows a prop).
+  if (tw.to !== target) {
+    const now = at(tw);
+    const glide = now.length === target.length && !reducedMotion();
+    setTw({ from: glide ? now : target, to: target, p: glide ? 0 : 1 });
+  }
+  useEffect(() => {
+    if (tw.p >= 1) return undefined;
+    let frame = 0, t0 = null;
+    const step = ts => {
+      t0 ??= ts;
+      const p = Math.min(1, (ts - t0) / duration);
+      setTw(s => (s.to === tw.to ? { ...s, p } : s));
+      if (p < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+    // Restarts only for a new target; `p` moves on inside.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tw.to, duration]);
+  return at(tw);
+}
 
 /** A "nice" axis ceiling and step for a maximum, four-ish ticks. */
 function niceAxis(v) {
@@ -966,7 +1006,20 @@ export function ScrollForecastChart({ history, forecast, marks, actuals, height 
     return () => ro.disconnect();
   }, []);
 
-  const { months, days, total, peak } = model;
+  const { months, days: targetDays, total: targetTotal, peak } = model;
+  const { max: targetMax, step } = niceAxis(peak);
+
+  // A new forecast for the same days (another model picked) glides there:
+  // the line, its range band, the value axis and the 30-day total ease from
+  // what was showing to the new figures instead of redrawing. The history
+  // does not change with the model, so it stays put.
+  const tweenTarget = useMemo(
+    () => [targetMax, targetTotal, ...targetDays.flatMap(d => [d.yhat ?? 0, d.lo ?? 0, d.hi ?? 0])],
+    [targetMax, targetTotal, targetDays]);
+  const tw = useTween(tweenTarget);
+  const yMax = tw[0], total = tw[1];
+  const days = targetDays.map((d, j) => ({ ...d, yhat: tw[2 + 3 * j], lo: tw[3 + 3 * j], hi: tw[4 + 3 * j] }));
+
   const padX = 12, padR = 20, padT = 34, padB = 28, AX = 50;
   const H = height;
   // History gets about a third of the view (never more than `monthMax` a
@@ -987,11 +1040,12 @@ export function ScrollForecastChart({ history, forecast, marks, actuals, height 
   const W = X0 + days.length * dayW + padR;
   const mx = i => padX + i * monthW + monthW / 2;
   const dx = j => X0 + j * dayW + dayW / 2;
-  const { max: yMax, step } = niceAxis(peak);
   const plotBottom = H - padB;
   const y = v => padT + (1 - v / yMax) * (plotBottom - padT);
+  // The new axis's ticks, sliding to their places as the scale eases; one
+  // still above the top while the scale grows waits until it is in range.
   const ticks = [];
-  for (let v = 0; v <= yMax + 1e-9; v += step) ticks.push(v);
+  for (let v = 0; v <= Math.min(targetMax, yMax) + 1e-9; v += step) ticks.push(v);
 
   const measure = useCallback(() => {
     const el = scrollRef.current;
@@ -1169,7 +1223,7 @@ export function ScrollForecastChart({ history, forecast, marks, actuals, height 
             onMouseLeave={() => setHover(null)}
           >
             <div style={{ position: 'relative', width: W }}>
-              <svg width={W} height={H} style={{ display: 'block' }}>
+              <svg width={W} height={H} className="chart-reveal" style={{ display: 'block' }}>
                 {/* Forecast region */}
                 {days.length > 0 && (
                   <g>

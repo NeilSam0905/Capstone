@@ -66,7 +66,7 @@ export function AdvisoriesPanel({ advisories, setPage }) {
   }
 
   return (
-    <div className="advisories">
+    <div className="advisories stagger">
       {!advisories.has_forecast && (
         <div className="notice notice--warn">
           <b>Limited advisories:</b> the demand forecast has not been generated yet, so these are
@@ -149,7 +149,7 @@ function AdvisoryCard({ advisory, setPage }) {
       </button>
 
       {open && (
-        <div className="advisory__body">
+        <div className="advisory__body stagger stagger--settle">
           {advisory.basis && (
             <div className="advisory__basis">
               <span className="advisory__basis-label">Explanation for Advisory</span>
@@ -165,7 +165,7 @@ function AdvisoryCard({ advisory, setPage }) {
 
           {items.length > 0 && (
             <div style={{ overflowX: 'auto' }}>
-              <table className="tbl" style={{ minWidth: 620 }}>
+              <table className="tbl advisory__items">
                 <thead>
                   <tr>
                     <th>Item</th>
@@ -268,7 +268,7 @@ function ItemMovement({ productId }) {
   }
 
   return (
-    <div className="advisory__movement">
+    <div className="advisory__movement stagger stagger--settle">
       <div>
         <span className="advisory__basis-label">Units sold each month</span>
         <div className="hint">{salesLine}</div>
@@ -503,7 +503,7 @@ export function AdvisoriesModal({ open, onClose, page, setPage }) {
   const go = p => { onClose(); setPage?.(p); };
 
   return (
-    <Modal open onClose={onClose} width={860} title="Advisories"
+    <Modal open onClose={onClose} width={960} title="Advisories"
            subtitle={first.length && ordered.some(a => first.includes(a.type))
              ? 'What to stock, promote or clear out - the ones about this page first.'
              : 'What to stock, promote or clear out, from the latest analytics update.'}>

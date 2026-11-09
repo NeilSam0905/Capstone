@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useId } from 'react';
 import Icon from './Icon';
+import { POP_EXIT_MS, reducedMotion } from '../lib/motion';
 
 /**
  * A closed dropdown (pick one of `options`, nothing new) whose open panel has
@@ -10,7 +11,10 @@ import Icon from './Icon';
  * hold one of its options, so it looks and behaves like the `.filter` selects
  * beside it until it is opened.
  *
- * `options` is [{ value, label, disabled?, title? }]. A disabled option is
+ * `options` is [{ value, label, disabled?, title?, tag? }]. `tag` is a small
+ * pill after the label, in the list and in the closed control - { text, tone }
+ * with tone one of the .tag colours (ok, info, warn...) - for a status such as
+ * "Recommended" that is not part of the name. A disabled option is
  * listed, greyed out, and cannot be picked; `title` is shown on hover (a
  * native <option> shows neither reliably). The search matches anywhere in the
  * label, ignoring case; `searchable={false}` leaves the search box out, for a
@@ -24,11 +28,20 @@ import Icon from './Icon';
  * the browser finds room, which near the bottom of the screen meant a list
  * flying up over the form it belongs to.
  */
+/** An option's status pill (see `tag` above). */
+function OptTag({ tag }) {
+  return <span className={`tag tag--${tag.tone ?? 'info'} sselect__tag`}>{tag.text}</span>;
+}
+
 export default function SearchSelect({
   id, value, options, onChange, minWidth = 200, placeholder = 'Search…',
   emptyLabel = '', variant, invalid = false, searchable = true, icon,
 }) {
   const [open, setOpen] = useState(false);
+  // The panel stays mounted for its short exit back into the control.
+  const [closing, setClosing] = useState(false);
+  const exitTimer = useRef(0);
+  useEffect(() => () => clearTimeout(exitTimer.current), []);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const wrap = useRef(null);
@@ -61,6 +74,8 @@ export default function SearchSelect({
   }, [open]);
 
   function openPanel() {
+    clearTimeout(exitTimer.current);
+    setClosing(false);
     setActive(Math.max(0, options.findIndex(o => o.value === value)));
     setOpen(true);
   }
@@ -89,8 +104,11 @@ export default function SearchSelect({
   }, [active, open]);
 
   function close() {
-    setOpen(false);
-    setQuery('');
+    const finish = () => { setOpen(false); setClosing(false); setQuery(''); };
+    if (reducedMotion()) { finish(); return; }
+    setClosing(true);
+    clearTimeout(exitTimer.current);
+    exitTimer.current = setTimeout(finish, POP_EXIT_MS);
   }
 
   function pick(o) {
@@ -123,17 +141,19 @@ export default function SearchSelect({
         className={`sselect__btn${invalid ? ' is-err' : ''}${selected ? '' : ' is-empty'}`
           + (icon ? ' sselect__btn--icon' : '')}
         aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => (open ? close() : openPanel())}
+        aria-expanded={open && !closing}
+        onClick={() => (open && !closing ? close() : openPanel())}
         onKeyDown={e => { if (e.key === 'ArrowDown' && !open) { e.preventDefault(); openPanel(); } }}
       >
         {icon && <span className="sselect__icon"><Icon name={icon} size={13} /></span>}
         <span className="sselect__value">{selected ? selected.label : emptyLabel}</span>
+        {selected?.tag && <OptTag tag={selected.tag} />}
         <span className="filter__chev">▾</span>
       </button>
 
       {open && (
-        <div ref={panel} className={`sselect__panel${searchable ? '' : ' sselect__panel--plain'}`}>
+        <div ref={panel} className={`sselect__panel${searchable ? '' : ' sselect__panel--plain'}`
+          + (closing ? ' is-closing' : '')}>
           {searchable && (
             <input
               ref={input}
@@ -160,10 +180,12 @@ export default function SearchSelect({
                 aria-disabled={o.disabled || undefined}
                 title={o.title}
                 className={`sselect__opt${i === active ? ' is-active' : ''}${o.value === value ? ' is-selected' : ''}`
-                  + (o.disabled ? ' is-disabled' : '')}
+                  + (o.disabled ? ' is-disabled' : '') + (o.tag ? ' has-tag' : '')}
+                // The first rows arrive 30ms apart; the rest with the last of them.
+                style={{ '--i': Math.min(i, 8) }}
                 onMouseEnter={() => setActive(i)}
                 onMouseDown={e => { e.preventDefault(); pick(o); }}
-              >{o.label}</li>
+              >{o.tag ? <><span className="sselect__opt-label">{o.label}</span><OptTag tag={o.tag} /></> : o.label}</li>
             ))}
             {matches.length === 0 && <li className="sselect__empty">No items match “{query.trim()}”.</li>}
           </ul>

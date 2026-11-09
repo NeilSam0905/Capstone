@@ -15,7 +15,6 @@ export default function Pending({ title, reason, children }) {
       <div className="pending__title">{title}</div>
       {reason && <div className="pending__body">{reason}</div>}
       {children}
-      <span className="tag tag--gold">Waiting for an update</span>
     </div>
   );
 }
@@ -25,6 +24,14 @@ export function PendingValue() {
   return <span style={{ color: 'var(--line)', fontWeight: 700 }}>—</span>;
 }
 
+/** A section still fetching: a small spinner beside what it is fetching, so
+ *  waiting reads as work under way rather than an empty card. It fades in a
+ *  moment late, so a fast answer never flashes a spinner. */
 export function Loading({ label = 'Loading…' }) {
-  return <div className="empty">{label}</div>;
+  return (
+    <div className="empty loading" role="status" aria-live="polite">
+      <span className="spinner" aria-hidden="true" />
+      <span>{label}</span>
+    </div>
+  );
 }

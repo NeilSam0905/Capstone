@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
+import { MODAL_EXIT_MS, reducedMotion } from '../lib/motion';
 
 /**
  * Modal — a centred dialog over a scrim.
@@ -31,6 +32,21 @@ export default function Modal({
 }) {
   const panel = useRef(null);
 
+  // Closing from inside the dialog (Close, the scrim, Escape) plays a short
+  // exit first - shorter than the entrance - then tells the caller. A dialog
+  // its caller closes some other way (after Apply, say) just goes. `closing`
+  // resets once onClose has run, for a caller that keeps the dialog mounted.
+  const [closing, setClosing] = useState(false);
+  const exitTimer = useRef(0);
+  useEffect(() => () => clearTimeout(exitTimer.current), []);
+  const requestClose = useCallback(() => {
+    if (!onClose) return;
+    if (reducedMotion()) { onClose(); return; }
+    clearTimeout(exitTimer.current);
+    setClosing(true);
+    exitTimer.current = setTimeout(() => { setClosing(false); onClose(); }, MODAL_EXIT_MS);
+  }, [onClose]);
+
   // Focus and the scroll lock follow `open` only. Callers often pass a new
   // onClose on every render, and re-running this with it pulled focus back to
   // this panel each time - away from a dialog opened on top of it.
@@ -50,11 +66,11 @@ export default function Modal({
       if (e.key !== 'Escape') return;
       const panels = document.querySelectorAll('.modal-panel');
       if (panels.length && panels[panels.length - 1] !== panel.current) return;
-      onClose?.();
+      requestClose();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, requestClose]);
 
   if (!open) return null;
 
@@ -63,7 +79,8 @@ export default function Modal({
   // of .tally-body at 880px, so a dialog declared there darkened only that
   // middle column instead of the whole window.
   return createPortal(
-    <div className="modal-scrim" onMouseDown={e => { if (e.target === e.currentTarget) onClose?.(); }}>
+    <div className={`modal-scrim${closing ? ' is-closing' : ''}`}
+         onMouseDown={e => { if (e.target === e.currentTarget) requestClose(); }}>
       <div
         className={`modal-panel${className ? ` ${className}` : ''}`}
         role="dialog"
@@ -78,7 +95,7 @@ export default function Modal({
             <div className="section-h">{title}</div>
             {subtitle && <div className="hint" style={{ marginTop: 3 }}>{subtitle}</div>}
           </div>
-          <button className={closeClass} onClick={onClose} aria-label="Close">
+          <button className={closeClass} onClick={requestClose} aria-label="Close">
             <Icon name="xCircle" size={13} /> Close
           </button>
         </div>

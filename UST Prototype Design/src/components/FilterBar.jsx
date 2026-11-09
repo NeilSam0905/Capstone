@@ -73,17 +73,14 @@ export default function FilterBar({
 
   return (
     <header className="topbar">
+      {/* The title alone: the sidebar already says USTore, and every filter
+          carries its own label, so a breadcrumb and a funnel glyph only
+          repeated them. */}
       <div>
-        <div className="topbar__crumb">USTore · Forecasting</div>
         <div className="topbar__title">{pageTitle}</div>
       </div>
       {(show.length > 0 || action) && (
         <div className="topbar__right">
-          {show.length > 0 && (
-            <span className="topbar__filter-icon">
-              <Icon name="filter" size={15} />
-            </span>
-          )}
           {show.includes('saleMonths') && saleMonths && (
             <MonthCompare value={saleMonths} onChange={setSaleMonths} />
           )}

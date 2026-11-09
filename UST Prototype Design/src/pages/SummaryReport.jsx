@@ -4,6 +4,7 @@ import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
 import KPICard from '../components/KPICard';
 import Icon from '../components/Icon';
+import ActiveThumb from '../components/ActiveThumb';
 import SearchSelect from '../components/SearchSelect';
 import { peso, num, longMonth, usDate } from '../lib/format';
 
@@ -39,6 +40,7 @@ function splitPeriod(p) {
 function Tabs({ label, items, active, onPick }) {
   return (
     <div className="period-tabs" role="tablist" aria-label={label}>
+      <ActiveThumb />
       {items.map(({ key, name, disabled, title }) => (
         <button key={key} type="button" role="tab" aria-selected={active === key} disabled={disabled} title={title}
                 className={'period-tab' + (active === key ? ' is-active' : '')}
@@ -156,6 +158,7 @@ export default function SummaryReport() {
         <div className="report-period">
           <span className="section-h">Period</span>
           <div className="period-tabs" role="tablist" aria-label="Kind of period">
+            <ActiveThumb />
             {KINDS.map(([key, name]) => (
               <button key={key} type="button" role="tab" aria-selected={kind === key}
                       className={'period-tab' + (kind === key ? ' is-active' : '')}
