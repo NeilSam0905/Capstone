@@ -1680,6 +1680,55 @@ button.advisory__head:focus-visible { outline: 2px solid var(--accent); outline-
   transition: color .12s;
 }
 .linkish:hover { color: var(--accent-deep); }
+/* An item name that opens the item's sales history (Reorder Alerts, Order
+   Ahead): reads as the name, shows it is a link on hover. */
+.item-link {
+  background: none; border: none; padding: 0; font: inherit; font-weight: 700; color: var(--text);
+  text-align: left; cursor: pointer; min-width: 0;
+}
+.item-link:hover { color: var(--accent-deep); text-decoration: underline; text-underline-offset: 2px; }
+.item-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* The Overview reorder banner's next busy period (OrderAhead.jsx OrderAheadLine). */
+.hero__ahead {
+  grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 8px 10px; flex-wrap: wrap;
+  font-size: 13px; line-height: 1.5; color: var(--text-2);
+  border-top: 1px solid var(--line-soft); padding-top: 12px;
+}
+.hero__ahead > span:nth-child(2) { flex: 1 1 320px; min-width: 0; }
+.hero__ahead b { color: var(--text); }
+.hero__ahead b.is-crit { color: var(--crit); }
+.hero__ahead-icon { color: var(--accent-deep); display: inline-flex; padding-top: 2px; }
+.hero__ahead .linkish { white-space: nowrap; font-size: 12px; color: var(--accent-deep); }
+/* Reorder Alerts' What to Order card: its buttons beside the title, which
+   open Plan Ahead, Stock Position and How It's Worked Out as dialogs. */
+.ro-head { flex-wrap: wrap; gap: 10px 16px; }
+.ro-toolbar { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.settings-btn__n {
+  margin-left: 4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px;
+  background: var(--accent); color: var(--ink); font-size: 10.5px; font-weight: 800;
+  display: inline-grid; place-items: center;
+}
+
+/* Order Ahead: a rush that takes stock under its safety stock. */
+.ahead__low { color: var(--crit); font-weight: 700; }
+/* Order Ahead: the upcoming campus events and their past years. */
+.ahead-events {
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg);
+  padding: 10px 12px 4px; margin-bottom: 14px;
+}
+.ahead-events__h { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.ahead-events__tbl td { padding-top: 7px; padding-bottom: 7px; vertical-align: middle; }
+.ahead-events__date { white-space: nowrap; font-weight: 700; color: var(--text); width: 150px; }
+.ahead-events__years { white-space: nowrap; }
+.ahead-events__tag { white-space: nowrap; text-align: right; }
+.ahead-sub { display: block; font-size: 10.5px; font-weight: 500; color: var(--muted); }
+.ahead-year {
+  display: inline-block; font-size: 11.5px; color: var(--muted); margin-right: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.ahead-year b { color: var(--text); }
+.ahead-year.is-none b { color: var(--muted); font-weight: 500; }
 .linkish:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 
 /* A select that sits inside a card header beside a hint, rather than in a

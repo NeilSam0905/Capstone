@@ -430,6 +430,10 @@ export const saveReorderSettings = (productId, body) => put(`/reorder/${productI
 /** How the Reorder figures are worked out: the pipeline's recorded
  *  assumptions, lead-time groups and safety-stock kinds, read live. */
 export const getReorderMethod = () => get('/reorder/method');
+/** What to order ahead of each upcoming busy period (enrollment, the start
+ *  of the first term): each item's stock projected through it, the day it
+ *  reaches its reorder point, and any extra for the rush (season_ahead.py). */
+export const getReorderSeason = () => get('/reorder/season');
 /** Back to calculated: remove an item's saved settings. */
 export const resetReorderSettings = productId => del(`/reorder/${productId}/settings`);
 export const getAdvisories = () => get('/advisories');

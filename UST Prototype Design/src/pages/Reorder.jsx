@@ -1,5 +1,8 @@
-import { useState } from 'react';
-import { getStockPosition, getReorderAlerts, getReorderMethod } from '../services/dataService';
+import { useEffect, useState } from 'react';
+import { getStockPosition, getReorderAlerts, getReorderMethod, getReorderSeason } from '../services/dataService';
+import OrderAheadModal from '../components/OrderAhead';
+import ItemHistory from '../components/ItemHistory';
+import { ORDER_AHEAD_ANCHOR } from '../config';
 import useData from '../hooks/useData';
 import KPICard from '../components/KPICard';
 import DataTable from '../components/DataTable';
@@ -10,7 +13,7 @@ import Pending, { Loading, PendingValue } from '../components/Pending';
 import ReorderWhatIf from '../components/ReorderWhatIf';
 import ReorderSettings from '../components/ReorderSettings';
 import Modal from '../components/Modal';
-import { num, usDate, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, usDate, windowDates, FSN_TONE, FSN_LABEL } from '../lib/format';
 
 /** Fast, Slow, then Non-Moving: the order the recommendations table opens in. */
 const CLASS_ORDER = { F: 0, S: 1, N: 2 };
@@ -27,6 +30,21 @@ const STATUS = {
   uncounted:   { label: 'No stock count',  test: i => i.current_stock == null },
 };
 
+/**
+ * Reorder Alerts, kept to one list (consultation, Nov 2026: "too many boxes").
+ *
+ *   three tiles      what is due now, what is close, and the next busy period;
+ *                    each one opens what it counts
+ *   What to Order    THE list. It opens on the items to reorder now, most
+ *                    urgent first, with the total to order under it - what the
+ *                    old Priority card showed - and its Status filter widens it
+ *                    to every item (the old Recommendations table). Its row of
+ *                    buttons opens everything else as a dialog:
+ *                      Plan Ahead            ordering ahead of busy periods
+ *                      Stock Position        every counted item's stock
+ *                      How It's Worked Out   the formulas, inputs and sources
+ *                      Edit Settings         the store's own figures for an item
+ */
 export default function Reorder({ filters }) {
   const { data: stock, loading } = useData(() => getStockPosition(filters), [filters], null,
     { key: `reorder:stock:${filters.supplier}|${filters.category}` });
@@ -34,12 +52,24 @@ export default function Reorder({ filters }) {
   const [reload, setReload] = useState(0);
   const { data: alerts } = useData(getReorderAlerts, [reload]);
   const { data: method } = useData(getReorderMethod, [reload]);
+  const { data: season } = useData(getReorderSeason, [reload]);
   // The settings dialog: { id } while open (id null = pick an item there),
   // else null; and what its save changed.
   const [editing, setEditing] = useState(null);
   const [savedMsg, setSavedMsg] = useState(null);
   // The item open in the what-if dialog, or null.
   const [whatIf, setWhatIf] = useState(null);
+  // The item whose sales history is open, or null.
+  const [history, setHistory] = useState(null);
+  // The dialog open from the list's buttons: 'ahead' | 'stock' | 'method' |
+  // null. Arriving from the Overview's "Plan ahead" opens on Plan Ahead; the
+  // request is cleared once read, so coming back later does not reopen it.
+  const [panel, setPanel] = useState(() => {
+    try { return sessionStorage.getItem(ORDER_AHEAD_ANCHOR) === '1' ? 'ahead' : null; } catch { return null; }
+  });
+  useEffect(() => {
+    try { sessionStorage.removeItem(ORDER_AHEAD_ANCHOR); } catch { /* nothing to clear */ }
+  }, []);
 
   const items = stock?.items ?? [];
   const withDos = items.filter(p => p.days_of_supply != null);
@@ -47,35 +77,40 @@ export default function Reorder({ filters }) {
     ? [...withDos].sort((a, b) => a.days_of_supply - b.days_of_supply)[Math.floor(withDos.length / 2)].days_of_supply
     : null;
 
-  // current_stock, needs_reorder and suggested_order_qty now come from
-  // /api/reorder itself (it joins catalog stats server-side), so this screen
-  // no longer re-derives them from /api/stock.
   const alertItems = alerts?.available ? alerts.data.items : [];
-  // The recommendations table opens on the Fast items - the ones a stockout
-  // costs most - then Slow, then the rest; within a class the API's name
-  // order stands (Array.sort is stable). A column heading still re-sorts.
-  const byClass = [...alertItems].sort(
-    (a, b) => (CLASS_ORDER[a.fsn_class] ?? 9) - (CLASS_ORDER[b.fsn_class] ?? 9));
   const summary = alerts?.available ? alerts.data.summary : null;
+  const next = season?.available ? season.windows?.[0] : null;
 
-  // Search and filters for the recommendations table. They narrow what the
-  // table shows only: the priority list, the cards and the totals above
-  // still count every item.
+  // Search and filters. The list opens on the items to reorder now.
   const [q, setQ] = useState('');
-  const [status, setStatus] = useState('All');
+  const [status, setStatus] = useState('reorder');
   const [fsn, setFsn] = useState('All');
   const [supplier, setSupplier] = useState(ALL_SUPPLIERS);
   const suppliers = [...new Set(alertItems.map(i => i.supplier_name).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b));
   const needle = q.trim().toLowerCase();
-  const shown = byClass.filter(i =>
-    (!needle || i.item_name?.toLowerCase().includes(needle)
-      || i.supplier_name?.toLowerCase().includes(needle))
-    && STATUS[status].test(i)
-    && (fsn === 'All' || i.fsn_class === fsn)
-    && (supplier === ALL_SUPPLIERS || i.supplier_name === supplier));
-  const filtering = needle !== '' || status !== 'All' || fsn !== 'All' || supplier !== ALL_SUPPLIERS;
-  const clearFilters = () => { setQ(''); setStatus('All'); setFsn('All'); setSupplier(ALL_SUPPLIERS); };
+  const urgentFirst = status === 'reorder';
+  // Due items most urgent first - least days of cover left, then the fastest
+  // seller - and numbered; any other view opens Fast, Slow, then the rest.
+  const ordered = urgentFirst
+    ? [...alertItems].sort((a, b) =>
+      (a.days_cover_remaining ?? 0) - (b.days_cover_remaining ?? 0)
+      || (b.avg_daily_demand ?? 0) - (a.avg_daily_demand ?? 0))
+    : [...alertItems].sort((a, b) => (CLASS_ORDER[a.fsn_class] ?? 9) - (CLASS_ORDER[b.fsn_class] ?? 9));
+  const inStatus = ordered.filter(STATUS[status].test);
+  const shown = inStatus
+    .map((i, n) => ({ ...i, rank: n + 1 }))
+    .filter(i =>
+      (!needle || i.item_name?.toLowerCase().includes(needle)
+        || i.supplier_name?.toLowerCase().includes(needle))
+      && (fsn === 'All' || i.fsn_class === fsn)
+      && (supplier === ALL_SUPPLIERS || i.supplier_name === supplier));
+  const narrowed = needle !== '' || fsn !== 'All' || supplier !== ALL_SUPPLIERS;
+  const clearFilters = () => { setQ(''); setStatus('reorder'); setFsn('All'); setSupplier(ALL_SUPPLIERS); };
+  const showStatus = s => {
+    setStatus(s);
+    requestAnimationFrame(() => document.getElementById('ro-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
 
   const columns = [
     { key: 'item_name',     label: 'Product Name', strong: true, truncate: true, width: '26%' },
@@ -96,11 +131,16 @@ export default function Reorder({ filters }) {
   ];
 
   const alertColumns = [
+    ...(urgentFirst ? [{
+      key: 'rank', label: '#', width: '4%',
+      render: v => <span className={'rank' + (v <= 3 ? ' is-top' : '')}>{v}</span>,
+    }] : []),
     {
-      key: 'item_name', label: 'Product Name', strong: true, width: '21%',
+      key: 'item_name', label: 'Product Name', strong: true, width: urgentFirst ? '20%' : '23%',
       render: (v, row) => (
         <span className="stock-item">
-          <span className="cell-trunc" title={v}>{v}</span>
+          <button type="button" className="item-link cell-trunc" title={`${v}: show its sales history`}
+                  onClick={() => setHistory(row)}>{v}</button>
           {row.adjusted && (
             <span className="tag tag--gold"
                   title={'Uses saved settings'
@@ -113,19 +153,23 @@ export default function Reorder({ filters }) {
       ),
     },
     {
-      key: 'fsn_class', label: 'Class', width: '9%',
+      key: 'supplier_name', label: 'Supplier', width: urgentFirst ? '14%' : '16%',
+      render: v => <span className="cell-trunc" title={v || 'Unattributed'}>{v || <span className="muted">Unattributed</span>}</span>,
+    },
+    {
+      key: 'fsn_class', label: 'Class', width: '8%',
       render: v => v
         ? <span className={`tag tag--${FSN_TONE[v] || 'info'}`}>{FSN_LABEL[v] || v}</span>
         : <span className="muted">—</span>,
     },
-    { key: 'lead_time_days', label: 'Lead Time', num: true, width: '7%', render: v => `${v}d` },
+    { key: 'lead_time_days', label: 'Lead Time', num: true, width: '6%', render: v => `${v}d` },
     {
-      key: 'current_stock', label: 'On Hand', num: true, width: '8%',
+      key: 'current_stock', label: 'On Hand', num: true, width: '7%',
       render: v => v == null ? <span className="muted">—</span> : num(v),
     },
-    { key: 'safety_stock', label: 'Buffer Stock', num: true, width: '9%', render: v => num(Math.round(v)) },
+    { key: 'safety_stock', label: 'Safety Stock', num: true, width: '8%', render: v => num(Math.round(v)) },
     {
-      key: 'reorder_point', label: 'ROP', num: true, width: '7%',
+      key: 'reorder_point', label: 'ROP', num: true, width: '6%',
       render: (v, row) => (
         <span style={row.current_stock != null && row.current_stock <= v ? { color: 'var(--warn)', fontWeight: 700 } : undefined}>
           {num(Math.round(v))}
@@ -139,16 +183,19 @@ export default function Reorder({ filters }) {
         : <span className="muted">—</span>,
     },
     {
-      key: 'eoq_low', label: 'EOQ · low admin', num: true, width: '10%',
-      render: (_v, row) => <Eoq scenario={row.scenarios.low_admin_cost} />,
-    },
-    {
-      key: 'eoq_high', label: 'EOQ · high goods-value', num: true, width: '11%',
-      render: (_v, row) => <Eoq scenario={row.scenarios.high_goods_value} />,
+      // One EOQ column: the low admin-cost figure, the high goods-value one on
+      // hover. Both are explained under How It's Worked Out.
+      key: 'eoq', label: 'EOQ', num: true, width: '7%', sortable: false,
+      render: (_v, row) => (
+        <span title={row.scenarios.high_goods_value
+          ? `High goods-value cost: ${num(Math.round(row.scenarios.high_goods_value.eoq))}` : undefined}>
+          <Eoq scenario={row.scenarios.low_admin_cost} />
+        </span>
+      ),
     },
     {
       // An item with no reorder point (no sale in a year) has nothing to test.
-      key: 'what_if', label: '', width: '10%', sortable: false,
+      key: 'what_if', label: '', width: urgentFirst ? '12%' : '11%', sortable: false,
       render: (_v, row) => row.policy_state === 'priced'
         ? <button type="button" className="tag tag--info whatif-btn" onClick={() => setWhatIf(row)}
                   title="Try a busy period, a bulk order, a new lead time or new costs for this item. Not saved.">
@@ -160,73 +207,114 @@ export default function Reorder({ filters }) {
 
   if (loading) return <Loading label="Loading stock position…" />;
 
+  const due = alertItems.filter(i => i.needs_reorder);
+  const dueSuppliers = new Set(due.map(i => i.supplier_name || '—')).size;
+
   return (
     <div className="stack">
       <div className="grid-3">
         <KPICard
           label="Reorder Now"
           value={summary ? num(summary.reorder_now) : <PendingValue />}
-          sub="Stock has reached the order-now level — order these today"
+          sub={summary
+            ? `${num(summary.suggested_units_total)} units from ${num(dueSuppliers)} supplier${dueSuppliers === 1 ? '' : 's'}`
+            : 'At or below the reorder point'}
           icon="alert"
+          tone={summary?.reorder_now ? 'crit' : undefined}
+          onClick={summary?.reorder_now ? () => showStatus('reorder') : undefined}
+          linkLabel="Show them"
         />
         <KPICard
           label="Approaching ROP"
           value={summary ? num(summary.approaching_rop) : <PendingValue />}
-          sub="Not due yet, but close — add to the next order from the same supplier"
+          sub="Close to it: add them to the next order from the same supplier"
           icon="bell"
+          onClick={summary?.approaching_rop ? () => showStatus('approaching') : undefined}
+          linkLabel="Show them"
         />
-        <KPICard
-          label="Median Days of Supply"
-          value={medianDos != null ? `${Math.round(medianDos)}d` : <PendingValue />}
-          sub={`How long the typical item's stock lasts at its recent selling rate · `
-            + `${withDos.length} of ${items.length} counted items`}
-          icon="clock"
-          accent
-        />
+        {next ? (
+          <KPICard
+            label="Next Busy Period"
+            value={next.kind === 'event' ? next.label.replace(/ Festivities$/, '') : next.label}
+            sub={`${windowDates(next)}${next.estimated ? ' (estimated)' : ''} · `
+              + (next.n_rush
+                ? `${num(next.n_rush)} item${next.n_rush === 1 ? '' : 's'} need extra, order by ${shortDate(next.earliest_order_by)}`
+                : 'the regular reorders cover it')}
+            icon="cal"
+            accent
+            onClick={() => setPanel('ahead')}
+            linkLabel="Plan ahead"
+          />
+        ) : (
+          <KPICard
+            label="Median Days of Supply"
+            value={medianDos != null ? `${Math.round(medianDos)}d` : <PendingValue />}
+            sub={`How long the typical item's stock lasts · ${withDos.length} of ${items.length} counted items`}
+            icon="clock"
+            accent
+            onClick={() => setPanel('stock')}
+            linkLabel="Stock position"
+          />
+        )}
       </div>
-
-      {summary && <ReorderAdvice items={alertItems} summary={summary} />}
 
       {!alerts?.available && (
         <Pending title="Reorder alerts are not computed yet" reason={alerts?.reason}>
           <div className="pending__body">
             ROP = (forecasted daily demand × lead time) + Safety Stock, and Safety Stock = Z × σ<sub>demand</sub> × √lead
-            time. Both need a per-supplier lead time and a forecast; neither is in the database. The table below is what
-            the data does support today: measured stock on hand and how long it lasts at the observed rate.
+            time. Both need a per-supplier lead time and a forecast; neither is in the database. Stock Position shows
+            what the data does support today: measured stock on hand and how long it lasts at the observed rate.
           </div>
+          <button type="button" className="btn btn--ghost btn--sm" style={{ marginTop: 10 }}
+                  onClick={() => setPanel('stock')}>
+            <Icon name="box" size={13} /> Stock Position
+          </button>
         </Pending>
       )}
 
-      {alerts?.available && method?.available && (
-        <ReorderMethodCard m={method} adjusted={alertItems.filter(i => i.adjusted).length}
-                           onEdit={() => setEditing({ id: null })} />
-      )}
-
       {alerts?.available && (
-        <div className="card card__pad">
-          <div className="card-h">
+        <div className="card card__pad" id="ro-list" style={{ scrollMarginTop: 12 }}>
+          <div className="card-h ro-head">
             <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-              Reorder Recommendations
+              What to Order
               <span className="count-pill">
-                {shown.length !== byClass.length
-                  ? <><b>{num(shown.length)}</b> of {num(byClass.length)}</>
-                  : <><b>{num(byClass.length)}</b> items</>}
+                {shown.length !== alertItems.length
+                  ? <><b>{num(shown.length)}</b> of {num(alertItems.length)}</>
+                  : <><b>{num(alertItems.length)}</b> items</>}
               </span>
+              <WhatIfGuide />
             </span>
-            <WhatIfGuide />
+            <span className="ro-toolbar">
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPanel('ahead')}
+                      title="What to order before enrollment, the start of term and Paskuhan">
+                <Icon name="cal" size={13} /> Plan Ahead
+              </button>
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPanel('stock')}
+                      title="Every counted item's stock and how long it lasts">
+                <Icon name="box" size={13} /> Stock Position
+              </button>
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPanel('method')}
+                      title="The formulas behind every figure here, their inputs and sources">
+                <Icon name="info" size={13} /> How It&rsquo;s Worked Out
+              </button>
+              <EditSettingsButton onClick={() => setEditing({ id: null })}
+                                  adjusted={alertItems.filter(i => i.adjusted).length} />
+            </span>
           </div>
 
           <div className="filter-row">
+            <div className="filter-field">
+              <label className="filter-field__label" htmlFor="ro-status">Show</label>
+              <SearchSelect id="ro-status" value={status} onChange={setStatus} minWidth={190}
+                            searchable={false}
+                            options={Object.entries(STATUS).map(([value, s]) => ({
+                              value, label: `${s.label} (${num(alertItems.filter(s.test).length)})`,
+                            }))} />
+            </div>
             <div className="filter-field filter-field--grow">
               <label className="filter-field__label" htmlFor="ro-search">Search</label>
               <input id="ro-search" type="search" value={q} placeholder="Item or supplier…"
                      onChange={e => setQ(e.target.value)} />
-            </div>
-            <div className="filter-field">
-              <label className="filter-field__label" htmlFor="ro-status">Status</label>
-              <SearchSelect id="ro-status" value={status} onChange={setStatus} minWidth={170}
-                            searchable={false}
-                            options={Object.entries(STATUS).map(([value, s]) => ({ value, label: s.label }))} />
             </div>
             <div className="filter-field">
               <label className="filter-field__label" htmlFor="ro-class">Class</label>
@@ -242,7 +330,7 @@ export default function Reorder({ filters }) {
                             searchable={suppliers.length > 10} placeholder="Search suppliers…"
                             options={[ALL_SUPPLIERS, ...suppliers].map(s => ({ value: s, label: s }))} />
             </div>
-            {filtering && (
+            {(narrowed || status !== 'reorder') && (
               <button type="button" className="btn btn--ghost btn--sm filter-row__clear" onClick={clearFilters}>
                 Clear
               </button>
@@ -250,10 +338,57 @@ export default function Reorder({ filters }) {
           </div>
 
           {shown.length === 0
-            ? <div className="empty">No item matches those filters.</div>
+            ? (
+              <div className="empty">
+                {status === 'reorder' && !narrowed
+                  ? <>Nothing needs reordering today: every counted item is above its Reorder Point.{' '}
+                    <button type="button" className="linkish" onClick={() => setStatus('All')}>Show every item</button></>
+                  : 'No item matches those filters.'}
+              </div>
+            )
             : <DataTable columns={alertColumns} data={shown} minWidth={1100} />}
+
+          {urgentFirst && due.length > 0 && (
+            <div className="order-total">
+              <span className="order-total__label">
+                Total to Order
+                <span className="order-total__note"> · {num(due.length)} item{due.length === 1 ? '' : 's'} across{' '}
+                  {num(dueSuppliers)} supplier{dueSuppliers === 1 ? '' : 's'} · most urgent first</span>
+              </span>
+              <span className="order-total__val">{num(summary.suggested_units_total)} units</span>
+            </div>
+          )}
         </div>
       )}
+
+      <OrderAheadModal open={panel === 'ahead'} onClose={() => setPanel(null)} onHistory={setHistory} />
+
+      {panel === 'stock' && (
+        <Modal open onClose={() => setPanel(null)} width={1060} title="Stock Position"
+               subtitle={`${num(items.length)} items with an inventory count`
+                 + (medianDos != null ? ` · the typical item's stock lasts ${Math.round(medianDos)} days at its recent rate` : '')}>
+          <div className="modal-grow">
+            {items.length === 0
+              ? <div className="empty">No inventory counts match this filter.</div>
+              : <DataTable columns={columns} data={items} minWidth={900} />}
+          </div>
+        </Modal>
+      )}
+
+      {panel === 'method' && method?.available && (
+        <Modal open onClose={() => setPanel(null)} width={900} title="How It's Worked Out"
+               subtitle="The four formulas behind every figure on this page. Each (i) shows its inputs, their values and where they come from.">
+          <div className="modal-grow">
+            <FormulaList m={method} />
+            <div className="btn-row" style={{ marginTop: 14 }}>
+              <EditSettingsButton onClick={() => { setPanel(null); setEditing({ id: null }); }}
+                                  adjusted={alertItems.filter(i => i.adjusted).length} />
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      <ItemHistory item={history} onClose={() => setHistory(null)} />
       <ReorderWhatIf item={whatIf} onClose={() => setWhatIf(null)} />
       <ReorderSettings open={!!editing} initialId={editing?.id ?? null}
                        items={alertItems.filter(i => i.policy_state === 'priced')}
@@ -265,21 +400,12 @@ export default function Reorder({ filters }) {
           <button type="button" className="btn btn--ink btn--sm" onClick={() => setSavedMsg(null)}>OK</button>
         </Modal>
       )}
-
-      <div className="card card__pad">
-        <div className="card-h">
-          <span className="section-h">Stock Position</span>
-          <span className="hint">
-            {items.length} items with an inventory count
-          </span>
-        </div>
-        {items.length === 0
-          ? <div className="empty">No inventory counts match this filter.</div>
-          : <DataTable columns={columns} data={items} minWidth={900} />}
-      </div>
     </div>
   );
 }
+
+/** 'Dec 25' */
+const shortDate = iso => new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 /* ---------------------------------------------------- reorder settings */
 
@@ -295,26 +421,13 @@ const leadGroup = c => LEAD_GROUP[c] ?? (String(c).startsWith('measured') ? 'mea
 
 const peso = v => `₱${Number(v).toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
 
-const FORMULAS_OPEN_KEY = 'reorder.formulasOpen';
-
-/** "Reorder Formulas & Calculation": the four formulas behind the page, each
- *  with an (i) that opens its inputs, their values and where they come from,
- *  read live from the pipeline (GET /api/reorder/method) so the numbers
- *  follow every run. The card starts folded (opening it is remembered per
- *  browser), and is
- *  also where the store sets its own figures for an item (Edit Reordering
- *  Settings), next to the assumptions they replace. */
-function ReorderMethodCard({ m, adjusted, onEdit }) {
-  const [open, setOpen] = useState(() => {
-    // Folded unless this browser left it open: the formulas are reference,
-    // not something read on every visit.
-    try { return localStorage.getItem(FORMULAS_OPEN_KEY) === '1'; } catch { return false; }
-  });
-  const toggle = e => {
-    setOpen(e.currentTarget.open);
-    try { localStorage.setItem(FORMULAS_OPEN_KEY, e.currentTarget.open ? '1' : '0'); } catch { /* private window */ }
-  };
-
+/** How It's Worked Out: the four formulas behind the page, each with an (i)
+ *  that opens its inputs, their values and where they come from, read live
+ *  from the pipeline (GET /api/reorder/method) so the numbers follow every
+ *  run. Shown in a dialog from the What to Order card (it was a folded card
+ *  of its own), with Edit Reordering Settings beside it, next to the
+ *  assumptions those settings replace. */
+function FormulaList({ m }) {
   // Lead times, one line per number of days: "18 days: embroidered shirts,
   // non-apparel, everything else (222 items)".
   const byDays = {};
@@ -327,17 +440,6 @@ function ReorderMethodCard({ m, adjusted, onEdit }) {
   const q = Math.round((m.buffer_quantile ?? 0.8) * 100);
 
   return (
-    <details className="card card__pad collapse collapse--card formulas-card" open={open} onToggle={toggle}>
-      <summary>
-        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-          Reorder Formulas &amp; Calculation
-          {adjusted > 0 && <span className="count-pill"><b>{num(adjusted)}</b> adjusted</span>}
-        </span>
-        {/* In the summary so it stays in reach while the card is folded;
-            preventDefault keeps its click from folding the card too. */}
-        <EditSettingsButton onClick={e => { e.preventDefault(); onEdit(); }} />
-      </summary>
-
       <div className="formula-list">
         <Formula name="Reorder Point" text="average daily demand × lead time + Safety Stock">
           <MethodBlock title="Reorder Point (ROP)" formula="ROP = average daily demand × lead time + Safety Stock"
@@ -422,7 +524,6 @@ function ReorderMethodCard({ m, adjusted, onEdit }) {
         </MethodBlock>
         </Formula>
       </div>
-    </details>
   );
 }
 
@@ -470,12 +571,14 @@ function MethodRow({ input, value, children }) {
 }
 
 /** Opens Edit reordering settings (ReorderSettings). Black, as the app's
- *  actions are, so it is not read as an explanation like the formulas' (i). */
-function EditSettingsButton({ onClick }) {
+ *  actions are, so it is not read as an explanation like the formulas' (i).
+ *  `adjusted` counts the items already using saved settings. */
+function EditSettingsButton({ onClick, adjusted = 0 }) {
   return (
     <button type="button" className="btn btn--ink btn--sm settings-btn" onClick={onClick}
             title="Set an item's lead time, Safety Stock or costs. Saved, unlike What if.">
-      <Icon name="pencil" size={13} /> Edit Reordering Settings
+      <Icon name="pencil" size={13} /> Edit Settings
+      {adjusted > 0 && <span className="settings-btn__n" title={`${adjusted} adjusted`}>{num(adjusted)}</span>}
     </button>
   );
 }
@@ -508,129 +611,6 @@ function WhatIfGuide() {
         ))}
       </div>
     </InfoTip>
-  );
-}
-
-/* ------------------------------------------------------------- advisory */
-
-/** "What do we buy today, and how many."
- *
- *  The tables further down are the evidence; this is the answer. It exists
- *  because the screen used to open with a formula reference and a 208-row
- *  table, which is the right material for the write-up and the wrong thing to
- *  hand someone who has to place an order this morning.
- *
- *  Built from the Batch Sales Report's markup on purpose - the same dark
- *  header bar, `.tbl` item table and gold total bar. Those two screens are the
- *  pair of things the store actually acts on (what to buy, what was sold), so
- *  they should read the same way. The title and supplier count sit inside the
- *  dark bar rather than in a card above it, so the whole advisory is one card.
- *  `.report-items` caps the body at ten rows and scrolls with the header
- *  pinned, exactly as it does on the report.
- *
- *  The quantity is the backend's `suggested_order_qty` (an order-up-to level:
- *  reorder point + one review period of demand), NOT EOQ. See the endpoint's
- *  ORDER_QTY_NOTE - under the provisional cost inputs EOQ comes out larger
- *  than a year of demand for 204 of 208 SKUs, so it would tell staff to buy
- *  years of stock. EOQ stays in the recommendations table below, flagged,
- *  rather than being quietly dropped. That note, and the count of items with
- *  no stock figure at all, are still on the API (`summary.order_qty_note`,
- *  `summary.no_stock_count`) - they are just not printed under this table. */
-function ReorderAdvice({ items, summary }) {
-  // Most urgent first: least days of cover left, then the fastest seller.
-  // Items already at zero all tie at 0 cover, so demand rate breaks it.
-  const due = items
-    .filter(i => i.needs_reorder)
-    .sort((a, b) =>
-      (a.days_cover_remaining ?? 0) - (b.days_cover_remaining ?? 0)
-      || (b.avg_daily_demand ?? 0) - (a.avg_daily_demand ?? 0));
-
-  if (due.length === 0) {
-    return (
-      <div className="card card__pad">
-        <div className="card-h">
-          <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-            <Icon name="check" size={15} /> Nothing needs reordering today
-          </span>
-        </div>
-        <div className="hint">
-          Every item with a stock count is above its Reorder Point.
-          {summary.no_stock_count > 0 && (
-            <> {num(summary.no_stock_count)} of {num(summary.priced_skus)} priced items have no stock count,
-            so they could not be checked — record counts in the Tally Interface to include them.</>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="card card__pad">
-      {/* An ordinary card header and an ordinary table. This card used to be
-          built from the Batch Report's markup - a black title bar and a solid
-          gold total bar - which made the one screen a person reads every
-          morning the loudest thing in the app. The only thing that keeps a
-          tint now is the total, because it is the only figure here that is a
-          conclusion rather than a row of data. */}
-      <div className="card-h">
-        <span className="section-h" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <Icon name="alert" size={15} /> Priority Items to Reorder
-        </span>
-        <span className="hint">
-          Most Urgent First · {num(summary.suppliers_affected)}{' '}
-          Supplier{summary.suppliers_affected === 1 ? '' : 's'} Affected
-        </span>
-      </div>
-
-      <div className="report-items">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th style={{ width: 46 }}>#</th>
-              <th>Item</th>
-              <th>Supplier</th>
-              <th className="num">On Hand</th>
-              <th className="num">Reorder Point</th>
-              <th className="num">Order</th>
-            </tr>
-          </thead>
-          <tbody>
-            {due.map((i, n) => (
-              <tr key={i.product_id}>
-                {/* The rank is the sort made visible. The list is already in
-                    urgency order, but a reader scrolling a scrolled body has
-                    no other way to tell where in that order they are. */}
-                <td>
-                  <span className={'rank' + (n < 3 ? ' is-top' : '')}>{n + 1}</span>
-                </td>
-                <td className="strong">
-                  <span className="cell-trunc" style={{ '--trunc': '340px' }} title={i.item_name}>
-                    {i.item_name}
-                  </span>
-                </td>
-                <td>
-                  <span className="cell-trunc" style={{ '--trunc': '240px' }} title={i.supplier_name || 'Unattributed'}>
-                    {i.supplier_name || <span className="muted">Unattributed</span>}
-                  </span>
-                </td>
-                <td className="num">{num(i.current_stock)}</td>
-                <td className="num">{num(i.reorder_point)}</td>
-                <td className="num report-order">{num(i.suggested_order_qty)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="order-total">
-        <span className="order-total__label">
-          Total to Order
-          <span className="order-total__note"> · {num(due.length)} item{due.length === 1 ? '' : 's'} across{' '}
-          {num(summary.suppliers_affected)} supplier{summary.suppliers_affected === 1 ? '' : 's'}</span>
-        </span>
-        <span className="order-total__val">{num(summary.suggested_units_total)} units</span>
-      </div>
-    </div>
   );
 }
 

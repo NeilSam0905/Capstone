@@ -56,6 +56,18 @@ export const usDate = d => {
   return m ? `${m[2]}/${m[3]}/${m[1]}` : d;
 };
 
+/** A date range for reading: { start, end } ISO -> 'Jan 12–16, 2027',
+ *  'Dec 17, 2026', or 'Dec 30, 2026 – Jan 2, 2027'. Display only. */
+export const windowDates = ({ start, end }) => {
+  const day = (iso, opts) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', opts);
+  const full = { month: 'short', day: 'numeric', year: 'numeric' };
+  if (!end || start === end) return day(start, full);
+  if (start.slice(0, 4) !== end.slice(0, 4)) return `${day(start, full)} – ${day(end, full)}`;
+  return start.slice(0, 7) === end.slice(0, 7)
+    ? `${day(start, { month: 'short', day: 'numeric' })}–${+end.slice(8)}, ${end.slice(0, 4)}`
+    : `${day(start, { month: 'short', day: 'numeric' })} – ${day(end, full)}`;
+};
+
 /** '2025-08-21T19:07:53' -> '08/21/2025 19:07'. Same rules as usDate. */
 export const usDateTime = d => {
   if (typeof d !== 'string') return d ?? '';

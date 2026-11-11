@@ -36,6 +36,7 @@ from flask import Flask, Response, g, jsonify, request
 from flask_cors import CORS
 
 import advisory_outlook
+import season_ahead
 import auth
 import batch_export
 import batch_pdf
@@ -769,7 +770,16 @@ def get_product_movement(product_id):
          WHERE f.product_id = ? AND {dbmod.SALE_ONLY} AND f.quantity_sold > 0
          GROUP BY 1
     """, (product_id,))}
-    months = [{"month": m, "units": sold[m]["units"] if m in sold else 0} for m in tallied]
+    # The months with a rush in them (enrollment, the first two weeks of the
+    # first term), so the chart can show whether the item sells to the
+    # seasons - the reorder side's history (the adviser, Nov 2026).
+    busy = {}
+    for kind, runs in season_ahead.busy_runs(c).items():
+        for s, e in runs:
+            for m in {s[:7], e[:7]}:
+                busy.setdefault(m, kind)
+    months = [{"month": m, "units": sold[m]["units"] if m in sold else 0, "busy": busy.get(m)}
+              for m in tallied]
     return jsonify({
         **product,
         "months": months,
@@ -1494,6 +1504,42 @@ def get_reorder():
             },
         },
     })
+
+
+@app.get("/api/reorder/season")
+def get_reorder_season():
+    """What to order ahead of each upcoming busy period - enrollment, the
+    start of the first term - item by item: stock expected when it starts,
+    what it needs, how many to order and the day to order by
+    (season_ahead.py). Windows past the published school calendar are last
+    year's, a year on, and marked `estimated`."""
+    c = con()
+    items = _reorder_items(c)
+    if items is None:
+        return jsonify({"available": False,
+                        "reason": "Reorder points have not been calculated yet - choose Run Analytics."})
+    return jsonify({"available": True, **season_ahead.season_plan(
+        c, items, date.today().isoformat(), events=_campus_events(c))})
+
+
+def _campus_events(c):
+    """Every campus event on record, past and future, as [{name, start, end}]:
+    the published calendar's event days (calendar_ranges.csv, read-only) and
+    the ones staff logged (Event_Log). season_ahead matches each upcoming one
+    with its earlier years."""
+    out = []
+    try:
+        with open(DATA_DIR / "calendar_ranges.csv", newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                if (row.get("flag") or "").strip() == "is_event_day" and row.get("event_name"):
+                    out.append({"name": re.sub(r"\(date uncertain[^)]*\)", "", row["event_name"]).strip(),
+                                "start": row["start_date"].strip(), "end": row["end_date"].strip()})
+    except (OSError, ValueError, KeyError):
+        pass
+    out += [{"name": r["event_name"], "start": r["event_date"], "end": r["event_date"]}
+            for r in dbmod.rows(c, "SELECT event_date, event_name FROM Event_Log "
+                                   "WHERE event_date IS NOT NULL AND event_name IS NOT NULL")]
+    return out
 
 
 @app.get("/api/reorder/<int:product_id>/whatif")

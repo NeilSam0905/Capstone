@@ -495,7 +495,9 @@ export function DailyWindowBars({ data, refValue, height = 170 }) {
  *  A zero is drawn as a short stub on the baseline rather than nothing, so a
  *  run of months with no sales reads as a flat row of stubs - the item did
  *  not move - instead of an empty chart. `data` is [{ label, value, tip }],
- *  oldest first; `tip` is the hover's first line (the full month). */
+ *  oldest first; `tip` is the hover's first line (the full month). A datum
+ *  with `mark` (a busy-season month) is drawn in full colour and, once any
+ *  is marked, the rest lighter; its `note` is added to the hover. */
 export function MonthBars({ data, height = 150, color = 'var(--accent)', unit = 'units', ariaLabel }) {
   const [hover, setHover] = useState(null);
   const svgRef = useRef(null);
@@ -516,6 +518,7 @@ export function MonthBars({ data, height = 150, color = 'var(--accent)', unit = 
   const labelEvery = Math.ceil(n / Math.max(2, Math.floor(plotW / 52)));
   // Counted back from the newest month, so the latest one always has a label.
   const labelled = i => (n - 1 - i) % labelEvery === 0;
+  const anyMarked = data.some(d => d.mark);
 
   function onMove(e) {
     const local = svgPoint(svgRef.current, e.clientX, e.clientY);
@@ -543,7 +546,8 @@ export function MonthBars({ data, height = 150, color = 'var(--accent)', unit = 
         {data.map((d, i) => (
           <g key={d.label + i} opacity={hover && hover.i !== i ? 0.55 : 1}>
             {d.value > 0
-              ? <rect x={xL(i)} y={y(d.value)} width={bw} height={Math.max(1, base - y(d.value))} rx="2" fill={color} />
+              ? <rect x={xL(i)} y={y(d.value)} width={bw} height={Math.max(1, base - y(d.value))} rx="2" fill={color}
+                      fillOpacity={anyMarked && !d.mark ? 0.4 : 1} />
               : <rect x={xL(i)} y={base - 3} width={bw} height={3} rx="1" fill="var(--muted)" fillOpacity="0.45" />}
           </g>
         ))}
@@ -554,7 +558,7 @@ export function MonthBars({ data, height = 150, color = 'var(--accent)', unit = 
       </svg>
       {h && hover.left != null && (
         <div className="charttip-wrap" style={{ left: `${hover.left}px` }}>
-          <ChartTip label={h.tip ?? h.label} value={`${num(h.value)} ${unit}`} />
+          <ChartTip label={h.tip ?? h.label} value={`${num(h.value)} ${unit}`} sub={h.note} />
         </div>
       )}
     </div>

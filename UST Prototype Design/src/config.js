@@ -76,6 +76,10 @@ export function inspectEmbedUrl(url) {
  *  (App.jsx), so both sides read the id from here. */
 export const ADVISORIES_ANCHOR = 'event-advisories';
 
+/** The sessionStorage key the Overview's "Plan ahead" sets before switching
+ *  to Reorder Alerts, which then opens on its Plan Ahead dialog and clears it. */
+export const ORDER_AHEAD_ANCHOR = 'order-ahead';
+
 /** sessionStorage key for the Tally Interface's open tab. The Tally Interface
  *  remembers its tab under it, and the Overview's "Recount it" writes 'stock'
  *  to it before switching views, so both read the key from here. */

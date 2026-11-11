@@ -234,11 +234,18 @@ function AdvisoryCard({ advisory, setPage }) {
   );
 }
 
+const BUSY_MONTH = { enrollment: 'Enrollment month', term_start: 'Start of the first term' };
+
 /** One item's movement, opened under its row in an advisory: units sold in
  *  every month the store tallied sales, and the units on hand at every
  *  inventory count. For a non-moving item that is a flat row of zero stubs
- *  over a stock that never went down - the advisory's claim, shown. */
-function ItemMovement({ productId }) {
+ *  over a stock that never went down - the advisory's claim, shown.
+ *
+ *  Also the reorder side's item history (the adviser, Nov 2026: show an
+ *  item's past movement, to account for the seasons): the months with a rush
+ *  in them - enrollment, the start of the first term - are drawn in full
+ *  colour, the rest lighter, with what the item sells in each kind of month. */
+export function ItemMovement({ productId }) {
   const { data, error } = useData(() => getProductMovement(productId), [productId]);
   if (error) return <div className="hint">Could not load this item&rsquo;s sales: {String(error.message ?? error)}</div>;
   if (!data) return <Loading label="Loading the item's sales…" />;
@@ -267,13 +274,32 @@ function ItemMovement({ productId }) {
       Counted {num(stock.length)} times since {longMonth(stock[0].month)}.</>;
   }
 
+  // What the item sells in a rush month against any other tallied month.
+  const busy = months.filter(m => m.busy), quiet = months.filter(m => !m.busy);
+  const avg = list => (list.length ? list.reduce((s, m) => s + m.units, 0) / list.length : null);
+  const busyAvg = avg(busy), quietAvg = avg(quiet);
+  const seasonLine = data.total_units > 0 && busy.length && quiet.length && quietAvg > 0
+    ? <>In enrollment and start-of-term months it sold <b>{num(Math.round(busyAvg))}</b> a month on average,
+      against {num(Math.round(quietAvg))} in other months ({(busyAvg / quietAvg).toFixed(1)}×).</>
+    : null;
+
   return (
     <div className="advisory__movement stagger stagger--settle">
       <div>
         <span className="advisory__basis-label">Units sold each month</span>
         <div className="hint">{salesLine}</div>
-        <MonthBars data={months.map(m => ({ label: shortMonth(m.month), tip: longMonth(m.month), value: m.units }))}
+        {seasonLine && <div className="hint">{seasonLine}</div>}
+        <MonthBars data={months.map(m => ({
+                     label: shortMonth(m.month), tip: longMonth(m.month), value: m.units,
+                     mark: !!m.busy, note: BUSY_MONTH[m.busy],
+                   }))}
                    unit="sold" ariaLabel={`Units of ${data.item_name} sold each month`} />
+        {busy.length > 0 && data.total_units > 0 && (
+          <div className="dwbars-legend">
+            <span><i style={{ background: 'var(--accent)' }} />Enrollment or start-of-term month</span>
+            <span><i style={{ background: 'var(--accent)', opacity: 0.4 }} />Other months</span>
+          </div>
+        )}
         {data.total_units === 0 && months.length > 0 && (
           <div className="dwbars-legend">
             <span><i style={{ background: 'var(--muted)', opacity: 0.45, height: 3 }} />No units sold that month</span>

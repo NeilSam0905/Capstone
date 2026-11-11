@@ -14,7 +14,9 @@ import ActiveThumb from '../components/ActiveThumb';
 import InfoTip from '../components/InfoTip';
 import SearchSelect from '../components/SearchSelect';
 import { AdvisoriesPanel, AdvisoriesJump } from '../components/Advisories';
-import { ADVISORIES_ANCHOR, TALLY_TAB_KEY } from '../config';
+import { OrderAheadLine } from '../components/OrderAhead';
+import ItemHistory from '../components/ItemHistory';
+import { ADVISORIES_ANCHOR, ORDER_AHEAD_ANCHOR, TALLY_TAB_KEY } from '../config';
 import { num, shortMonth, longMonth, usDate, peso, pesoK, FSN_TONE, FSN_LABEL } from '../lib/format';
 import { ALL_CATEGORIES, ALL_SUPPLIERS } from '../services/dataService';
 
@@ -45,6 +47,8 @@ const DEFAULT_SALE_MONTHS = { month: null, compare: null };
 
 export default function Overview({ filters, setPage, setView, user, saleMonths = DEFAULT_SALE_MONTHS }) {
   const [productsOpen, setProductsOpen] = useState(false);
+  // The item whose sales history is open (from Order These First), or null.
+  const [history, setHistory] = useState(null);
   const advisoriesRef = useRef(null);
   const { data: products, loading } = useData(() => getProducts(filters), [filters], [],
     { key: `overview:products:${filters.supplier}|${filters.category}|${filters.dateRange}|${filters.rangeFrom}|${filters.rangeTo}` });
@@ -154,9 +158,17 @@ export default function Overview({ filters, setPage, setView, user, saleMonths =
           in stock. The uncounted items open from the stock check above. */}
       <div className="grid-2">
         <OrderFirst due={due} showSupplier={showSupplier} setPage={setPage}
-                    latestCount={latestCount} recount={recount} />
+                    latestCount={latestCount} recount={recount} onHistory={setHistory} />
         <TopSellers alertById={alertById} categoryOf={categoryOf} onBrowse={() => setProductsOpen(true)} />
       </div>
+
+      <ItemHistory item={history} onClose={() => setHistory(null)}>
+        <div className="btn-row" style={{ marginTop: 14 }}>
+          <button className="btn btn--ink btn--sm" onClick={() => { setHistory(null); setPage?.('reorder'); }}>
+            Open Reorder Alerts <Icon name="arrow" size={12} />
+          </button>
+        </div>
+      </ItemHistory>
 
       {/* Advisories — calendar-contextual, driven by real data. The id is
           what the topbar's Advisories button scrolls to on this page
@@ -223,8 +235,18 @@ function ReorderHero({ alerts, due, nearRop, groups, latestCount, salesThrough, 
     );
   }
 
+  // The check, and under it the next busy period and what it asks for (the
+  // adviser, Nov 2026: an actionable trigger ahead of a season), which opens
+  // Reorder Alerts on its Order Ahead card.
+  const planAhead = () => {
+    try { sessionStorage.setItem(ORDER_AHEAD_ANCHOR, '1'); } catch { /* opens at the top */ }
+    setPage?.('reorder');
+  };
   const check = (
-    <StockCheck groups={groups} latestCount={latestCount} salesThrough={salesThrough} onShowGroup={onShowGroup} />
+    <>
+      <StockCheck groups={groups} latestCount={latestCount} salesThrough={salesThrough} onShowGroup={onShowGroup} />
+      <OrderAheadLine onOpen={setPage ? planAhead : null} />
+    </>
   );
 
   if (due.length === 0) {
@@ -1037,8 +1059,10 @@ function StockGroupModal({ group, onClose, groups, revenueOf, salesInView, categ
 /* -------------------------------------------------------------- actions */
 
 /** The first few items to order, most urgent first, with the quantity. The
- *  full list, with how each figure was worked out, is Reorder Alerts. */
-function OrderFirst({ due, showSupplier, setPage, latestCount, recount }) {
+ *  full list, with how each figure was worked out, is Reorder Alerts. A row
+ *  opens the item's sales history (`onHistory`), to check the order against
+ *  how it sold in past seasons. */
+function OrderFirst({ due, showSupplier, setPage, latestCount, recount, onHistory }) {
   const rows = due.slice(0, SHORT_LIST_ROWS);
   const countMonth = latestCount ? longMonth(latestCount.slice(0, 7)) : null;
   // step5 marks every reorder point provisional while lead times are
@@ -1073,7 +1097,8 @@ function OrderFirst({ due, showSupplier, setPage, latestCount, recount }) {
               </thead>
               <tbody className="stagger">
                 {rows.map(a => (
-                  <tr key={a.product_id} className="is-clickable" onClick={() => setPage?.('reorder')}>
+                  <tr key={a.product_id} className="is-clickable" title="Show its sales history"
+                      onClick={() => (onHistory ? onHistory(a) : setPage?.('reorder'))}>
                     <td className="strong overview-order__item" title={a.item_name}>{a.item_name}</td>
                     {showSupplier && <td className="overview-order__supplier">{a.supplier_name}</td>}
                     <td className="num">{num(a.current_stock)}</td>
@@ -1085,7 +1110,7 @@ function OrderFirst({ due, showSupplier, setPage, latestCount, recount }) {
           </div>
         )}
       <div className="hint" style={{ marginTop: 10 }}>
-        Most urgent first.
+        Most urgent first. Click an item for its sales history.
         {recount && rows.length > 0 && (
           <> Stock wrong?{' '}
             <button type="button" className="linkish" onClick={recount}>Recount it</button>.</>
