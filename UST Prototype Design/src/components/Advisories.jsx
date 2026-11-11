@@ -531,7 +531,7 @@ export function AdvisoriesModal({ open, onClose, page, setPage }) {
   return (
     <Modal open onClose={onClose} width={960} title="Advisories"
            subtitle={first.length && ordered.some(a => first.includes(a.type))
-             ? 'What to stock, promote or clear out - the ones about this page first.'
+             ? 'What to stock, promote or clear out.'
              : 'What to stock, promote or clear out, from the latest analytics update.'}>
       <div className="modal-grow">
         <div className="advisories-scroll">
