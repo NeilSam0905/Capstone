@@ -3311,6 +3311,43 @@ def _category_stock_advice(product_ids, stats, reorder, total):
     return out, "covered"
 
 
+_store_stock_held = [None]               # [(key, value)], swapped in whole across threads
+
+
+def _store_stock_key():
+    """Changes whenever anything compute_stats or _reorder_items read could
+    have: the database (a commit lands in the -wal file, a checkpoint in the
+    main file - by this app or by the pipeline's own process), the inventory
+    workbook, and the date. An empty -wal is left out: every connection
+    creates one on opening and deletes it on closing, so its time moves on
+    every request while it holds nothing."""
+    parts = [date.today().isoformat()]
+    for path in (dbmod.DB_PATH, Path(f"{dbmod.DB_PATH}-wal"), dbmod.INVENTORY_CSV):
+        try:
+            st = path.stat()
+            parts.append((st.st_mtime_ns, st.st_size) if st.st_size else None)
+        except OSError:
+            parts.append(None)
+    return tuple(parts)
+
+
+def _store_stock(c):
+    """(compute_stats, _reorder_items by product_id) for the whole store, as
+    the forecast guidance reads them. Working them out takes over a second and
+    every item and category forecast needs the same answer, so it is kept
+    until the data under it changes (_store_stock_key) - which is what lets
+    the Demand Forecast page load every forecast up front. The callers only
+    read it."""
+    key = _store_stock_key()
+    held = _store_stock_held[0]
+    if held is None or held[0] != key:
+        stats, _ = catalog.compute_stats(c)
+        reorder = {i["product_id"]: i for i in (_reorder_items(c) or [])}
+        held = (key, (stats, reorder))
+        _store_stock_held[0] = held
+    return held[1]
+
+
 def _forecast_guidance(c, forecast, history, product_ids, single_item, rmse=None):
     """The forecast chart, read out in plain terms for whoever orders stock:
     how much to expect, against what has been selling, when the busy days
@@ -3349,8 +3386,7 @@ def _forecast_guidance(c, forecast, history, product_ids, single_item, rmse=None
     cal_start = max(today.isoformat(), start)
     cal_end = (date.fromisoformat(cal_start) + timedelta(days=GUIDANCE_DAYS - 1)).isoformat()
 
-    stats, _ = catalog.compute_stats(c)
-    reorder = {i["product_id"]: i for i in (_reorder_items(c) or [])}
+    stats, reorder = _store_stock(c)
     if single_item:
         stock, action = _item_stock_advice(product_ids[0], stats, reorder, rate, total, high, today)
     else:
@@ -3413,9 +3449,13 @@ def _model_metrics(c, scope, key):
     """Every offered model's overall walk-forward check for one item
     (scope 'item', key = product_id) or category (key = its name): the
     Demand Forecast page's comparison of models in the (i) by the Reliable
-    tag. [{id, label, recommended, made, n_obs, mae, mape, mase,
+    tag. [{id, label, recommended, made, n_obs, mae, mape, wape, mase,
     beats_naive_mae}] in the offered order; the figures are null for a model
-    Run Forecast has not made (or could not check) for this one."""
+    Run Forecast has not made (or could not check) for this one.
+
+    wape is the weighted percent error over the same past 30-day checks the
+    Actual vs Predicted dialog shows: total units missed / total units sold
+    x 100. Unlike mape, a period that sold very little cannot blow it up."""
     tables = _table_names(c)
     key_col = "product_id" if scope == forecast_models.ITEM else "forecast_category"
     main = {forecast_models.ITEM: "Result_Forecast_Metrics",
@@ -3431,9 +3471,18 @@ def _model_metrics(c, scope, key):
                 SELECT n_obs, mae, mape, {mase}, beats_naive_mae{extra} FROM {table}
                 WHERE {key_col} = ? AND period_scope = 'overall'""", (key,)):
             found[r.pop("model", None) or forecast_models.DEFAULTS[scope]] = r
+    wape = {}
+    if forecast_models.CHECK_TABLE in tables:
+        for r in dbmod.rows(c, f"""
+                SELECT model, SUM(ABS(pred_30d - actual_30d)) AS missed, SUM(actual_30d) AS sold
+                FROM {forecast_models.CHECK_TABLE}
+                WHERE scope = ? AND series_key = ? GROUP BY model""", (scope, str(key))):
+            if r["sold"]:
+                wape[r["model"]] = r["missed"] / r["sold"] * 100
     return [{"id": o["id"], "label": o["label"], "recommended": bool(o.get("recommended")),
              "made": o["id"] in found,
-             **(found.get(o["id"]) or dict.fromkeys(("n_obs", "mae", "mape", "mase", "beats_naive_mae")))}
+             **(found.get(o["id"]) or dict.fromkeys(("n_obs", "mae", "mape", "mase", "beats_naive_mae"))),
+             "wape": wape.get(o["id"]) if o["id"] in found else None}
             for o in forecast_models.OPTIONS[scope]]
 
 

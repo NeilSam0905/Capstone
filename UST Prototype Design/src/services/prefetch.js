@@ -11,14 +11,19 @@
  * never competes with the page actually on screen. Every write clears the
  * cache (dataService's clearApiCache), so it re-warms shortly after one.
  *
+ * Demand Forecast is warmed whole: every category's forecast and every
+ * forecast item's (only the items Run Forecast made one for - a few dozen),
+ * each on the model the page opens it on, so picking any of them is instant.
+ *
  * Not covered: a filter the user changes (each value is its own request) and
- * the per-item forecast (one per product - hundreds). Those load on demand.
+ * a model picked by hand from the forecast's model menu. Those load on demand.
  */
 import {
   getMeta, getMonths, getCategories, getSuppliers, getProducts, getMonthlyUnits,
   getStockPosition, getReorderAlerts, getAdvisories, getDecisionRules, getForecast,
-  getCategoryForecasts, getCategoryForecast, getBatchReport, onCacheCleared,
+  getCategoryForecasts, getCategoryForecast, getProductForecast, getBatchReport, onCacheCleared,
 } from './dataService';
+import { bestModelOf } from '../lib/bestModel';
 
 // Must match App.jsx's UNFILTERED - the filters every page starts on.
 const DEFAULT_FILTERS = {
@@ -56,7 +61,7 @@ async function run(gen) {
   await step(getReorderAlerts);
   await step(getAdvisories);
   await step(() => getDecisionRules());
-  await step(getForecast);
+  const forecastList = await step(getForecast);
 
   // Batch Sales Report opens on the latest month.
   const latest = Array.isArray(months) ? months[months.length - 1] : null;
@@ -65,12 +70,26 @@ async function run(gen) {
     await step(() => getBatchReport({ month: latest }, undefined));
   }
 
-  // Demand Forecast: every category's chart, so switching category is
-  // instant too. Last, because it is the largest batch.
+  // Demand Forecast: every category's chart, then every forecast item's, so
+  // switching category or item is instant too. Last, because it is the
+  // largest batch.
   const cats = await step(getCategoryForecasts);
   for (const r of cats?.available ? cats.data.categories : []) {
-    await step(() => getCategoryForecast(r.category));
+    await warmForecast(step, getCategoryForecast, r.category);
   }
+  for (const p of forecastList?.available ? forecastList.data.products : []) {
+    await warmForecast(step, getProductForecast, p.product_id);
+  }
+}
+
+/** One item's or category's forecast as the Demand Forecast page opens it
+ *  (Forecast.jsx's useRecommendedForecast): the plain request, whose
+ *  model_metrics say which model is recommended for it, then that model's
+ *  forecast too when it is not the store-wide one the plain request is. */
+async function warmForecast(step, load, id) {
+  const base = await step(() => load(id));
+  const best = bestModelOf(base?.data?.model_metrics);
+  if (best && !best.recommended) await step(() => load(id, best.id));
 }
 
 function schedule(delay) {

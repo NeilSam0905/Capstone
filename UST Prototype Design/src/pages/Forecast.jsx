@@ -13,6 +13,7 @@ import Icon from '../components/Icon';
 import InfoTip from '../components/InfoTip';
 import Modal from '../components/Modal';
 import { ALL_SUPPLIERS } from '../services/dataService';
+import { rankModels, bestModelOf } from '../lib/bestModel';
 
 const ALL_ITEMS = '__all__';
 
@@ -600,12 +601,16 @@ function ForecastPanel({ productId, itemName, forecastMeta, setPage, model, onMo
 
 /** Mean of `f` over `rows`, or null for none. */
 const meanOf = (rows, f) => (rows.length ? rows.reduce((s, r) => s + f(r), 0) / rows.length : null);
-/** MAPE in percent over the periods that sold something (the pipeline's rule:
- *  a period that sold nothing has no percentage). */
-const mapeOf = (rows, key) => meanOf(rows.filter(r => r.actual_30d > 0),
-  r => Math.abs(r[key] - r.actual_30d) / r.actual_30d * 100);
-// The manuscript's accuracy target: MAPE of 20% or lower.
-const MAPE_TARGET = 20;
+/** WAPE (weighted absolute percentage error) in percent: every period's miss
+ *  added up, over every unit that actually sold. Big periods count more than
+ *  small ones, so a period that sold very little cannot turn a small miss into
+ *  a huge percentage the way MAPE does. Null when nothing sold at all. */
+const wapeOf = (rows, key) => {
+  const sold = rows.reduce((s, r) => s + r.actual_30d, 0);
+  return sold > 0 ? rows.reduce((s, r) => s + Math.abs(r[key] - r.actual_30d), 0) / sold * 100 : null;
+};
+// The accuracy target, carried over from the manuscript's 20%-or-lower MAPE.
+const WAPE_TARGET = 20;
 
 /**
  * Actual vs Predicted (the adviser, Nov 2026): every past 30-day period the
@@ -616,7 +621,7 @@ const MAPE_TARGET = 20;
  * The periods are the walk-forward checks behind the Reliable tag and the
  * accuracy figures (the API's `checks`, saved by the same Run Forecast), so
  * the averages here are those figures: the typical miss is the model's MAE,
- * the percentage its MAPE. They follow the model dropdown.
+ * the percentage its WAPE. They follow the model dropdown.
  *
  * A dialog, opened from the forecast card's "Check Actual vs Predicted"
  * button beside Open Reorder Alerts, rather than a card of its own under it.
@@ -641,8 +646,8 @@ function ActualVsPredictedModal({ fd, title, onClose }) {
 
   const mae = meanOf(checks, r => Math.abs(r.pred_30d - r.actual_30d));
   const naiveMae = meanOf(checks, r => Math.abs(r.naive_30d - r.actual_30d));
-  const mape = mapeOf(checks, 'pred_30d');
-  const naiveMape = mapeOf(checks, 'naive_30d');
+  const wape = wapeOf(checks, 'pred_30d');
+  const naiveWape = wapeOf(checks, 'naive_30d');
   const closer = checks.filter(r => Math.abs(r.pred_30d - r.actual_30d) < Math.abs(r.naive_30d - r.actual_30d)).length;
 
   return frame(
@@ -654,12 +659,12 @@ function ActualVsPredictedModal({ fd, title, onClose }) {
           <span className="avp-stat__sub">per 30 days · repeating the last 30 days: {num(Math.round(naiveMae))}</span>
         </div>
         <div className="avp-stat">
-          <span className="avp-stat__label">MAPE · average % off</span>
-          <span className={`avp-stat__val ${mape != null && mape <= MAPE_TARGET ? 'is-ok' : 'is-crit'}`}>
-            {mape == null ? '—' : `${Math.round(mape)}%`}
+          <span className="avp-stat__label">WAPE · % of units sold missed</span>
+          <span className={`avp-stat__val ${wape != null && wape <= WAPE_TARGET ? 'is-ok' : 'is-crit'}`}>
+            {wape == null ? '—' : `${Math.round(wape)}%`}
           </span>
           <span className="avp-stat__sub">
-            target {MAPE_TARGET}% or lower · repeating the last 30 days: {naiveMape == null ? '—' : `${Math.round(naiveMape)}%`}
+            target {WAPE_TARGET}% or lower · repeating the last 30 days: {naiveWape == null ? '—' : `${Math.round(naiveWape)}%`}
           </span>
         </div>
         <div className="avp-stat">
@@ -891,10 +896,11 @@ function ForecastGuidance({ g, title, setPage, onCheck }) {
  * MASE, with the model on screen marked - so the reader sees whether another
  * model would have done better here.
  *
- * MAPE is shown, with a caution: on this dataset a 30-day period that sold
- * very little turns a small miss into a huge percentage, so it can read 100%+
- * for a forecast that is doing well (docs/DEGENERATE_FORECAST.md). That is
- * why the ranking is by MASE.
+ * The percent error is WAPE, not MAPE: on this dataset a 30-day period that
+ * sold very little turns a small miss into a huge MAPE, reading 100%+ for a
+ * forecast that is doing well (docs/DEGENERATE_FORECAST.md). WAPE weighs each
+ * period by what it sold, so that cannot happen; it can still pass 100% when
+ * the forecast is more than double what sold. The ranking stays by MASE.
  */
 function Reliability({ fd, model }) {
   if (fd.is_heuristic) {
@@ -914,17 +920,17 @@ function Reliability({ fd, model }) {
     );
   }
   const reliable = !!m.beats_naive_mae;
-  // The same MAPE the Actual vs Predicted dialog shows (from its periods),
-  // else the recorded check's. Red above the 20% target, green within it.
-  const mape = (fd.checks?.length ? mapeOf(fd.checks, 'pred_30d') : null) ?? m.mape;
+  // The same WAPE the Actual vs Predicted dialog shows (from its periods).
+  // Red above the 20% target, green within it.
+  const wape = fd.checks?.length ? wapeOf(fd.checks, 'pred_30d') : null;
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <span className={`tag tag--${reliable ? 'ok' : 'warn'}`}>{reliable ? 'Reliable' : 'Rough estimate'}</span>
-      {mape != null && (
-        <span className={`tag tag--${mape <= MAPE_TARGET ? 'ok' : 'crit'}`}
-              title={`Average % off over the past 30-day checks (target ${MAPE_TARGET}% or lower). `
+      {wape != null && (
+        <span className={`tag tag--${wape <= WAPE_TARGET ? 'ok' : 'crit'}`}
+              title={`Units missed as a share of units sold, over the past 30-day checks (target ${WAPE_TARGET}% or lower). `
                 + 'Check Actual vs Predicted shows each period.'}>
-          MAPE {Math.round(mape)}%
+          WAPE {Math.round(wape)}%
         </span>
       )}
       <InfoTip label="How reliable is this forecast?" width={540}>
@@ -937,32 +943,12 @@ function Reliability({ fd, model }) {
 const units = v => `${num(Math.round(v))} unit${Math.round(v) === 1 ? '' : 's'}`;
 const pctFmt = v => `${num(Math.round(v))}%`;
 
-/** Every model's check for this item or category (the API's model_metrics),
- *  lowest scaled miss first; models with no figures (not made yet, or too
- *  little history to check) at the end, in the offered order. Ranked by MASE
- *  rather than MAPE because the percentage swells on a period that sold very
- *  little. */
-function rankModels(rows) {
-  const scored = rows.filter(r => r.mase != null).sort((a, b) => a.mase - b.mase);
-  return [...scored, ...rows.filter(r => r.mase == null)];
-}
-
-/** The model recommended for one item or category: the lowest scaled miss
- *  (MASE) on its own past 30-day checks, from the API's model_metrics. Null
- *  when no model has been checked for it yet. Its `recommended` flag says
- *  whether it is also the store-wide model the rest of the dashboard uses. */
-function bestModelOf(metrics) {
-  const top = rankModels(metrics ?? [])[0];
-  return top?.mase != null && top.made ? top : null;
-}
-
 function ReliabilityDetail({ m, reliable, model, fd }) {
   const periods = `${num(m.n_obs)} past 30-day period${m.n_obs === 1 ? '' : 's'}`;
   const ofMonth = m.mean_actual_30d > 0 ? Math.round(m.mae / m.mean_actual_30d * 100) : null;
   const rows = rankModels(fd.model_metrics ?? []);
   const shownId = model ?? rows.find(r => r.recommended)?.id;
   const bestId = bestModelOf(fd.model_metrics)?.id ?? null;
-  const mapeSwells = rows.some(r => (r.mape ?? 0) > 100);
   const missing = rows.filter(r => !r.made).length;
   return (
     <>
@@ -999,8 +985,8 @@ function ReliabilityDetail({ m, reliable, model, fd }) {
             <thead>
               <tr>
                 <th>Model</th>
-                <th className="num" title="The miss as a share of what actually sold">
-                  Percent error<br /><span className="reliab__code">MAPE</span>
+                <th className="num" title="Units missed as a share of units actually sold">
+                  Percent error<br /><span className="reliab__code">WAPE</span>
                 </th>
                 <th className="num" title="The miss measured against a simple day-to-day guess">
                   Scaled miss<br /><span className="reliab__code">MASE</span>
@@ -1022,7 +1008,7 @@ function ReliabilityDetail({ m, reliable, model, fd }) {
                       </div>
                     )}
                   </td>
-                  <td className="num">{r.mape != null ? pctFmt(r.mape) : '—'}</td>
+                  <td className="num">{r.wape != null ? pctFmt(r.wape) : '—'}</td>
                   <td className="num">{r.mase != null ? r.mase.toFixed(2) : '—'}</td>
                 </tr>
               ))}
@@ -1038,11 +1024,11 @@ function ReliabilityDetail({ m, reliable, model, fd }) {
         </>
       )}
       <p className="hint">
-        <b>Percent error</b> is how far off the guess was, as a share of what actually sold. <b>Scaled
+        <b>Percent error</b> is all the units the guesses missed by, as a share of all the units that
+        actually sold, so a slow month cannot make it look worse than it is. <b>Scaled
         miss</b> is the same miss measured against a simple day-to-day guess, so items that sell a lot and
         items that sell a little can be compared fairly. Lower is better for both; models are ranked by
-        scaled miss{mapeSwells ? ', because percent error swells when a period sold very little' : ''}, and
-        the one with the lowest is Recommended.
+        scaled miss, and the one with the lowest is Recommended.
       </p>
     </>
   );
