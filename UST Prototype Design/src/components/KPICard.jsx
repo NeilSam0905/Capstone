@@ -11,14 +11,13 @@ import Icon from './Icon';
  *  purpose: this briefly carried a hover-revealed panel instead, which put
  *  the explanation behind a gesture that a touch screen does not have and a
  *  reader has no reason to try.
+ *
+ *  `aside` puts a second column beside the figure, behind a hairline, for a
+ *  wide tile that would otherwise be one number and empty space.
  */
-export default function KPICard({ label, value, sub, icon, tone, accent = false, onClick, linkLabel }) {
-  const inner = (
+export default function KPICard({ label, value, sub, icon, tone, accent = false, onClick, linkLabel, aside }) {
+  const main = (
     <>
-      <div className="kpi__top">
-        <span className="kpi__label">{label}</span>
-        {icon && <span className="kpi__icon"><Icon name={icon} size={17} /></span>}
-      </div>
       <div className={'kpi__val' + (tone ? ` is-${tone}` : '')}>{value}</div>
       {sub && <div className="kpi__sub">{sub}</div>}
       {onClick && (
@@ -28,8 +27,22 @@ export default function KPICard({ label, value, sub, icon, tone, accent = false,
       )}
     </>
   );
+  const inner = (
+    <>
+      <div className="kpi__top">
+        <span className="kpi__label">{label}</span>
+        {icon && <span className="kpi__icon"><Icon name={icon} size={17} /></span>}
+      </div>
+      {aside ? (
+        <div className="kpi__body">
+          <div className="kpi__main">{main}</div>
+          <div className="kpi__aside">{aside}</div>
+        </div>
+      ) : main}
+    </>
+  );
 
-  const cls = 'card kpi' + (accent ? ' is-accent' : '') + (onClick ? ' is-link' : '');
+  const cls = 'card kpi' + (accent ? ' is-accent' : '') + (onClick ? ' is-link' : '') + (aside ? ' has-aside' : '');
 
   if (!onClick) return <div className={cls}>{inner}</div>;
   return (
@@ -38,4 +51,16 @@ export default function KPICard({ label, value, sub, icon, tone, accent = false,
       {inner}
     </button>
   );
+}
+
+/** Figures for a tile's `aside`, one per line: [[value, label], …], the value
+ *  already formatted ('1,136', '₱1.53M'). Labelled figures rather than a
+ *  sentence, so the tile reads at a glance. */
+export function KpiStats({ stats }) {
+  return stats.map(([value, label]) => (
+    <div className="kpi-stat" key={label}>
+      <span className="kpi-stat__val">{value}</span>
+      <span className="kpi-stat__label">{label}</span>
+    </div>
+  ));
 }

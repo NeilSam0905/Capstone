@@ -188,10 +188,9 @@ function BatchSales({ filters, period, setPeriod }) {
 
       {/* Report header */}
       <div className="card card__pad">
-        <div className="card-h" style={{ marginBottom: 0, alignItems: 'flex-start' }}>
+        <div className="card-h" style={{ marginBottom: 0, alignItems: 'center' }}>
           <div>
-            <div className="section-title" style={{ fontSize: 16 }}>USTore Batch Sales Report</div>
-            <div className="hint" style={{ marginTop: 4 }}>For UST Purchasing Office and Finance Department</div>
+            <div className="section-title" style={{ fontSize: 24, lineHeight: 1.2 }}>USTore Batch Sales Report</div>
           </div>
           <div style={{ textAlign: 'right' }}>
             <div className="hint">Period</div>

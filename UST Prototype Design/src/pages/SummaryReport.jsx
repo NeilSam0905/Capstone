@@ -204,15 +204,10 @@ function Report({ report }) {
   return (
     <>
       <div className="card card__pad">
-        <div className="card-h" style={{ marginBottom: 0, alignItems: 'flex-start' }}>
+        <div className="card-h" style={{ marginBottom: 0, alignItems: 'center' }}>
           <div className="rpt-head__title">
             <span className="rpt-head__icon"><Icon name="file" size={22} /></span>
-            <div>
-              <div className="section-title" style={{ fontSize: 16 }}>USTore Summary Report</div>
-              <div className="hint" style={{ marginTop: 4 }}>
-                Sales and new items, for the people the store reports to
-              </div>
-            </div>
+            <div className="section-title" style={{ fontSize: 24, lineHeight: 1.2 }}>USTore Summary Report</div>
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontWeight: 800, fontSize: 14 }}>{p.label}</div>

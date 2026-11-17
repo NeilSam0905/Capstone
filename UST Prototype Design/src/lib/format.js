@@ -68,6 +68,18 @@ export const windowDates = ({ start, end }) => {
     : `${day(start, { month: 'short', day: 'numeric' })} – ${day(end, full)}`;
 };
 
+/** The same range with both ends written out in full: 'Dec 17 – Dec 18, 2026',
+ *  'Dec 30, 2026 – Jan 2, 2027', or 'Dec 17, 2026' for one day. For a tile,
+ *  where '17–18' is easy to misread as one date. Display only. */
+export const dateRange = ({ start, end }) => {
+  const day = (iso, opts) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', opts);
+  const full = { month: 'short', day: 'numeric', year: 'numeric' };
+  if (!end || start === end) return day(start, full);
+  return start.slice(0, 4) === end.slice(0, 4)
+    ? `${day(start, { month: 'short', day: 'numeric' })} – ${day(end, full)}`
+    : `${day(start, full)} – ${day(end, full)}`;
+};
+
 /** '2025-08-21T19:07:53' -> '08/21/2025 19:07'. Same rules as usDate. */
 export const usDateTime = d => {
   if (typeof d !== 'string') return d ?? '';

@@ -4,7 +4,7 @@ import {
   getSuppliers, getCategories, getMonths,
 } from '../services/dataService';
 import useData from '../hooks/useData';
-import KPICard from '../components/KPICard';
+import KPICard, { KpiStats } from '../components/KPICard';
 import { Loading } from '../components/Pending';
 import { HBars } from '../components/charts';
 import Modal from '../components/Modal';
@@ -451,9 +451,6 @@ function SectionLabel({ title, hint, children }) {
   );
 }
 
-/** '20 selling days': how many days a month has sales on, which differs a lot
- *  between months, so a total is not read as like for like. */
-const sellingDays = m => (m?.days ? `${num(m.days)} selling ${m.days === 1 ? 'day' : 'days'}` : null);
 /** ' (a, b)' from the parts that are set, or nothing. */
 const paren = parts => {
   const p = parts.filter(Boolean);
@@ -498,15 +495,12 @@ function PerformanceStep({ filters, saleMonths, dueByCategory, setPage, alertByI
     () => getOverviewPerformance(filters, undefined, compare ?? undefined, month ?? undefined),
     [filters.supplier, filters.category, compare, month]);
 
-  const label = hint => <SectionLabel title="Sale Overview" hint={hint} />;
-  if (!perf) return <>{label()}<div className="card card__pad"><Loading label="Adding up sales…" /></div></>;
-  if (!perf.available) return <>{label()}<div className="card card__pad"><div className="empty">{perf.reason}</div></div></>;
+  const label = <SectionLabel title="Sale Overview" />;
+  if (!perf) return <>{label}<div className="card card__pad"><Loading label="Adding up sales…" /></div></>;
+  if (!perf.available) return <>{label}<div className="card card__pad"><div className="empty">{perf.reason}</div></div></>;
 
   const cur = perf.latest_month, prev = perf.previous_month;
   const prevMonth = perf.compare_month ?? prev?.month;
-  const isLatest = cur.month === (perf.latest_tallied_month ?? cur.month);
-  const heading = `${longMonth(prevMonth)} vs ${longMonth(cur.month)}`
-    + (isLatest ? `${perf.latest_month_complete ? '' : ' so far'}, the latest tallied month` : '');
   const vsPrev = prev && change(cur.php, prev.php);
   const unpriced = perf.priced_unit_share == null ? 0 : 1 - perf.priced_unit_share;
 
@@ -545,44 +539,52 @@ function PerformanceStep({ filters, saleMonths, dueByCategory, setPage, alertByI
   const through = perf.latest_month_complete ? null : `through ${usDate(perf.history_end)}`;
   const moved = mover && mover.diff !== 0 ? mover : null;
   const stopped = perf.stopped_selling?.items ?? [];
-  const stoppedPhp = stopped.reduce((s, i) => s + i.previous_php, 0);
-  const stoppedNames = stopped.slice(0, 2).map(i => i.item_name).join(', ')
-    + (stopped.length > 2 ? ` and ${num(stopped.length - 2)} more` : '');
+  // Which categories the stopped items are in: the two with the most, then
+  // the rest as one line, so the tile says what kind of stock to check.
+  const stoppedCats = [...stopped.reduce((m, i) => {
+    const c = m.get(i.category) ?? { category: i.category, n: 0, php: 0 };
+    c.n += 1;
+    c.php += i.previous_php;
+    return m.set(i.category, c);
+  }, new Map()).values()].sort((a, b) => b.n - a.n || b.php - a.php);
+  const stoppedRest = stoppedCats.slice(2).reduce((s, c) => s + c.n, 0);
 
   return (
     <>
-      {label(heading)}
+      {label}
       <div className="grid-3">
         <KPICard
           label={prev ? `Sales, ${prevName} to ${curName}` : `Sales, ${longMonth(cur.month)}`}
           value={vsPrev == null ? pesoK(cur.php) : signedPct(vsPrev)}
           tone={vsPrev == null ? undefined : vsPrev >= 0 ? 'ok' : 'crit'}
-          sub={prev
-            ? `${pesoK(prev.php)} in ${prevName}${paren([sellingDays(prev)])}, `
-              + `${pesoK(cur.php)} in ${curName}${paren([sellingDays(cur), through])}`
-            : `No sales tallied in ${prevName}${paren([through])}`}
+          sub={prev ? undefined : `No sales tallied in ${prevName}${paren([through])}`}
+          aside={prev && <KpiStats stats={[[pesoK(prev.php), prevName], [pesoK(cur.php), curName]]} />}
           icon="trend"
         />
         <KPICard
           label={moved ? `Category that ${moved.diff < 0 ? 'fell' : 'grew'} most` : 'Nothing changed'}
           value={moved ? moved.category : '—'}
-          sub={moved
-            ? `${signedMoney(moved.diff)}`
-              + (moved.drivers?.length
-                ? `, mostly ${moved.drivers.map(d => `${d.item_name} (${signedMoney(d.diff)})`).join(' and ')}`
-                : '')
+          sub={moved ? undefined
             : prev ? `Every category sold the same as in ${prevName}` : `No sales tallied in ${prevName}`}
+          aside={moved && <KpiStats stats={[[signedMoney(moved.diff), `vs ${prevName}`]]} />}
           icon="chart"
           onClick={cats.length ? () => setCatsOpen(true) : undefined}
           linkLabel="See all categories"
         />
         <KPICard
           label={`Sold in ${prevName}, none in ${curName}`}
-          value={stopped.length ? `${num(stopped.length)} ${stopped.length === 1 ? 'item' : 'items'}` : 'None'}
+          value={stopped.length
+            ? <>{num(stopped.length)}<span className="kpi__unit">{stopped.length === 1 ? 'item' : 'items'}</span></>
+            : 'None'}
           tone={stopped.length ? 'crit' : undefined}
-          sub={stopped.length
-            ? `${money(stoppedPhp)} of sales in ${prevName}. Did they run out? ${stoppedNames}`
+          sub={stopped.length ? undefined
             : `Every item that sold ${perf.stopped_selling?.min_units ?? 5} or more in ${prevName} sold again.`}
+          aside={stopped.length > 0 && (
+            <KpiStats stats={[
+              ...stoppedCats.slice(0, 2).map(c => [num(c.n), c.category]),
+              ...(stoppedRest ? [[num(stoppedRest), stoppedCats.length > 3 ? 'in other categories' : 'in another category']] : []),
+            ]} />
+          )}
           icon="alert"
           onClick={stopped.length ? () => setStoppedOpen(true) : undefined}
           linkLabel="See the items"

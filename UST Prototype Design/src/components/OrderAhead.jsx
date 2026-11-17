@@ -72,7 +72,7 @@ export default function OrderAheadModal({ open, onClose, onHistory }) {
         </div>
         <div className="modal-grow">
           {tab === 'events'
-            ? <UpcomingEvents events={events} rules={data.rules}
+            ? <UpcomingEvents events={events}
                               onPlan={ev => {
                                 const i = windows.findIndex(x => x.kind === 'event' && x.label === ev.name
                                   && x.end === ev.end);
@@ -230,17 +230,12 @@ const EVENT_TAG = {
  *  years, so staff know what is coming. Only a Rush event gets an order plan
  *  (below, in the Busy Period list); the rest are for awareness, because a
  *  campus event is as likely to sell less than a regular day as more. */
-function UpcomingEvents({ events, rules, onPlan }) {
+function UpcomingEvents({ events, onPlan }) {
   if (!events.length) return null;
-  const rushOver = rules?.rush_lift ?? 1.5;
   return (
     <div className="ahead-events">
       <div className="ahead-events__h">
         <span className="advisory__basis-label" style={{ margin: 0 }}>Upcoming campus events</span>
-        <span className="hint">
-          Each past year: sales on the event and the day before, against a regular day. Rush means every tallied
-          year sold {rushOver}× or more ({rules?.min_rush_years ?? 2} years at least); only those are planned for.
-        </span>
       </div>
       <div className="tbl__scroll">
         <table className="tbl ahead-events__tbl">

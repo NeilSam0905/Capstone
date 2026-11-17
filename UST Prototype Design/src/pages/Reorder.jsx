@@ -4,7 +4,7 @@ import OrderAheadModal from '../components/OrderAhead';
 import ItemHistory from '../components/ItemHistory';
 import { ORDER_AHEAD_ANCHOR } from '../config';
 import useData from '../hooks/useData';
-import KPICard from '../components/KPICard';
+import KPICard, { KpiStats } from '../components/KPICard';
 import DataTable from '../components/DataTable';
 import Icon from '../components/Icon';
 import InfoTip from '../components/InfoTip';
@@ -13,7 +13,7 @@ import Pending, { Loading, PendingValue } from '../components/Pending';
 import ReorderWhatIf from '../components/ReorderWhatIf';
 import ReorderSettings from '../components/ReorderSettings';
 import Modal from '../components/Modal';
-import { num, usDate, windowDates, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, usDate, dateRange, FSN_TONE, FSN_LABEL } from '../lib/format';
 
 /** Fast, Slow, then Non-Moving: the order the recommendations table opens in. */
 const CLASS_ORDER = { F: 0, S: 1, N: 2 };
@@ -209,41 +209,55 @@ export default function Reorder({ filters }) {
 
   const due = alertItems.filter(i => i.needs_reorder);
   const dueSuppliers = new Set(due.map(i => i.supplier_name || '—')).size;
+  const nearSuppliers = new Set(alertItems.filter(i => i.approaching_rop)
+    .map(i => i.supplier_name || '—')).size;
+  const after = season?.available ? season.windows?.[1] : null;
 
   return (
     <div className="stack">
       <div className="grid-3">
         <KPICard
           label="Reorder Now"
-          value={summary ? num(summary.reorder_now) : <PendingValue />}
-          sub={summary
-            ? `${num(summary.suggested_units_total)} units from ${num(dueSuppliers)} supplier${dueSuppliers === 1 ? '' : 's'}`
-            : 'At or below the reorder point'}
+          value={summary ? <ItemCount n={summary.reorder_now} /> : <PendingValue />}
           icon="alert"
           tone={summary?.reorder_now ? 'crit' : undefined}
           onClick={summary?.reorder_now ? () => showStatus('reorder') : undefined}
           linkLabel="Show them"
+          aside={summary && (summary.reorder_now
+            ? <KpiStats stats={[
+                [num(summary.suggested_units_total), 'units to order'],
+                [num(dueSuppliers), dueSuppliers === 1 ? 'supplier' : 'suppliers'],
+              ]} />
+            : <span className="kpi-none">Nothing to order today</span>)}
         />
         <KPICard
           label="Approaching ROP"
-          value={summary ? num(summary.approaching_rop) : <PendingValue />}
-          sub="Close to it: add them to the next order from the same supplier"
+          value={summary ? <ItemCount n={summary.approaching_rop} /> : <PendingValue />}
           icon="bell"
           onClick={summary?.approaching_rop ? () => showStatus('approaching') : undefined}
           linkLabel="Show them"
+          aside={summary && (summary.approaching_rop
+            ? <KpiStats stats={[[num(nearSuppliers), nearSuppliers === 1 ? 'supplier' : 'suppliers']]} />
+            : <span className="kpi-none">None right now</span>)}
         />
         {next ? (
           <KPICard
             label="Next Busy Period"
-            value={next.kind === 'event' ? next.label.replace(/ Festivities$/, '') : next.label}
-            sub={`${windowDates(next)}${next.estimated ? ' (estimated)' : ''} · `
-              + (next.n_rush
-                ? `${num(next.n_rush)} item${next.n_rush === 1 ? '' : 's'} need extra, order by ${shortDate(next.earliest_order_by)}`
-                : 'the regular reorders cover it')}
+            value={busyName(next)}
+            sub={`${dateRange(next)}${next.estimated ? ' (estimated)' : ''}`}
             icon="cal"
             accent
             onClick={() => setPanel('ahead')}
             linkLabel="Plan ahead"
+            aside={after && (
+              <div className="kpi-after">
+                <span className="kpi-after__h">After that</span>
+                <span className="kpi-after__name">{busyName(after)}</span>
+                <span className="kpi-after__date">
+                  {dateRange(after)}{after.estimated ? ' (estimated)' : ''}
+                </span>
+              </div>
+            )}
           />
         ) : (
           <KPICard
@@ -404,8 +418,13 @@ export default function Reorder({ filters }) {
   );
 }
 
-/** 'Dec 25' */
-const shortDate = iso => new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+/** A tile's count with its unit beside it, smaller: '24 items'. */
+function ItemCount({ n }) {
+  return <>{num(n)}<span className="kpi__unit">{n === 1 ? 'item' : 'items'}</span></>;
+}
+
+/** A busy period's name for a tile: 'Paskuhan', not 'Paskuhan Festivities'. */
+const busyName = w => (w.kind === 'event' ? w.label.replace(/ Festivities$/, '') : w.label);
 
 /* ---------------------------------------------------- reorder settings */
 

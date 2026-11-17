@@ -367,6 +367,34 @@ html[data-chrome="light"] .nav__item.active { color: var(--accent-deep); }
 .step-next { margin-top: 10px; }
 .kpi__sub { font-size: 12px; color: var(--muted); font-weight: 500; }
 
+/* A tile with an `aside` (KPICard): the figure on the left, a second column
+   behind a hairline on the right; on a narrow tile the column drops below.
+   A link tile is a <button>, which centres its content vertically when the
+   row stretches it - made a flex column again so all three start at the top. */
+.kpi.has-aside { container-type: inline-size; }
+.kpi.is-link.has-aside { display: flex; flex-direction: column; justify-content: flex-start; }
+.kpi__body { display: flex; align-items: stretch; gap: 18px; }
+.kpi__main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.kpi__main .kpi__link { margin-top: 2px; }
+.kpi__aside {
+  flex: 0 1 auto; max-width: 56%; min-width: 0; padding-left: 18px; border-left: 1px solid var(--line-soft);
+  display: flex; flex-direction: column; justify-content: center; gap: 6px;
+}
+@container (max-width: 360px) {
+  .kpi__body { flex-direction: column; gap: 12px; }
+  .kpi__aside { max-width: none; padding: 12px 0 0; border-left: 0; border-top: 1px solid var(--line-soft); }
+}
+.kpi__unit { font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: 0; margin-left: 6px; }
+.kpi-stat { display: flex; align-items: baseline; gap: 7px; }
+.kpi-stat__val { font-size: 19px; font-weight: 800; letter-spacing: -.01em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.kpi-stat__label { font-size: 12px; font-weight: 500; color: var(--muted); }
+.kpi-none { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+.kpi-note { font-size: 13px; color: var(--text); font-weight: 600; line-height: 1.35; }
+.kpi-after { display: flex; flex-direction: column; gap: 3px; }
+.kpi-after__h { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.kpi-after__name { font-size: 16px; font-weight: 800; color: var(--ink); line-height: 1.2; }
+.kpi-after__date { font-size: 12px; color: var(--muted); font-weight: 500; }
+
 /* Tag (portal-style category chip) */
 .tag {
   display: inline-flex; align-items: center; gap: 5px;
