@@ -195,5 +195,51 @@
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "29ed8cbcc073d07852c0",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Dim_Product"
+              }
+            },
+            "Property": "Fast"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "4e9e2d4390e952c6bd49",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Dim_Product"
+              }
+            },
+            "Property": "Slow"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "3d6c966c0bd34c2d70ba",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Dim_Product"
+              }
+            },
+            "Property": "Non"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }

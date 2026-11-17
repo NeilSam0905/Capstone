@@ -61,7 +61,7 @@
                     "Column": {
                       "Expression": {
                         "SourceRef": {
-                          "Entity": "Fact_Sales"
+                          "Entity": "Dim_Product"
                         }
                       },
                       "Property": "product_id"
@@ -70,7 +70,7 @@
                   "Function": 5
                 }
               },
-              "queryRef": "CountNonNull(Fact_Sales.product_id)",
+              "queryRef": "CountNonNull(Dim_Product.product_id)",
               "nativeQueryRef": "Items",
               "displayName": "Items"
             }
@@ -211,5 +211,56 @@
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "4ad0449460e78c2d5d08",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Dim_Product"
+              }
+            },
+            "Property": "Group"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "391ed55db3cc7460ace2",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Dim_Product"
+              }
+            },
+            "Property": "category"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "41da47245081812e4403",
+        "field": {
+          "Aggregation": {
+            "Expression": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "Dim_Product"
+                  }
+                },
+                "Property": "product_id"
+              }
+            },
+            "Function": 5
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }

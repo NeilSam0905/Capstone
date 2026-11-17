@@ -557,16 +557,6 @@ cultureInfo en-US
 			            },
 			            "Weight": 0.727
 			          }
-			        },
-			        {
-			          "Upcoming Date": {
-			            "State": "Suggested",
-			            "Source": {
-			              "Type": "External",
-			              "Agent": "PowerBI.VisualColumnRename"
-			            },
-			            "Weight": 0.9
-			          }
 			        }
 			      ],
 			      "SemanticType": "Time"
@@ -1461,7 +1451,7 @@ cultureInfo en-US
 			          }
 			        },
 			        {
-			          "Period": {
+			          "Periods": {
 			            "State": "Suggested",
 			            "Source": {
 			              "Type": "External",
@@ -1471,7 +1461,7 @@ cultureInfo en-US
 			          }
 			        },
 			        {
-			          "Periods": {
+			          "Period": {
 			            "State": "Suggested",
 			            "Source": {
 			              "Type": "External",
@@ -11245,6 +11235,16 @@ cultureInfo en-US
 			            },
 			            "Weight": 0.727
 			          }
+			        },
+			        {
+			          "Data as of:": {
+			            "State": "Suggested",
+			            "Source": {
+			              "Type": "External",
+			              "Agent": "PowerBI.VisualColumnRename"
+			            },
+			            "Weight": 0.9
+			          }
 			        }
 			      ],
 			      "SemanticType": "Time"
@@ -11600,16 +11600,6 @@ cultureInfo en-US
 			            },
 			            "Weight": 0.739
 			          }
-			        },
-			        {
-			          "Cumulative Share": {
-			            "State": "Suggested",
-			            "Source": {
-			              "Type": "External",
-			              "Agent": "PowerBI.VisualColumnRename"
-			            },
-			            "Weight": 0.9
-			          }
 			        }
 			      ]
 			    },
@@ -11631,16 +11621,6 @@ cultureInfo en-US
 			          "cum % units": {
 			            "State": "Generated",
 			            "Weight": 0.75
-			          }
-			        },
-			        {
-			          "Cumulative Units": {
-			            "State": "Suggested",
-			            "Source": {
-			              "Type": "External",
-			              "Agent": "PowerBI.VisualColumnRename"
-			            },
-			            "Weight": 0.9
 			          }
 			        }
 			      ]
@@ -12148,9 +12128,114 @@ cultureInfo en-US
 			          }
 			        }
 			      ]
+			    },
+			    "fact_sale.entry_price_php": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Fact_Sales",
+			          "ConceptualProperty": "entry_price_php"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "entry price php": {
+			            "State": "Generated"
+			          }
+			        },
+			        {
+			          "entry_price_php": {
+			            "Type": "Noun",
+			            "State": "Generated",
+			            "Weight": 0.99
+			          }
+			        }
+			      ]
+			    },
+			    "dim_product.listed_90_day": {
+			      "Definition": {
+			        "Binding": {
+			          "ConceptualEntity": "Dim_Product",
+			          "ConceptualProperty": "Listed 90+ Days"
+			        }
+			      },
+			      "State": "Generated",
+			      "Terms": [
+			        {
+			          "listed 90+ day": {
+			            "State": "Generated"
+			          }
+			        }
+			      ]
 			    }
 			  },
 			  "Relationships": {
+			    "fact_sale_has_cum__units_supplier": {
+			      "Binding": {
+			        "ConceptualEntity": "Fact_Sales"
+			      },
+			      "State": "Generated",
+			      "Roles": {
+			        "fact_sale": {
+			          "Target": {
+			            "Entity": "fact_sale"
+			          }
+			        },
+			        "fact_sale.cum__units_supplier": {
+			          "Target": {
+			            "Entity": "fact_sale.cum__units_supplier"
+			          }
+			        }
+			      },
+			      "Phrasings": [
+			        {
+			          "Attribute": {
+			            "Subject": {
+			              "Role": "fact_sale"
+			            },
+			            "Object": {
+			              "Role": "fact_sale.cum__units_supplier"
+			            }
+			          },
+			          "State": "Generated",
+			          "Weight": 0.99,
+			          "ID": "fact_sales_have_cum__units_supplier"
+			        }
+			      ]
+			    },
+			    "dim_product_has_fact_sale_cum__units_supplier": {
+			      "Binding": {
+			        "ConceptualEntity": "Dim_Product"
+			      },
+			      "State": "Generated",
+			      "Roles": {
+			        "dim_product": {
+			          "Target": {
+			            "Entity": "dim_product"
+			          }
+			        },
+			        "fact_sale.cum__units_supplier": {
+			          "Target": {
+			            "Entity": "fact_sale.cum__units_supplier"
+			          }
+			        }
+			      },
+			      "Phrasings": [
+			        {
+			          "Attribute": {
+			            "Subject": {
+			              "Role": "dim_product"
+			            },
+			            "Object": {
+			              "Role": "fact_sale.cum__units_supplier"
+			            }
+			          },
+			          "State": "Generated",
+			          "Weight": 0.99,
+			          "ID": "dim_products_have_cum__units_supplier"
+			        }
+			      ]
+			    },
 			    "fact_sale_has_cum__units": {
 			      "Binding": {
 			        "ConceptualEntity": "Fact_Sales"
@@ -16536,72 +16621,6 @@ cultureInfo en-US
 			        }
 			      ]
 			    },
-			    "dim_product_has_fact_sale_cum__units_supplier": {
-			      "Binding": {
-			        "ConceptualEntity": "Dim_Product"
-			      },
-			      "State": "Generated",
-			      "Roles": {
-			        "dim_product": {
-			          "Target": {
-			            "Entity": "dim_product"
-			          }
-			        },
-			        "fact_sale.cum__units_supplier": {
-			          "Target": {
-			            "Entity": "fact_sale.cum__units_supplier"
-			          }
-			        }
-			      },
-			      "Phrasings": [
-			        {
-			          "Attribute": {
-			            "Subject": {
-			              "Role": "dim_product"
-			            },
-			            "Object": {
-			              "Role": "fact_sale.cum__units_supplier"
-			            }
-			          },
-			          "State": "Generated",
-			          "Weight": 0.99,
-			          "ID": "dim_products_have_cum__units_supplier"
-			        }
-			      ]
-			    },
-			    "fact_sale_has_cum__units_supplier": {
-			      "Binding": {
-			        "ConceptualEntity": "Fact_Sales"
-			      },
-			      "State": "Generated",
-			      "Roles": {
-			        "fact_sale": {
-			          "Target": {
-			            "Entity": "fact_sale"
-			          }
-			        },
-			        "fact_sale.cum__units_supplier": {
-			          "Target": {
-			            "Entity": "fact_sale.cum__units_supplier"
-			          }
-			        }
-			      },
-			      "Phrasings": [
-			        {
-			          "Attribute": {
-			            "Subject": {
-			              "Role": "fact_sale"
-			            },
-			            "Object": {
-			              "Role": "fact_sale.cum__units_supplier"
-			            }
-			          },
-			          "State": "Generated",
-			          "Weight": 0.99,
-			          "ID": "fact_sales_have_cum__units_supplier"
-			        }
-			      ]
-			    },
 			    "dim_date_has_stock_by": {
 			      "Binding": {
 			        "ConceptualEntity": "Dim_Date"
@@ -16863,6 +16882,72 @@ cultureInfo en-US
 			          "State": "Generated",
 			          "Weight": 0.99,
 			          "ID": "fact_sales_have_vs_regular_day"
+			        }
+			      ]
+			    },
+			    "fact_sale_has_entry_price_php": {
+			      "Binding": {
+			        "ConceptualEntity": "Fact_Sales"
+			      },
+			      "State": "Generated",
+			      "Roles": {
+			        "fact_sale": {
+			          "Target": {
+			            "Entity": "fact_sale"
+			          }
+			        },
+			        "fact_sale.entry_price_php": {
+			          "Target": {
+			            "Entity": "fact_sale.entry_price_php"
+			          }
+			        }
+			      },
+			      "Phrasings": [
+			        {
+			          "Attribute": {
+			            "Subject": {
+			              "Role": "fact_sale"
+			            },
+			            "Object": {
+			              "Role": "fact_sale.entry_price_php"
+			            }
+			          },
+			          "State": "Generated",
+			          "Weight": 0.99,
+			          "ID": "fact_sales_have_entry_price_phps"
+			        }
+			      ]
+			    },
+			    "dim_product_has_listed_90_day": {
+			      "Binding": {
+			        "ConceptualEntity": "Dim_Product"
+			      },
+			      "State": "Generated",
+			      "Roles": {
+			        "dim_product": {
+			          "Target": {
+			            "Entity": "dim_product"
+			          }
+			        },
+			        "dim_product.listed_90_day": {
+			          "Target": {
+			            "Entity": "dim_product.listed_90_day"
+			          }
+			        }
+			      },
+			      "Phrasings": [
+			        {
+			          "Attribute": {
+			            "Subject": {
+			              "Role": "dim_product"
+			            },
+			            "Object": {
+			              "Role": "dim_product.listed_90_day"
+			            }
+			          },
+			          "State": "Generated",
+			          "Weight": 0.99,
+			          "ID": "dim_products_have_listed_90_days"
 			        }
 			      ]
 			    },

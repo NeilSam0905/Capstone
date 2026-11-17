@@ -59,7 +59,7 @@
             "text": {
               "expr": {
                 "Literal": {
-                  "Value": "'Units with no Price'"
+                  "Value": "'Unit(s) with no Price'"
                 }
               }
             },
@@ -74,6 +74,13 @@
               "expr": {
                 "Literal": {
                   "Value": "10D"
+                }
+              }
+            },
+            "bold": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
                 }
               }
             }
@@ -209,5 +216,23 @@
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "5c82c47cc42002bd2007",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Fact_Sales"
+              }
+            },
+            "Property": "Unpriced Units"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }

@@ -84,6 +84,12 @@ table Fact_Sales
 
 		annotation PBI_FormatHint = {"isCustom":true}
 
+	measure 'Top 10 Table Month' =
+			
+			"Top 10 best sellers, " &
+			FORMAT(CALCULATE(MAX(Dim_Date[Month]), Dim_Date[Month Label] = "Latest month"), "mmmm yyyy")
+		lineageTag: 99b8de77-0ff1-45dc-bc89-d72f68385359
+
 	column sale_id
 		dataType: double
 		lineageTag: 6eec41be-1712-46a4-a3f5-d65f43e02031
@@ -214,6 +220,16 @@ table Fact_Sales
 		lineageTag: 9952194c-cade-4629-b536-5eab6aeeff5e
 		summarizeBy: sum
 		sourceColumn: correction_id
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column entry_price_php
+		dataType: double
+		lineageTag: 54445c2d-540a-4f1f-ab0f-2f4ea484ff75
+		summarizeBy: sum
+		sourceColumn: entry_price_php
 
 		annotation SummarizationSetBy = Automatic
 

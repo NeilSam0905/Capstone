@@ -155,5 +155,23 @@
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "7be1d6f50c8ec548e369",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Fact_Sales"
+              }
+            },
+            "Property": "Top Sellers Headline"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }

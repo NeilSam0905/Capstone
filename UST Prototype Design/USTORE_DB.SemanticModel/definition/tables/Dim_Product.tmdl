@@ -165,6 +165,13 @@ table Dim_Product
 
 		annotation SummarizationSetBy = Automatic
 
+	column 'Listed 90+ Days' = Dim_Product[entry_date] <= TODAY() - 90
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: ca6f6097-daf7-4ec6-9754-e1f66a40b442
+		summarizeBy: none
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Dim_Product = m
 		mode: import
 		source =

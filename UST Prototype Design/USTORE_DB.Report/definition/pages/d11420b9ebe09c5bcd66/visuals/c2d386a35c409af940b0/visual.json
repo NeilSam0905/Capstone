@@ -27,7 +27,8 @@
                 }
               },
               "queryRef": "Fact_Sales.Latest Sale Date",
-              "nativeQueryRef": "Latest Sale Date"
+              "nativeQueryRef": "Data as of:",
+              "displayName": "Data as of:"
             }
           ]
         }
@@ -193,5 +194,23 @@
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "b9cfcbb64921565116e1",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Fact_Sales"
+              }
+            },
+            "Property": "Latest Sale Date"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }
