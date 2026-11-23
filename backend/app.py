@@ -1838,10 +1838,14 @@ def _reorder_items(c, apply_settings=True):
         # demand - and it uses only the three inputs that are actually
         # measured here (on-hand, ADUS, lead time), not the two cost
         # estimates that are still guesses.
+        # Rounded UP: a part unit can't be ordered, and rounding to nearest
+        # left items flagged "Reorder now" with an order of 0 (a gap under
+        # half a unit) and others a unit short (2.5 -> 2). round(.., 6) drops float noise
+        # so an exact 14.0 isn't pushed to 15.
         target = rop + REVIEW_PERIOD_DAYS * add
         item["order_up_to_level"] = round(target, 1)
         item["suggested_order_qty"] = (
-            max(0, int(round(target - stock))) if item["needs_reorder"] else 0
+            max(0, math.ceil(round(target - stock, 6))) if item["needs_reorder"] else 0
         )
         # The same order without the safety stock: what the expected sales
         # alone would use up. The pair is the range the Overview shows, so a
@@ -1849,7 +1853,7 @@ def _reorder_items(c, apply_settings=True):
         # and sales go as averaged, the high end with the full buffer.
         ss = item["safety_stock"] or 0.0
         item["suggested_order_min"] = (
-            min(item["suggested_order_qty"], max(0, int(round(target - ss - stock))))
+            min(item["suggested_order_qty"], max(0, math.ceil(round(target - ss - stock, 6))))
             if item["needs_reorder"] else 0
         )
 

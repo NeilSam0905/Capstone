@@ -79,6 +79,15 @@ def test_nothing_changed_shows_the_current_figures():
     assert cur["php_at_stake"] == pytest.approx(22 * 100.0)
 
 
+def test_a_part_unit_short_is_ordered_as_a_whole_unit():
+    """Rounded up, as /api/reorder: 2.45 short orders 3, 0.24 short orders 1."""
+    for gap, want in ((2.45, 3), (0.24, 1), (14.0, 14)):
+        d = gap / 40            # stock 0, no buffer, lead time 10 + review 30
+        it = item(avg_daily_demand=d, annual_demand=365 * d, lead_time_days=10,
+                  safety_stock=0.0, reorder_point=10 * d, current_stock=0)
+        assert run(it)["current"]["suggested_order_qty"] == want, gap
+
+
 def test_enough_stock_means_no_order_and_nothing_at_stake():
     r = run(item(current_stock=500))
     assert r["current"]["needs_reorder"] is False

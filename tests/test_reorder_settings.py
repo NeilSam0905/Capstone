@@ -98,6 +98,18 @@ def test_the_preview_orders_up_to_one_review_period_past_the_reorder_point():
     assert rs.figures(item(current_stock=None), 30)["suggested_order_qty"] is None
 
 
+def test_a_part_unit_short_is_ordered_as_a_whole_unit():
+    """Rounded up, not to nearest: 2.45 short orders 3 (not 2), and 0.24
+    short orders 1 (not 0, which read "Reorder now" with nothing to order)."""
+    def short_by(gap):          # stock 0, no buffer: the order is the up-to level
+        d = gap / 40            # lead time 10 + review 30 = 40 days of demand
+        return item(avg_daily_demand=d, annual_demand=365 * d, lead_time_days=10,
+                    safety_stock=0.0, reorder_point=10 * d, current_stock=0)
+    assert rs.figures(short_by(2.45), 30)["suggested_order_qty"] == 3
+    assert rs.figures(short_by(0.24), 30)["suggested_order_qty"] == 1
+    assert rs.figures(short_by(14.0), 30)["suggested_order_qty"] == 14   # whole stays whole
+
+
 @pytest.mark.parametrize("body, field", [
     ({"lead_time_days": "abc"}, "lead_time_days"),
     ({"lead_time_days": 0}, "lead_time_days"),

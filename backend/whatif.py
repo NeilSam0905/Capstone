@@ -116,7 +116,7 @@ def _figures(d, annual, lead_time, safety_stock, stock, extra, ordering_cost, ho
         needs = order = short = None
     else:
         needs = stock <= rop
-        order = max(0, int(round(target - stock))) if needs else 0
+        order = max(0, math.ceil(round(target - stock, 6))) if needs else 0  # rounded up, as /api/reorder
         short = max(0.0, lead_demand + extra - stock)
     eoq = (math.sqrt(2 * annual * ordering_cost / holding_cost)
            if annual and ordering_cost and holding_cost else None)

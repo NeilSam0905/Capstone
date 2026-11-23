@@ -177,5 +177,6 @@ def figures(item, review_days):
         "eoq_exceeds_annual_demand": None if not q or not annual else q > annual,
         "stock_on_hand": stock,
         "needs_reorder": needs,
-        "suggested_order_qty": None if stock is None else (max(0, int(round(target - stock))) if needs else 0),
+        "suggested_order_qty": None if stock is None else (
+            max(0, math.ceil(round(target - stock, 6))) if needs else 0),  # rounded up, as /api/reorder
     }
