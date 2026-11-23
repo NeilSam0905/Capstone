@@ -13,7 +13,7 @@ import Pending, { Loading, PendingValue } from '../components/Pending';
 import ReorderWhatIf from '../components/ReorderWhatIf';
 import ReorderSettings from '../components/ReorderSettings';
 import Modal from '../components/Modal';
-import { num, usDate, dateRange, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, usDate, dateRange, stockNote, FSN_TONE, FSN_LABEL } from '../lib/format';
 
 /** Fast, Slow, then Non-Moving: the order the recommendations table opens in. */
 const CLASS_ORDER = { F: 0, S: 1, N: 2 };
@@ -115,7 +115,7 @@ export default function Reorder({ filters }) {
   const columns = [
     { key: 'item_name',     label: 'Product Name', strong: true, truncate: true, width: '26%' },
     { key: 'supplier_name', label: 'Supplier', truncate: true, width: '24%' },
-    { key: 'current_stock', label: 'Current Stock', num: true, width: '12%', render: v => num(v) },
+    { key: 'current_stock', label: 'Current Stock', num: true, width: '12%', render: (v, row) => <span title={stockNote(row)}>{num(v)}</span> },
     { key: 'stock_as_of',   label: 'Counted', width: '10%', render: v => <span className="muted">{usDate(v)}</span> },
     {
       key: 'days_of_supply', label: 'Days of Supply', num: true, width: '12%',
@@ -165,7 +165,7 @@ export default function Reorder({ filters }) {
     { key: 'lead_time_days', label: 'Lead Time', num: true, width: '6%', render: v => `${v}d` },
     {
       key: 'current_stock', label: 'On Hand', num: true, width: '7%',
-      render: v => v == null ? <span className="muted">—</span> : num(v),
+      render: (v, row) => v == null ? <span className="muted">—</span> : <span title={stockNote(row)}>{num(v)}</span>,
     },
     { key: 'safety_stock', label: 'Safety Stock', num: true, width: '8%', render: v => num(Math.round(v)) },
     {

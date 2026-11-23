@@ -8,7 +8,7 @@ import InfoTip from './InfoTip';
 import Icon from './Icon';
 import ActiveThumb from './ActiveThumb';
 import Modal from './Modal';
-import { num, windowDates, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, windowDates, stockNote, FSN_TONE, FSN_LABEL } from '../lib/format';
 
 /** '1 item', '22 items' */
 const count = (n, word) => `${num(n)} ${word}${n === 1 ? '' : 's'}`;
@@ -115,7 +115,7 @@ function OrderPlan({ data, w, windows, pick, setPick, showAll, setShowAll, onHis
     {
       key: 'current_stock', label: 'On Hand', num: true, width: '9%',
       render: (v, p) => (v == null ? <span className="muted">—</span>
-        : <span title={p.stock_as_of ? `Counted ${p.stock_as_of}` : undefined}>{num(v)}</span>),
+        : <span title={stockNote(p)}>{num(v)}</span>),
     },
     { key: 'reorder_point', label: 'ROP', num: true, width: '7%', render: v => num(Math.round(v)) },
     {

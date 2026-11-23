@@ -55,14 +55,49 @@ def load_counted_stock(con):
     ).fetchone():
         return {}
     return {
-        r["product_id"]: {"month": r["count_month"], "qty": float(r["quantity"])}
+        r["product_id"]: {"month": r["count_month"], "qty": float(r["quantity"]),
+                          "day": count_day(r["count_month"], r["date_logged"])}
         for r in rows(con, """
-            SELECT product_id, count_month, quantity
+            SELECT product_id, count_month, quantity, date_logged
               FROM Inventory_Count
              WHERE (product_id, count_month) IN (
                    SELECT product_id, MAX(count_month) FROM Inventory_Count GROUP BY product_id)
         """)
     }
+
+
+def count_day(month, logged):
+    """The day a count stands for. The monthly count sheets record on-hand
+    stock at the START of each billing month (manuscript, Chapter 3, data
+    sources), so a count stands for the 1st of its month - unless it was typed
+    later in that same month (a recount, or a correction from Current
+    Inventory), when it stands for the day it was typed. A count typed after
+    its month ended (an imported report) keeps the 1st."""
+    if logged and str(logged)[:7] == month:
+        return str(logged)[:10]
+    return f"{month}-01"
+
+
+def units_out_since(con, day_by_pid):
+    """product_id -> units that left the shelf on or after that product's
+    count day: every tallied row, whatever its type - sales, and the damaged,
+    promo and transfer removals that are not demand but do empty the shelf.
+    The count day itself is included: whether that day's first sales came
+    before or after the count is unknown, and counting them makes the
+    estimate lower (an earlier reorder alert), not higher (a missed one)."""
+    if not day_by_pid:
+        return {}
+    out = defaultdict(float)
+    for r in rows(con, """
+        SELECT f.product_id, d.calendar_date, SUM(f.quantity_sold) AS units
+          FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
+         WHERE d.calendar_date >= ?
+         GROUP BY f.product_id, d.calendar_date
+    """, (min(day_by_pid.values()),)):
+        day = day_by_pid.get(r["product_id"])
+        if day and r["calendar_date"] >= day:
+            out[r["product_id"]] += r["units"] or 0
+    return out
 
 
 def stock_history(con, product_id, item_name):
@@ -111,6 +146,17 @@ def load_current_stock(con, name_by_id):
     export - so once the store is entering counts, they take over naturally
     without a switch to flip.
 
+    **A staff count is then a running balance:** the count, less every unit
+    tallied out since its count day (units_out_since), never below 0. The
+    tally is what moves stock between counts; the next count resets it and
+    catches whatever the tally missed. Deliveries are not added - restocks
+    carry no quantities - so after one, staff enter a recount.
+
+    A workbook figure is NOT run down. The newest is months old and the
+    deliveries since are unknown, so subtracting that long a run of sales
+    would read as empty shelves. It stays as counted until staff count the
+    item in the Inventory tab, after which it runs down like any count.
+
     Keyed by product_id on the way out (the CSV side is keyed by canonical
     item name, which is what it has)."""
     csv_stock = load_csv_stock()
@@ -124,6 +170,14 @@ def load_current_stock(con, name_by_id):
             out[pid] = {**from_staff, "source": "counted"}
         elif from_csv:
             out[pid] = {**from_csv, "source": "workbook"}
+
+    days = {pid: s["day"] for pid, s in out.items() if s["source"] == "counted"}
+    gone = units_out_since(con, days)
+    for pid in days:
+        s = out[pid]
+        s["counted_qty"] = s["qty"]
+        s["out_since"] = gone.get(pid, 0.0)
+        s["qty"] = max(0.0, s["qty"] - s["out_since"])
     return out
 
 
@@ -250,6 +304,11 @@ def compute_stats(con, date_range=None, start=None, end=None):
             "current_stock": int(st["qty"]) if st else None,
             "stock_as_of": st["month"] if st else None,
             "stock_source": st["source"] if st else None,
+            # The running balance's parts (staff counts only; None otherwise):
+            # current_stock = stock_counted - stock_out_since_count, floored at 0.
+            "stock_counted": int(st["counted_qty"]) if st and "counted_qty" in st else None,
+            "stock_out_since_count": int(st["out_since"]) if st and "out_since" in st else None,
+            "stock_count_day": st.get("day") if st else None,
             "days_of_supply": round(dos[pid], 1) if pid in dos else None,
         }
     return stats, series
@@ -297,6 +356,9 @@ def compute_catalog(con, date_range=None, start=None, end=None):
             "current_stock": s.get("current_stock"),
             "stock_as_of": s.get("stock_as_of"),
             "stock_source": s.get("stock_source"),
+            "stock_counted": s.get("stock_counted"),
+            "stock_out_since_count": s.get("stock_out_since_count"),
+            "stock_count_day": s.get("stock_count_day"),
             "days_of_supply": s.get("days_of_supply"),
             "first_sale": s.get("first_sale"),
             "last_sale": s.get("last_sale"),

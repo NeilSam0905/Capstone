@@ -22,7 +22,7 @@ import ComboBox from '../components/ComboBox';
 import InfoTip from '../components/InfoTip';
 import SearchSelect from '../components/SearchSelect';
 import Modal from '../components/Modal';
-import { num, usDate, usDateTime, longMonth, displayUser } from '../lib/format';
+import { num, usDate, usDateTime, longMonth, displayUser, stockNote } from '../lib/format';
 import brandMark from '../assets/ustore-mark.png';
 import { TALLY_TAB_KEY } from '../config';
 
@@ -1511,7 +1511,7 @@ function CurrentStockModal({ open, onClose, onChanged }) {
     },
     {
       key: 'current_stock', label: 'On hand', num: true, strong: true, width: '9%',
-      render: num,
+      render: (v, row) => <span title={stockNote(row)}>{num(v)}</span>,
     },
     {
       key: 'days_of_supply', label: 'Days left', num: true, width: '8%',

@@ -56,6 +56,19 @@ export const usDate = d => {
   return m ? `${m[2]}/${m[3]}/${m[1]}` : d;
 };
 
+/** Where an item's on-hand figure comes from, for a tooltip. A staff count is
+ *  run down by everything tallied out since it (catalog.py
+ *  load_current_stock); a workbook figure is shown as counted. */
+export const stockNote = i => {
+  if (i?.current_stock == null) return undefined;
+  if (i.stock_counted != null) {
+    const out = i.stock_out_since_count ?? 0;
+    return `Counted ${num(i.stock_counted)} as of ${dateRange({ start: i.stock_count_day })}`
+      + (out ? `, minus ${num(out)} sold or removed since` : ', nothing sold since');
+  }
+  return i.stock_as_of ? `From the ${longMonth(i.stock_as_of)} inventory workbook; count it to keep it current` : undefined;
+};
+
 /** A date range for reading: { start, end } ISO -> 'Jan 12–16, 2027',
  *  'Dec 17, 2026', or 'Dec 30, 2026 – Jan 2, 2027'. Display only. */
 export const windowDates = ({ start, end }) => {

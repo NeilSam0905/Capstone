@@ -17,7 +17,7 @@ import { AdvisoriesPanel, AdvisoriesJump } from '../components/Advisories';
 import { OrderAheadLine } from '../components/OrderAhead';
 import ItemHistory from '../components/ItemHistory';
 import { ADVISORIES_ANCHOR, ORDER_AHEAD_ANCHOR, TALLY_TAB_KEY } from '../config';
-import { num, shortMonth, longMonth, usDate, peso, pesoK, FSN_TONE, FSN_LABEL } from '../lib/format';
+import { num, shortMonth, longMonth, usDate, peso, pesoK, stockNote, FSN_TONE, FSN_LABEL } from '../lib/format';
 import { ALL_CATEGORIES, ALL_SUPPLIERS } from '../services/dataService';
 
 /* The Overview reads top to bottom from the store as a whole down to the
@@ -139,7 +139,7 @@ export default function Overview({ filters, setPage, setView, user, saleMonths =
   return (
     <div className="stack">
       <PerformanceStep filters={filters} saleMonths={saleMonths} dueByCategory={dueByCategory} setPage={setPage}
-                       alertById={alertById} latestCount={latestCount} recount={recount} />
+                       alertById={alertById} recount={recount} />
 
       <ReorderHero
         alerts={alerts}
@@ -196,7 +196,6 @@ export default function Overview({ filters, setPage, setView, user, saleMonths =
         salesInView={salesInView}
         categoryOf={categoryOf}
         earnerIds={earnerIds}
-        latestCount={latestCount}
         setPage={setPage}
         recount={recount}
       />
@@ -325,12 +324,17 @@ function CountInfo() {
         and record it in the Tally Interface (Inventory tab &rarr; Monthly Inventory Count).
       </p>
       <p>
-        The system compares that number with the item&rsquo;s <b>reorder point</b>, the stock level at which
+        Between counts, everything tallied out since (sales, damaged, promo, transfers) is taken off that
+        number, so <b>on hand</b> stays current. The next count resets it. Deliveries are not added: after one
+        arrives, count the item again.
+      </p>
+      <p>
+        The system compares on hand with the item&rsquo;s <b>reorder point</b>, the stock level at which
         it should be ordered again:
       </p>
       <ul className="infotip__bullets">
-        <li><b>Reorder now</b>: the count is at or below the reorder point.</li>
-        <li><b>Enough stock</b>: the count is above it.</li>
+        <li><b>Reorder now</b>: on hand is at or below the reorder point.</li>
+        <li><b>Enough stock</b>: on hand is above it.</li>
         <li><b>Too new to judge</b>: counted, but the item has too little sales history for a reorder point yet.</li>
         <li><b>Not counted</b>: no count recorded, so the system cannot tell how many are on hand or whether to reorder.</li>
       </ul>
@@ -485,7 +489,7 @@ function NextStep({ children }) {
  *  before against the latest tallied month; all three tiles and the category
  *  table follow them. Because months were tallied on such different numbers
  *  of days, each total says how many days it has sales on. */
-function PerformanceStep({ filters, saleMonths, dueByCategory, setPage, alertById, latestCount, recount }) {
+function PerformanceStep({ filters, saleMonths, dueByCategory, setPage, alertById, recount }) {
   const [stoppedOpen, setStoppedOpen] = useState(false);
   const [catsOpen, setCatsOpen] = useState(false);
   // null for either month is its default, so the default asks for the same
@@ -599,7 +603,6 @@ function PerformanceStep({ filters, saleMonths, dueByCategory, setPage, alertByI
         prevName={prevName}
         curName={curName}
         alertById={alertById}
-        latestCount={latestCount}
         setPage={setPage}
         recount={recount}
       />
@@ -665,16 +668,15 @@ function PerformanceStep({ filters, saleMonths, dueByCategory, setPage, alertByI
 /** The items that sold last month and not once this month, biggest seller
  *  first, with where each stands now: one that suddenly stops selling has
  *  often run out, so this is the list to check the shelf against. */
-function StoppedModal({ open, onClose, items, minUnits, prevName, curName, alertById, latestCount, setPage, recount }) {
+function StoppedModal({ open, onClose, items, minUnits, prevName, curName, alertById, setPage, recount }) {
   if (!open) return null;
   const total = items.reduce((s, i) => s + i.previous_php, 0);
-  const countMonth = latestCount ? shortMonthYear(latestCount) : null;
 
   const nowOf = a => {
     if (!a) return { text: 'No reorder point', rank: 3 };
     if (a.needs_reorder) return { text: `Reorder ${range(orderMin(a), a.suggested_order_qty)}`, rank: 0, crit: true };
     if (a.current_stock == null) return { text: 'Not counted', rank: 1 };
-    return { text: `${num(a.current_stock)} on hand${countMonth ? ` (${countMonth})` : ''}`, rank: 2 };
+    return { text: `${num(a.current_stock)} on hand`, rank: 2 };
   };
   const columns = [
     { key: 'item_name', label: 'Item', strong: true, truncate: true, width: '32%' },
@@ -991,8 +993,8 @@ function TopSellersModal({ t, by, onClose, alertById, categoryOf, onBrowse }) {
 
 /** What each stock-check group is, in a line, for the list it opens. */
 const GROUP_TEXT = {
-  reorder:   'At or below their reorder point at the last count.',
-  enough:    'Above their reorder point at the last count.',
+  reorder:   'At or below their reorder point: the last count, less what has sold since.',
+  enough:    'Above their reorder point: the last count, less what has sold since.',
   unjudged:  'Counted, but with too little sales history for a reorder point yet.',
   uncounted: 'No inventory count, so the system cannot tell whether they are running low.',
 };
@@ -1000,20 +1002,20 @@ const GROUP_TEXT = {
 /** The items in one stock-check group, highest sales first: which items a
  *  count is made of, what they sold (why they matter), and the one thing to
  *  do about them. */
-function StockGroupModal({ group, onClose, groups, revenueOf, salesInView, categoryOf, earnerIds, latestCount, setPage, recount }) {
+function StockGroupModal({ group, onClose, groups, revenueOf, salesInView, categoryOf, earnerIds, setPage, recount }) {
   if (!group) return null;
   const meta = STOCK_GROUPS.find(s => s.key === group);
   const items = groups[group] ?? [];
   const sales = items.reduce((s, a) => s + (revenueOf.get(a.product_id) ?? 0), 0);
   const share = salesInView ? sales / salesInView : 0;
-  const countMonth = latestCount ? shortMonthYear(latestCount) : null;
 
   const last = group === 'reorder'
     ? { key: 'suggested_order_qty', label: <>Order <OrderInfo /></>, num: true, strong: true, width: '13%',
         render: (v, a) => range(orderMin(a), v) }
     : group === 'uncounted'
       ? { key: 'top', label: '', width: '12%', render: v => (v ? <span className="tag tag--gold">Top earner</span> : null) }
-      : { key: 'current_stock', label: countMonth ? `On hand (${countMonth})` : 'On hand', num: true, width: '12%', render: num };
+      : { key: 'current_stock', label: 'On hand', num: true, width: '12%',
+          render: (v, a) => <span title={stockNote(a)}>{num(v)}</span> };
   const columns = [
     { key: 'item_name', label: 'Item', strong: true, truncate: true, width: '34%' },
     { key: 'category', label: 'Category', truncate: true, width: '18%' },
@@ -1089,8 +1091,8 @@ function OrderFirst({ due, showSupplier, setPage, latestCount, recount, onHistor
                 <tr>
                   <th>Item</th>
                   {showSupplier && <th className="overview-order__supplier">Supplier</th>}
-                  <th className="num" title={countMonth ? `Stock as last counted, ${countMonth}` : undefined}>
-                    On hand{countMonth && <span className="th-sub">as of {shortMonthYear(latestCount)}</span>}
+                  <th className="num" title={countMonth ? `Last count (${countMonth}), less what has sold since` : undefined}>
+                    On hand{countMonth && <span className="th-sub">counted {shortMonthYear(latestCount)}</span>}
                   </th>
                   <th className="num">
                     Order <OrderInfo />{provisional && <span className="th-sub">provisional</span>}
@@ -1103,7 +1105,7 @@ function OrderFirst({ due, showSupplier, setPage, latestCount, recount, onHistor
                       onClick={() => (onHistory ? onHistory(a) : setPage?.('reorder'))}>
                     <td className="strong overview-order__item" title={a.item_name}>{a.item_name}</td>
                     {showSupplier && <td className="overview-order__supplier">{a.supplier_name}</td>}
-                    <td className="num">{num(a.current_stock)}</td>
+                    <td className="num" title={stockNote(a)}>{num(a.current_stock)}</td>
                     <td className="num strong">{range(orderMin(a), a.suggested_order_qty)}</td>
                   </tr>
                 ))}
@@ -1144,7 +1146,8 @@ function OrderInfo() {
         shelf space is tight. One number means the item has little or no safety stock, so both ends come out the same.
       </p>
       <p>
-        Quantities are provisional: lead times are still estimates, and stock is as of the last inventory count.
+        Quantities are provisional: lead times are still estimates, and stock is the last inventory count less
+        what has sold since, so a sale nobody tallied or a delivery nobody counted is not in it.
       </p>
     </InfoTip>
   );

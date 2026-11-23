@@ -1789,6 +1789,9 @@ def _reorder_items(c, apply_settings=True):
         item["current_stock"] = stock
         item["stock_as_of"] = st.get("stock_as_of")
         item["stock_source"] = st.get("stock_source")
+        item["stock_counted"] = st.get("stock_counted")
+        item["stock_out_since_count"] = st.get("stock_out_since_count")
+        item["stock_count_day"] = st.get("stock_count_day")
 
         # A SKU with no learnable demand rate has NO reorder point, and the
         # old `item["reorder_point"] or 0.0` turned that NULL into 0.0 - which
