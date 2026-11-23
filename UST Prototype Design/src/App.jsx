@@ -275,6 +275,11 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
               key={n.id}
               className={'nav__item' + (page === n.id ? ' active' : '')}
               onClick={() => setPage(n.id)}
+              // The label is hidden on narrow screens (icon-only sidebar),
+              // so the button names itself for tooltips and screen readers.
+              title={n.label}
+              aria-label={n.label}
+              aria-current={page === n.id ? 'page' : undefined}
             >
               <Icon name={n.icon} />
               <span>{n.label}</span>
