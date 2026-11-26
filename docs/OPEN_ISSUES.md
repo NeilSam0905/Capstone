@@ -55,6 +55,11 @@ schema-version marker. Until there is, **a schema change means a full rebuild**,
 and that has to be remembered rather than enforced.
 
 ### 7. `step1_apply_mapping.py` needs `rawdata/`, and nothing says so
+
+> **Resolved (checked 2026-11-20).** Step 1 now reads the price CSVs step 0
+> writes instead of the workbooks, so a run without `rawdata/` skips steps 0 and
+> `daystatus` as optional and completes on the existing `data/*.csv`. The
+> history below is kept for the record.
 Two of its four price sources read the client workbooks directly: `may2024_dsr`
 parses the 23 daily sheets of `rawdata/2024 5 MAY DSR & TBS.xlsx`, and
 `tbs_item_price` parses every workbook's TBS sheet (both added in `fcd597d`).

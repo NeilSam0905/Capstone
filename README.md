@@ -141,12 +141,13 @@ you're revisiting the vocabulary itself).
   repo root — the store's sales, prices, stock and everything derived from them.
   They are committed **only encrypted**, in `vault/` (see below).
 - `rawdata/*.xlsx` — the real client tally-sheet workbooks. Sensitive (supplier
-  names, prices, sales volumes). Steps **0 and 1** read them: step 1's
-  `may2024_dsr` and `tbs_item_price` price sources parse them directly, and
-  neither has a fallback, so **step 1 fails without `rawdata/` and the pipeline
-  stops there** — it is not marked optional the way step 0 is. Every step from
-  `proportional_allocation.py` onward reads only `data/*.csv` (restored from
-  `vault/`) and runs without them.
+  names, prices, sales volumes). Only **step 0** (and the optional colour-legend
+  step) reads them. Step 1 reads the price files step 0 writes
+  (`data/tbs_item_prices.csv`, the May 2024 retail prices) rather than the
+  workbooks, so without `rawdata/` steps 0 and `daystatus` are skipped as
+  optional and every later step rebuilds from the existing `data/*.csv`
+  (restored from `vault/`) - checked 2026-11-20. New tallies in a workbook are
+  only read once it is in `rawdata/`.
 
   To get them: they are still committed at the tip of `origin/gambe`, under
   `drive-download-20260724T120738Z-1-001/` — `f7ebb62` removed them from this
@@ -272,8 +273,13 @@ python serve.py --host 0.0.0.0     # also other computers on the store's network
 ```
 
 The dashboard and the API share one address, so the login's origin check
-accepts it with no extra setting. Change the default `staff` password before
-opening it to the network.
+accepts it with no extra setting. Change both default passwords (`staff` /
+`staff123`, `admin` / `admin123`) before opening it to the network:
+
+```bash
+python backend/set_password.py staff
+python backend/set_password.py admin
+```
 
 While it runs, `serve.py` backs up `ustore.db` once a day into `backups/`
 (gitignored; the last 14 are kept), with SQLite's online backup API, so the
@@ -294,12 +300,12 @@ wildly different costs:
 
 | Button | Steps | Time |
 |---|---|---|
-| **Run Pipeline (Without Forecast)** | everything except step 4 | **~45 s** when no tally workbook changed |
-| **Run Full Pipeline + Forecast** | everything | **~55 s** when no tally workbook changed; **~75 s** when step 0 has a new or changed workbook to convert (measured 2026-10-02) |
+| **Run Analytics** (without forecast) | everything except steps 4 and 4d | **~75 s** |
+| **Run Forecast** (full) | everything | **~6 min**: step 4d forecasts every model for the Demand Forecast comparison (Prophet among them) and takes ~4.5 min of it (measured 2026-11-25) |
 
-Step 4 is still the only step that can be opted out of
-(`pipeline.SKIPPABLE`), and it is safe to skip because nothing downstream
-reads **its** output: step 4 publishes the `rolling_mean_30` point
+Steps 4 and 4d are the only ones that can be opted out of
+(`pipeline.SKIPPABLE`), and they are safe to skip because nothing downstream
+reads their output (step 4d only feeds the model comparison picker): step 4 publishes the `rolling_mean_30` point
 forecast, which the Demand Forecast screen draws and no other step
 consumes. A no-forecast run still rebuilds the database, the FSN classes
 and the reorder points; it just leaves whatever point forecasts are
@@ -378,12 +384,14 @@ says which source the number came from (`workbook` / `counted`).
 
 > **Known gap.** These counts feed the *live API* (`current_stock`,
 > `/api/stock`, the Reorder screen's on-hand column) but **not the ETL**.
-> `Fact_Sales.is_censored` and `days_of_supply` are still derived by
-> `step2_load_fact_sales.py` from the inventory CSV alone, so a
-> newly-counted product shows `current_stock` but still `days_of_supply:
-> null`. Wiring `Inventory_Count` into step 2 would change those columns'
+> `Fact_Sales.is_censored` and `Fact_Sales.days_of_supply` are still
+> derived by `step2_load_fact_sales.py` from the inventory CSV alone.
+> Wiring `Inventory_Count` into step 2 would change those columns'
 > documented row counts and the censoring evidence behind Block 2.4, so it
-> is left as a deliberate team decision rather than done silently.
+> is left as a deliberate team decision rather than done silently. The
+> screens no longer read `Fact_Sales.days_of_supply`: the API's
+> `days_of_supply` is on-hand (the running balance) ÷ the reorder demand
+> rate, the same figure as the Reorder list's days of cover.
 
 ### The Reorder screen's order quantity is not EOQ
 

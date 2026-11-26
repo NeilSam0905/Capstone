@@ -282,11 +282,13 @@ def apply_held(c, key, product_id):
                   r.get("entered_by"), r.get("order_type")))
         else:
             c.execute("""
-                INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged)
-                VALUES (?, ?, ?, ?, 'import', ?)
+                INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged,
+                                             seen_through_sale_id)
+                VALUES (?, ?, ?, ?, 'import', ?, ?)
                 ON CONFLICT (product_id, count_month) DO UPDATE SET
-                    quantity = excluded.quantity, note = excluded.note, date_logged = excluded.date_logged
-            """, (product_id, r["count_month"], r["quantity"], r["note"], now))
+                    quantity = excluded.quantity, note = excluded.note, date_logged = excluded.date_logged,
+                    seen_through_sale_id = excluded.seen_through_sale_id
+            """, (product_id, r["count_month"], r["quantity"], r["note"], now, dbmod.newest_sale_id(c)))
         c.execute("DELETE FROM Pending_Import_Row WHERE pending_id = ?", (r["pending_id"],))
         applied[r["kind"]] += 1
     return applied

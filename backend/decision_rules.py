@@ -49,15 +49,17 @@ DISCONTINUED = "discontinued"
 _REGULAR_TERM = re.compile(r"-T[12]$")
 
 
-def parse_threshold(raw):
+def parse_threshold(raw, strict=False):
     """A request's ?threshold=, or the default when missing or not a usable
-    non-negative number."""
+    non-negative number. strict=True returns None for an unusable value
+    instead, so the endpoint can refuse it (QA-013)."""
+    fallback = None if strict else DEFAULT_REVIEW_THRESHOLD
     try:
         value = float(raw)
     except (TypeError, ValueError):
-        return DEFAULT_REVIEW_THRESHOLD
+        return fallback
     if not math.isfinite(value) or value < 0 or value > MAX_THRESHOLD:
-        return DEFAULT_REVIEW_THRESHOLD
+        return fallback
     return value
 
 

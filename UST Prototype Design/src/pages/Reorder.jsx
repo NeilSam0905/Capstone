@@ -78,6 +78,10 @@ export default function Reorder({ filters }) {
     : null;
 
   const alertItems = alerts?.available ? alerts.data.items : [];
+  // step5 marks every reorder figure provisional while costs and lead times are
+  // estimates (Dim_Parameters); the README requires the page to say so, since
+  // these numbers are quoted in Chapter 4 (QA-031).
+  const provisional = alertItems.some(i => i.is_provisional);
   const summary = alerts?.available ? alerts.data.summary : null;
   const next = season?.available ? season.windows?.[0] : null;
 
@@ -297,6 +301,11 @@ export default function Reorder({ filters }) {
                   : <><b>{num(alertItems.length)}</b> items</>}
               </span>
               <WhatIfGuide />
+              {provisional && (
+                <span className="tag tag--warn" title="Reorder point, safety stock and EOQ rest on estimated lead times and costs (Dim_Parameters), pending the USTore site visit. Treat them as provisional.">
+                  Provisional
+                </span>
+              )}
             </span>
             <span className="ro-toolbar">
               <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPanel('ahead')}
@@ -360,7 +369,7 @@ export default function Reorder({ filters }) {
                   : 'No item matches those filters.'}
               </div>
             )
-            : <DataTable columns={alertColumns} data={shown} minWidth={1100} />}
+            : <DataTable columns={alertColumns} data={shown} minWidth={1000} />}  {/* 1000, not 1100: fits a 1366-px window without a sideways scroll (QA-030) */}
 
           {urgentFirst && due.length > 0 && (
             <div className="order-total">
@@ -391,7 +400,7 @@ export default function Reorder({ filters }) {
 
       {panel === 'method' && method?.available && (
         <Modal open onClose={() => setPanel(null)} width={900} title="How It's Worked Out"
-               subtitle="The four formulas behind every figure on this page. Each (i) shows its inputs, their values and where they come from.">
+               subtitle="The four formulas behind every figure on this page. Each (i) shows its inputs, their values and where they come from. The results are provisional: lead times and the ordering and holding costs are still estimates, pending the USTore site visit.">
           <div className="modal-grow">
             <FormulaList m={method} />
             <div className="btn-row" style={{ marginTop: 14 }}>

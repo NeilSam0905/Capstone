@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getCacheVersion, peekCached } from '../services/dataService';
 
 /**
@@ -75,19 +75,18 @@ export default function useData(loader, deps = [], initial = null, { key } = {})
   // Which key the current state belongs to. When the key changes (a filter
   // moved, say) we re-seed from that key's snapshot instead of showing the
   // previous key's data as though it were the new one.
-  const seededFor = useRef(fresh ? key : null);
+  const [seededKey, setSeededKey] = useState(fresh ? key : null);
+  if (key != null && seededKey !== key) {
+    setSeededKey(key);
+    const snap = snapshots.get(key);
+    if (snap && snap.version === getCacheVersion()) {
+      setState({ data: snap.data, loading: false, error: null, for: deps });
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
     const asked = deps;
-
-    if (key != null && seededFor.current !== key) {
-      const snap = snapshots.get(key);
-      if (snap && snap.version === getCacheVersion()) {
-        setState({ data: snap.data, loading: false, error: null, for: asked });
-      }
-      seededFor.current = key;
-    }
 
     Promise.resolve()
       .then(loader)

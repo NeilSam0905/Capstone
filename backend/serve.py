@@ -62,7 +62,12 @@ def main():
         sys.exit(f"No built dashboard at {DIST}. Build it first:\n"
                  f'    cd "UST Prototype Design" && npm install && npm run build')
 
-    from waitress import serve                     # imported here so --help works without it
+    backend.require_database()
+    try:
+        from waitress import serve                 # imported here so --help works without it
+    except ImportError:
+        sys.exit("waitress is not installed. Install the backend's requirements first:" + chr(10) +
+                 "    pip install -r backend/requirements.txt")     # QA-028
     attach_dashboard(backend.app)
     if not args.no_backup:
         backup.BackupSchedule(log=lambda msg: print(msg, flush=True)).start()

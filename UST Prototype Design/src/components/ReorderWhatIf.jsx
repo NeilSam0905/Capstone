@@ -29,7 +29,11 @@ export default function ReorderWhatIf({ item, onClose }) {
   const seq = useRef(0);
   const pid = item?.product_id;
 
-  useEffect(() => { setForm(BLANK); setResult(null); setErrors({}); setError(null); }, [pid]);
+  const [shownPid, setShownPid] = useState(pid);
+  if (shownPid !== pid) {
+    setShownPid(pid);
+    setForm(BLANK); setResult(null); setErrors({}); setError(null);
+  }
 
   useEffect(() => {
     if (pid == null) return undefined;

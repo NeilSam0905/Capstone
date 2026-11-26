@@ -27,8 +27,10 @@ import copy
 import csv
 import io
 import math
+import os
 import re
 import statistics
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -63,7 +65,9 @@ CORS(app, origins=auth.allowed_origins(), supports_credentials=True)
 
 # The plain data files are gitignored; after a fresh clone or a pull they come
 # from the encrypted vault/ (scripts/vault.py). Never overwrites local work.
-_vault_note = pipeline.vault.ensure_unlocked()
+# USTORE_SKIP_VAULT_UNLOCK=1 turns this off; the test suite sets it (conftest.py)
+# so running pytest never restores files into the real working copy (QA-023).
+_vault_note = None if os.environ.get("USTORE_SKIP_VAULT_UNLOCK") == "1" else pipeline.vault.ensure_unlocked()
 if _vault_note:
     print(_vault_note, flush=True)
 
@@ -181,6 +185,8 @@ def _as_int(value):
     try:
         f = float(str(value).strip().replace(",", ""))
     except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f):        # 'inf' / 'nan' parse but are not numbers (QA-016)
         return None
     return int(f) if f == int(f) else None
 
@@ -732,6 +738,8 @@ def set_product_status(product_id):
 @app.get("/api/products/<int:product_id>/history")
 def get_product_history(product_id):
     c = con()
+    if not dbmod.one(c, "SELECT 1 FROM Dim_Product WHERE product_id = ?", (product_id,)):
+        return jsonify({"ok": False, "error": "No such item."}), 404      # as /movement does
     rows = dbmod.rows(c, f"""
         SELECT substr(d.calendar_date, 1, 7) AS month,
                SUM(f.quantity_sold) AS units, COUNT(DISTINCT f.date_id) AS tally_days
@@ -1414,7 +1422,11 @@ def get_fsn_decision_rules():
     """What to do about each SKU's FSN class (manuscript Sec. 3.3.1), with the
     per-semester velocity the "Review for Discontinuation" rule was judged on.
     ?threshold= (units per selling day) overrides the default."""
-    threshold = decision_rules.parse_threshold(request.args.get("threshold"))
+    raw = request.args.get("threshold")
+    threshold = decision_rules.parse_threshold(raw)
+    if raw not in (None, "") and decision_rules.parse_threshold(raw, strict=True) is None:
+        return jsonify({"ok": False, "errors": {"threshold": (
+            f"threshold must be a number of units per selling day from 0 to {decision_rules.MAX_THRESHOLD:g}.")}}), 400
     return jsonify(decision_rules.evaluate(con(), threshold))
 
 
@@ -1891,7 +1903,7 @@ def get_inventory_counts():
     counts). The interface shows the latest so whoever is counting can see
     where the existing data stops and what they are extending."""
     month = request.args.get("month") or ""
-    if not validation.ISO_MONTH_RE.match(month):
+    if not validation.is_iso_month(month):
         return jsonify({"ok": False, "errors": {"count_month": "Month must be YYYY-MM."}}), 400
 
     counts = dbmod.rows(con(), """
@@ -1986,10 +1998,11 @@ def import_inventory_counts():
         if not item:
             rejected.append({"row": i, "item": "", "reason": "No item name."}); continue
         item = str(item).strip()
-        if qty is None or qty < 0:
+        if qty is None or qty < 0 or qty > validation.MAX_COUNT_UNITS:
             rejected.append({"row": i, "item": item,
-                             "reason": "Units on hand must be a whole number >= 0."}); continue
-        if not validation.ISO_MONTH_RE.match(month):
+                             "reason": "Units on hand must be a whole number from 0 to "
+                                       f"{validation.MAX_COUNT_UNITS:,}."}); continue
+        if not validation.is_iso_month(month):
             rejected.append({"row": i, "item": item,
                              "reason": "No usable month (YYYY-MM)."}); continue
         if month > today_month:
@@ -2023,11 +2036,13 @@ def _save_imported_count(c, pid, month, qty, note, now):
     existed = dbmod.one(c, "SELECT 1 FROM Inventory_Count WHERE product_id = ? AND count_month = ?",
                         (pid, month))
     c.execute("""
-        INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged)
-        VALUES (?, ?, ?, ?, 'import', ?)
+        INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged,
+                                     seen_through_sale_id)
+        VALUES (?, ?, ?, ?, 'import', ?, ?)
         ON CONFLICT (product_id, count_month) DO UPDATE SET
-            quantity = excluded.quantity, note = excluded.note, date_logged = excluded.date_logged
-    """, (pid, month, qty, note, now))
+            quantity = excluded.quantity, note = excluded.note, date_logged = excluded.date_logged,
+            seen_through_sale_id = excluded.seen_through_sale_id
+    """, (pid, month, qty, note, now, dbmod.newest_sale_id(c)))
     return existed is not None
 
 
@@ -2127,15 +2142,17 @@ def add_inventory_count():
             return gate
 
     c.execute("""
-        INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO Inventory_Count (product_id, count_month, quantity, note, counted_by, date_logged,
+                                     seen_through_sale_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (product_id, count_month) DO UPDATE SET
             quantity = excluded.quantity,
             note = excluded.note,
             counted_by = excluded.counted_by,
-            date_logged = excluded.date_logged
+            date_logged = excluded.date_logged,
+            seen_through_sale_id = excluded.seen_through_sale_id
     """, (product_id, count_month, quantity, note, auth.current_user(),
-          datetime.now().isoformat(timespec="seconds")))
+          datetime.now().isoformat(timespec="seconds"), dbmod.newest_sale_id(c)))
     c.commit()
 
     product = dbmod.one(c, "SELECT item_name FROM Dim_Product WHERE product_id = ?", (product_id,))
@@ -2379,7 +2396,11 @@ def _table_names(c):
 
 @app.get("/api/calendar/<iso_date>")
 def get_date_flags(iso_date):
+    if not validation.is_iso_date(iso_date):
+        return jsonify({"ok": False, "errors": {"calendar_date": "Date must be a real date, YYYY-MM-DD."}}), 400
     row = dbmod.one(con(), "SELECT * FROM Dim_Date WHERE calendar_date = ?", (iso_date,))
+    if row is None:
+        return jsonify({"ok": False, "error": "That date is not in the calendar."}), 404
     return jsonify(row)
 
 
@@ -2562,6 +2583,8 @@ def get_entries_by_date():
     iso_date = request.args.get("date")
     if not iso_date:
         return jsonify({"ok": False, "errors": {"calendar_date": "date=YYYY-MM-DD is required."}}), 400
+    if not validation.is_iso_date(iso_date):
+        return jsonify({"ok": False, "errors": {"calendar_date": "Date must be a real date, YYYY-MM-DD."}}), 400
     rows = dbmod.rows(con(), """
         SELECT f.sale_id, f.product_id, d.calendar_date, f.quantity_sold,
                UPPER(f.transaction_type) AS transaction_type, f.imputation_flag, f.is_censored, f.entered_by,
@@ -2626,7 +2649,15 @@ def add_entry():
         "entered_by": auth.current_user(),
         "is_local": False,
     }
-    return jsonify({"ok": True, "entry": entry})
+    # Saved either way - the calendar can be wrong (a closure kept by mistake,
+    # an unplanned opening) - but said out loud, so a mistyped date is caught
+    # (QA-020).
+    day = dbmod.one(c, "SELECT * FROM Dim_Date WHERE calendar_date = ?", (calendar_date,))
+    warning = None
+    if day and day.get("is_store_closed"):
+        warning = (f"{calendar_date} is marked as a day the store was closed. If the date is wrong, "
+                   "fix the entry; if the store did open, reopen the day on the Calendar tab.")
+    return jsonify({"ok": True, "entry": entry, "warning": warning})
 
 
 @app.put("/api/tally/<int:sale_id>")
@@ -2650,6 +2681,16 @@ def edit_entry(sale_id):
     row = _tally_row(c, sale_id)
     if row is None:
         return jsonify({"ok": False, "error": "That entry no longer exists."}), 404
+    # The values the editor opened with. If the entry has changed since (someone
+    # else saved first), refuse rather than silently overwrite their change
+    # (QA-017). Optional, so an API caller that does not send it is unaffected.
+    expected = payload.get("expected")
+    if isinstance(expected, dict) and (
+            str(expected.get("calendar_date")) != row["calendar_date"]
+            or _as_int(expected.get("quantity_sold")) != row["quantity_sold"]):
+        return jsonify({"ok": False, "conflict": True, "error": (
+            f"Someone changed this entry since you opened it - it is now {row['quantity_sold']} on "
+            f"{row['calendar_date']}. Close and reopen it, then make your change again.")}), 409
 
     _extend_calendar(c)
     errors = validation.validate_entry(c, {**payload, "product_id": row["product_id"]})
@@ -2799,9 +2840,10 @@ def import_tally():
         if iso not in dates:
             rejected.append({"row": i, "item": item,
                              "reason": validation.calendar_gap_message(c, iso)}); continue
-        if qty is None or qty <= 0:
+        if qty is None or qty <= 0 or qty > validation.MAX_ENTRY_UNITS:
             rejected.append({"row": i, "item": item,
-                             "reason": "Quantity must be a whole number > 0."}); continue
+                             "reason": "Quantity must be a whole number from 1 to "
+                                       f"{validation.MAX_ENTRY_UNITS:,}."}); continue
         if ttype not in validation.TRANSACTION_TYPES:
             rejected.append({"row": i, "item": item,
                              "reason": f"Unknown transaction type '{ttype}'."}); continue
@@ -4445,5 +4487,15 @@ def get_forecast_models():
     })
 
 
+def require_database():
+    """Stop at start-up when ustore.db is missing, instead of serving a 500 on
+    every request (QA-021). Called by `python app.py` and serve.py, not at
+    import, so the tests can point the app at their own database."""
+    if not dbmod.DB_PATH.exists():
+        sys.exit(f"{dbmod.DB_PATH} not found - rebuild it first (see the repo README), "
+                 "or restore it with: python scripts/vault.py unlock")
+
+
 if __name__ == "__main__":
+    require_database()
     app.run(debug=False, port=5000)

@@ -255,7 +255,7 @@ def sheet_month(ws):
     return None
 
 
-def plan_sheets(files):
+def plan_sheets(files, unreadable=None):
     """Which sheet of which workbook to convert: [(path, [sheet names])],
     oldest workbook first, plus a note for every month found in more than one
     workbook. Opens each workbook read-only and reads only the header rows.
@@ -263,10 +263,21 @@ def plan_sheets(files):
     A month in several workbooks is taken from the most recently modified
     one: the store keeps extending its current workbook, so a second copy of
     a month is an update of the first, and adding the two would count every
-    sale in it twice."""
+    sale in it twice.
+
+    A workbook that cannot be opened (a broken download, a file renamed to
+    .xlsx) is left out and added to `unreadable` as (file name, reason); the
+    others are still read. One bad file used to stop the step altogether, so
+    no workbook was converted and new sales were silently left out."""
     found = []                         # (path, sheet, month)
     for path in files:
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        try:
+            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        except Exception as exc:       # zip / XML / permission errors all mean "cannot read it"
+            if unreadable is None:
+                raise
+            unreadable.append((os.path.basename(path), f"{type(exc).__name__}: {exc}"))
+            continue
         try:
             found += [(path, sn, sheet_month(wb[sn])) for sn in tbs_sheet_names(wb, path)]
         finally:
@@ -587,10 +598,13 @@ def main():
               f"kept {OUT_PATH} and the price files. (--force converts them again.)")
         return
 
-    plan, notes = plan_sheets(files)
+    unreadable = []
+    plan, notes = plan_sheets(files, unreadable)
     print(f"=== Tally workbooks in {SRC_DIR}/ ===")
     for fn, sheets in plan:
         print(f"  {os.path.basename(fn):45} {len(sheets):3} tally sheet(s)")
+    for name, reason in unreadable:
+        print(f"  SKIPPED unreadable workbook: {name} ({reason})")
     for note in notes:
         print("  NOTE:", note)
 
@@ -617,6 +631,17 @@ def main():
     print(f"\nWrote {n} rows -> {OUT_PATH}")
     print(f"Wrote {len(prices.get('tbs', []))} sheet prices -> {TBS_PRICES_CSV}, "
           f"{len(prices.get('may2024_dsr', []))} May 2024 retail prices -> {MAY_2024_DSR_PRICES_CSV}")
+    if unreadable:
+        # No fingerprint saved: the next run converts again and says so again,
+        # until the file is replaced or removed. The pipeline reads the SKIPPED
+        # lines and shows this step as a warning naming the files. They are
+        # printed again here because the pipeline keeps only the end of a
+        # step's output.
+        for name, reason in unreadable:
+            print(f"  SKIPPED unreadable workbook: {name} ({reason})")
+        print(f"\n{len(unreadable)} workbook(s) could not be read and were left out: "
+              + ", ".join(name for name, _ in unreadable))
+        return
     with open(STATE_PATH, "w", encoding="utf-8") as f:
         json.dump({"fingerprint": fingerprint, "converted_at":
                    datetime.datetime.now().isoformat(timespec="seconds"),

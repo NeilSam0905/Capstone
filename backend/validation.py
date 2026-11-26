@@ -28,6 +28,40 @@ def is_iso_date(value):
     return True
 
 
+def is_iso_month(value):
+    """A real month written YYYY-MM (01-12); '2026-13' matches the pattern but
+    is not one."""
+    return isinstance(value, str) and bool(ISO_MONTH_RE.match(value)) and 1 <= int(value[5:7]) <= 12
+
+
+# The most units one tally entry or one stock count may hold. The largest
+# real tally row is 700 and the largest stock count 8,839; a figure above these
+# is a typo (an extra zero or two), which would otherwise swamp ADUS, the
+# forecast and the reports (QA-019). A genuine bigger order is entered in parts.
+MAX_ENTRY_UNITS = 10_000
+MAX_COUNT_UNITS = 100_000
+
+
+def whole_number(raw, what, minimum, maximum):
+    """(int or None, message or None) for a quantity typed by staff. 'inf' and
+    'nan' parse as floats but are not quantities - refused here, not left to
+    crash int() (QA-016)."""
+    try:
+        n = float(raw)
+    except (TypeError, ValueError):
+        return None, f"{what} must be a number."
+    if not math.isfinite(n):
+        return None, f"{what} must be a number."
+    if n != int(n):
+        return None, f"{what} must be a whole number."
+    n = int(n)
+    if n < minimum:
+        return None, (f"{what} must be greater than zero." if minimum == 1 else f"{what} cannot be negative.")
+    if n > maximum:
+        return None, f"{what} cannot be more than {maximum:,} - check for an extra zero."
+    return n, None
+
+
 def calendar_gap_message(con, iso_date):
     """Why a date is not in Dim_Date. The calendar now extends itself to the
     end of next year before every dated save (scripts/calendar_extent.py), so
@@ -79,15 +113,9 @@ def validate_entry(con, payload):
     if quantity_sold in (None, ""):
         errors["quantity_sold"] = "Enter a quantity."
     else:
-        try:
-            n = float(quantity_sold)
-        except (TypeError, ValueError):
-            errors["quantity_sold"] = "Quantity must be a number."
-        else:
-            if n != int(n):
-                errors["quantity_sold"] = "Quantity must be a whole number."
-            elif int(n) <= 0:
-                errors["quantity_sold"] = "Quantity must be greater than zero."
+        _, problem = whole_number(quantity_sold, "Quantity", 1, MAX_ENTRY_UNITS)
+        if problem:
+            errors["quantity_sold"] = problem
 
     calendar_date = payload.get("calendar_date")
     if not calendar_date:
@@ -143,20 +171,14 @@ def validate_inventory_count(con, payload):
     if quantity in (None, ""):
         errors["quantity"] = "Enter the units on hand."
     else:
-        try:
-            n = float(quantity)
-        except (TypeError, ValueError):
-            errors["quantity"] = "Units on hand must be a number."
-        else:
-            if n != int(n):
-                errors["quantity"] = "Units on hand must be a whole number."
-            elif int(n) < 0:
-                errors["quantity"] = "Units on hand cannot be negative."
+        _, problem = whole_number(quantity, "Units on hand", 0, MAX_COUNT_UNITS)
+        if problem:
+            errors["quantity"] = problem
 
     count_month = payload.get("count_month")
     if not count_month:
         errors["count_month"] = "Pick a month."
-    elif not ISO_MONTH_RE.match(count_month):
+    elif not is_iso_month(count_month):
         errors["count_month"] = "Month must be YYYY-MM."
     elif count_month > date.today().strftime("%Y-%m"):
         errors["count_month"] = "Month cannot be in the future."

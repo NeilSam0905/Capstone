@@ -8,7 +8,8 @@ same denominators, just re-expressed as live reads so a new tally shows up
 immediately instead of needing a fixture regeneration.
 
 Nothing here invents a number: anything the pipeline has not produced
-(current_stock, days_of_supply) stays None/null rather than being guessed.
+(current_stock with no count on record, days_of_supply with no demand rate)
+stays None/null rather than being guessed.
 """
 import csv
 import re
@@ -54,16 +55,25 @@ def load_counted_stock(con):
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Inventory_Count'"
     ).fetchone():
         return {}
-    return {
-        r["product_id"]: {"month": r["count_month"], "qty": float(r["quantity"]),
-                          "day": count_day(r["count_month"], r["date_logged"])}
-        for r in rows(con, """
-            SELECT product_id, count_month, quantity, date_logged
+    cols = {r[1] for r in con.execute("PRAGMA table_info(Inventory_Count)")}
+    seen_col = "seen_through_sale_id" if "seen_through_sale_id" in cols else "NULL"
+    out = {}
+    for r in rows(con, f"""
+            SELECT product_id, count_month, quantity, date_logged, {seen_col} AS seen
               FROM Inventory_Count
              WHERE (product_id, count_month) IN (
                    SELECT product_id, MAX(count_month) FROM Inventory_Count GROUP BY product_id)
-        """)
-    }
+        """):
+        day = count_day(r["count_month"], r["date_logged"])
+        typed_that_day = bool(r["date_logged"]) and str(r["date_logged"])[:10] == day
+        out[r["product_id"]] = {
+            "month": r["count_month"], "qty": float(r["quantity"]), "day": day,
+            # Only a count that stands for the day it was typed knows which of
+            # that day's sales it already saw; a count standing for the 1st of
+            # its month comes before every sale of that day.
+            "seen": r["seen"] if typed_that_day else None,
+        }
+    return out
 
 
 def count_day(month, logged):
@@ -78,25 +88,43 @@ def count_day(month, logged):
     return f"{month}-01"
 
 
-def units_out_since(con, day_by_pid):
+def units_out_since(con, day_by_pid, seen_by_pid=None):
     """product_id -> units that left the shelf on or after that product's
     count day: every tallied row, whatever its type - sales, and the damaged,
     promo and transfer removals that are not demand but do empty the shelf.
-    The count day itself is included: whether that day's first sales came
-    before or after the count is unknown, and counting them makes the
-    estimate lower (an earlier reorder alert), not higher (a missed one)."""
+
+    On the count day itself, a sale entered in the app (tally_date_flag = 0)
+    whose sale_id is at or below the count's `seen_through_sale_id` was
+    already in the tally when the count was typed - it left the shelf before
+    the count, so the count already reflects it and it is not taken off again
+    (QA-040: counting 15 after selling 4 that day must show 15, not 11).
+    App rows keep their sale_id across pipeline runs (step2 only reloads
+    tally_date_flag = 1), so the comparison stays valid.
+
+    Everything else on the count day is still included: a workbook-loaded row
+    has no time and is renumbered on every run, and an older count has no
+    marker, so whether such a sale came before or after the count is unknown -
+    counting it makes the estimate lower (an earlier reorder alert), not
+    higher (a missed one)."""
     if not day_by_pid:
         return {}
+    seen_by_pid = seen_by_pid or {}
     out = defaultdict(float)
     for r in rows(con, """
-        SELECT f.product_id, d.calendar_date, SUM(f.quantity_sold) AS units
+        SELECT f.product_id, d.calendar_date, f.rowid AS sale_id,
+               f.tally_date_flag AS flag, f.quantity_sold AS units
           FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
          WHERE d.calendar_date >= ?
-         GROUP BY f.product_id, d.calendar_date
     """, (min(day_by_pid.values()),)):
-        day = day_by_pid.get(r["product_id"])
-        if day and r["calendar_date"] >= day:
-            out[r["product_id"]] += r["units"] or 0
+        pid = r["product_id"]
+        day = day_by_pid.get(pid)
+        if not day or r["calendar_date"] < day:
+            continue
+        seen = seen_by_pid.get(pid)
+        if (r["calendar_date"] == day and seen is not None and r["flag"] == 0
+                and r["sale_id"] <= seen):
+            continue
+        out[pid] += r["units"] or 0
     return out
 
 
@@ -172,7 +200,7 @@ def load_current_stock(con, name_by_id):
             out[pid] = {**from_csv, "source": "workbook"}
 
     days = {pid: s["day"] for pid, s in out.items() if s["source"] == "counted"}
-    gone = units_out_since(con, days)
+    gone = units_out_since(con, days, {pid: out[pid].get("seen") for pid in days})
     for pid in days:
         s = out[pid]
         s["counted_qty"] = s["qty"]
@@ -254,22 +282,7 @@ def compute_stats(con, date_range=None, start=None, end=None):
     for m in monthly:
         series[m["product_id"]].append(m)
 
-    # generate_fixtures.py picks this via a correlated MAX(...) subquery,
-    # fine for a one-off script but O(n^2) without an index when re-run on
-    # every request; a single pass over the candidate rows is equivalent
-    # and doesn't need one.
-    dos_candidates = rows(con, """
-        SELECT f.product_id, d.calendar_date, f.days_of_supply
-        FROM Fact_Sales f JOIN Dim_Date d ON d.date_id = f.date_id
-        WHERE f.days_of_supply IS NOT NULL
-    """)
-    dos, dos_date = {}, {}
-    for r in dos_candidates:
-        pid = r["product_id"]
-        if pid not in dos_date or r["calendar_date"] > dos_date[pid]:
-            dos_date[pid] = r["calendar_date"]
-            dos[pid] = r["days_of_supply"]
-
+    rate = load_demand_rate(con)
     stock = load_current_stock(con, name_by_id)
 
     # A product outside the window sold nothing in it — which is a real zero,
@@ -309,9 +322,38 @@ def compute_stats(con, date_range=None, start=None, end=None):
             "stock_counted": int(st["counted_qty"]) if st and "counted_qty" in st else None,
             "stock_out_since_count": int(st["out_since"]) if st and "out_since" in st else None,
             "stock_count_day": st.get("day") if st else None,
-            "days_of_supply": round(dos[pid], 1) if pid in dos else None,
+            "days_of_supply": days_of_supply(int(st["qty"]) if st else None, rate.get(pid)),
         }
     return stats, series
+
+
+def load_demand_rate(con):
+    """product_id -> the daily demand rate the reorder point was priced on
+    (Result_Prescriptive.avg_daily_demand), for items that HAVE a reorder
+    point. The same rate /api/reorder divides by for days_cover_remaining, so
+    the Stock Position and Current Stock "days" agree with the Reorder list
+    (QA-041). Items with no learnable rate get no days figure anywhere."""
+    if not con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Result_Prescriptive'"
+    ).fetchone():
+        return {}
+    return {r["product_id"]: r["rate"] for r in rows(con, """
+        SELECT product_id, MAX(avg_daily_demand) AS rate
+          FROM Result_Prescriptive
+         WHERE reorder_point IS NOT NULL
+         GROUP BY product_id
+    """)}
+
+
+def days_of_supply(stock, rate):
+    """Days the units on hand last at the reorder rate - current_stock (the
+    running balance) / rate, as app.py computes days_cover_remaining. It used
+    to be the pipeline's Fact_Sales.days_of_supply, a workbook-era figure that
+    ignored staff counts and every sale since, so the same item could read
+    168 days on Stock Position and 1,065 on Reorder."""
+    if stock is None or not rate or rate <= 0:
+        return None
+    return round(stock / rate, 1)
 
 
 def compute_catalog(con, date_range=None, start=None, end=None):
@@ -434,30 +476,27 @@ def in_range(month, date_range, months, start=None, end=None):
     return (lo is None or month >= lo) and (hi is None or month <= hi)
 
 
-def quantile(sorted_vals, q):
-    if not sorted_vals:
-        return 0.0
-    pos = (len(sorted_vals) - 1) * q
-    lo, hi = int(pos), min(int(pos) + 1, len(sorted_vals) - 1)
-    return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (pos - lo)
-
-
 def fsn_sensitivity(con, thresholds=(75, 80, 85)):
-    """Reproduces step3_fsn_classification.py's sensitivity table, same as
-    generate_fixtures.py: the F/S split at three ADUS percentile cutoffs."""
-    product_ids = [r["product_id"] for r in rows(con, "SELECT product_id FROM Dim_Product")]
-    stats, _ = compute_stats(con)
-    moving = sorted(s["adus"] for s in stats.values() if s["active_tally_dates"] > 0)
-    n_non_moving = sum(1 for pid in product_ids if pid not in stats or stats[pid]["active_tally_dates"] == 0)
+    """step3_fsn_classification.py's sensitivity table - the F/S/N split at
+    three ADUS percentile cutoffs - computed by step3's own classify(), so it
+    applies the same two rules as the live classes: no Fast item without a
+    sale in the last 90 days, and an item with no recorded sales is
+    Non-moving. The 80th row therefore equals Dim_Product's split. It used to
+    rank ADUS alone (p80 F=63 against a live F=31 - QA-012)."""
+    import pandas as pd
+    import step3_fsn_classification as step3      # scripts/, on sys.path via pipeline
 
+    products = pd.read_sql("SELECT product_id, item_name, entry_date FROM Dim_Product", con)
+    r = step3.classify(products, step3.load_fact(con))
     out = {}
     for t in thresholds:
-        cutoff = quantile(moving, t / 100)
-        fast = sum(1 for v in moving if v >= cutoff)
+        if f"class_{t}" not in r.moving:
+            continue
+        labels = r.moving[f"class_{t}"]
         out[f"p{t}"] = {
-            "F": fast,
-            "S": len(moving) - fast,
-            "N": n_non_moving,
-            "cutoff": round(cutoff, 4),
+            "F": int((labels == "F").sum()),
+            "S": int((labels == "S").sum()),
+            "N": int(len(r.non_moving)),
+            "cutoff": round(float(r.cutoffs[t]), 4),
         }
     return out

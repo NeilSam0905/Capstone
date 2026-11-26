@@ -175,6 +175,9 @@ SKIPPABLE = {"step4", "step4d"}
 # "error", so the dashboard reports the check instead of asking for a re-run
 # that cannot change it. Any other non-zero exit is still a failure.
 WARNING_EXIT = {"step5": 3}
+# step0 exits 0 when it left a workbook out because it could not be read; the
+# line it prints for each one marks the step as a warning (QA-034).
+_UNREADABLE = re.compile(r"SKIPPED unreadable workbook: (.+?) \(")
 
 _lock = threading.Lock()
 _cancel_requested = threading.Event()
@@ -328,6 +331,11 @@ def _summarise_warning(step_id, stdout):
                 f"The other {eligible - priced} had no sale in the last year of records, "
                 f"so there is no recent demand to base a reorder point on. Running the "
                 f"update again will not change this.")
+    names = list(dict.fromkeys(_UNREADABLE.findall(stdout or ""))) if step_id == "step0" else []
+    if names:
+        return (f"Could not read {', '.join(repr(n) for n in names)} in rawdata/, so it was left out; "
+                f"the other workbooks were converted. Replace it with a good copy (Add Tally Workbook) "
+                f"or remove it, then run the update again.")
     return ("This step finished, but a check at its end did not pass. "
             "See Technical details for the figures.")
 
@@ -469,7 +477,9 @@ def _run_all():
             cancelled = True
             break
 
-        warning = not timed_out and sid in WARNING_EXIT and returncode == WARNING_EXIT[sid]
+        warning = not timed_out and (
+            (sid in WARNING_EXIT and returncode == WARNING_EXIT[sid])
+            or (sid == "step0" and returncode == 0 and bool(_UNREADABLE.search(stdout or ""))))
         failed = (timed_out or returncode != 0) and not warning
         with _lock:
             entry["duration_s"] = duration
@@ -683,9 +693,14 @@ def get_staleness(con):
                       "scripts/create_schema.py to enable the staleness check.",
         }
 
-    running = con.execute(
-        "SELECT COUNT(*) FROM Pipeline_Run WHERE status = 'running'"
-    ).fetchone()[0] > 0
+    # A row says 'running' until _finish_run_record closes it. If the backend
+    # died mid-run (window closed, power cut, crash) nothing ever closes it, and
+    # the half-rebuilt database read as "an update is running" for ever, with
+    # no warning (QA-037). Only the run THIS process is executing is running;
+    # any other 'running' row was abandoned and counts as a failed run.
+    with _lock:
+        running = _state["status"] == "running"
+        live_run = _state["run_id"]     # None for a moment while a new run opens its row
 
     # A run that stopped part-way (Stop pressed, or a step failed) leaves the
     # database half-rebuilt: step3 may have rewritten fsn_class while step5
@@ -696,9 +711,10 @@ def get_staleness(con):
     latest = con.execute(
         "SELECT run_id, status, finished_at FROM Pipeline_Run ORDER BY run_id DESC LIMIT 1"
     ).fetchone()
-    interrupted = (
-        latest["status"] if latest is not None and latest["status"] in ("cancelled", "error") else None
-    )
+    latest_status = latest["status"] if latest is not None else None
+    if latest_status == "running" and not (running and live_run in (None, latest["run_id"])):
+        latest_status = "error"                 # abandoned: the backend stopped mid-run
+    interrupted = latest_status if latest_status in ("cancelled", "error") else None
 
     # A "warning" run finished and wrote every result (see WARNING_EXIT), so it
     # counts as completed here.

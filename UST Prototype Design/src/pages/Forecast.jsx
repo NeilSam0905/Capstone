@@ -6,7 +6,8 @@ import {
 } from '../services/dataService';
 import useData from '../hooks/useData';
 import Pending, { Loading } from '../components/Pending';
-import { ActualVsPredictedChart, LineChart, MARK_KINDS, ScrollForecastChart } from '../components/charts';
+import { ActualVsPredictedChart, LineChart, ScrollForecastChart } from '../components/charts';
+import { MARK_KINDS } from '../lib/markKinds';
 import { num, shortMonth, longMonth, monthName, usDate, roundNice, pesoK, FSN_TONE, FSN_LABEL } from '../lib/format';
 import SearchSelect from '../components/SearchSelect';
 import Icon from '../components/Icon';
@@ -925,7 +926,10 @@ function Reliability({ fd, model }) {
   const wape = fd.checks?.length ? wapeOf(fd.checks, 'pred_30d') : null;
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      <span className={`tag tag--${reliable ? 'ok' : 'warn'}`}>{reliable ? 'Reliable' : 'Rough estimate'}</span>
+      {/* "Beats a simple guess", not "Reliable": it is judged against repeating the
+          last 30 days, not against the actual sales, so it can sit beside a large
+          error figure (QA-032). */}
+      <span className={`tag tag--${reliable ? 'ok' : 'warn'}`}>{reliable ? RELIABLE_LABEL : 'Rough estimate'}</span>
       {wape != null && (
         <span className={`tag tag--${wape <= WAPE_TARGET ? 'ok' : 'crit'}`}
               title={`Units missed as a share of units sold, over the past 30-day checks (target ${WAPE_TARGET}% or lower). `
@@ -943,6 +947,8 @@ function Reliability({ fd, model }) {
 const units = v => `${num(Math.round(v))} unit${Math.round(v) === 1 ? '' : 's'}`;
 const pctFmt = v => `${num(Math.round(v))}%`;
 
+const RELIABLE_LABEL = 'Beats a simple guess';
+
 function ReliabilityDetail({ m, reliable, model, fd }) {
   const periods = `${num(m.n_obs)} past 30-day period${m.n_obs === 1 ? '' : 's'}`;
   const ofMonth = m.mean_actual_30d > 0 ? Math.round(m.mae / m.mean_actual_30d * 100) : null;
@@ -952,7 +958,7 @@ function ReliabilityDetail({ m, reliable, model, fd }) {
   const missing = rows.filter(r => !r.made).length;
   return (
     <>
-      <div className="infotip__h">What &ldquo;{reliable ? 'Reliable' : 'Rough estimate'}&rdquo; means</div>
+      <div className="infotip__h">What &ldquo;{reliable ? RELIABLE_LABEL : 'Rough estimate'}&rdquo; means</div>
       <p>
         To test a forecast, the system goes back in time: it forecasts past months as if it did not know
         their sales yet, then compares each guess with what really sold.
@@ -960,7 +966,8 @@ function ReliabilityDetail({ m, reliable, model, fd }) {
       <p>
         {reliable
           ? <>This forecast <b>did better</b> than simply assuming the next 30 days will sell like the last 30,
-            so it is a useful guide.</>
+            so it is a better guide than that guess. It can still miss by a lot - the error badge beside
+            it says by how much.</>
           : <>This forecast <b>did no better</b> than simply assuming the next 30 days will sell like the
             last 30. Treat its number as a ballpark, not an exact amount, and check it against what you
             know, such as upcoming events or bulk orders.</>}

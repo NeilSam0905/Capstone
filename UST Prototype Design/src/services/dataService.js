@@ -1,3 +1,4 @@
+import { localIsoDate } from '../lib/format';
 /**
  * dataService — the ONLY module in this app that touches data.
  *
@@ -445,7 +446,8 @@ export const getDecisionRules = threshold =>
   get(`/fsn/decision-rules${qs({ threshold })}`);
 
 /** Stock position IS available for the items inventory covers — real
- *  counts and step2's days_of_supply. It carries no ROP, so it cannot say
+ *  counts and days_of_supply (on hand / the reorder demand rate, the same as
+ *  the Reorder list's days of cover). It carries no ROP, so it cannot say
  *  "reorder now"; it reports what is on hand and how long it lasts. */
 export const getStockPosition = (filters = {}) =>
   get(`/stock${qs({ supplier: filters.supplier, category: filters.category })}`);
@@ -467,6 +469,10 @@ export const getEntriesByDate = isoDate => get(`/tally${qs({ date: isoDate })}`)
  *  every one of these rules, plus rules the client can't check on its own
  *  (product/date existence). See backend/validation.py. Returns a
  *  field->message map; an empty object means valid. */
+/** Most units one entry may hold - the same cap as backend/validation.py
+ *  MAX_ENTRY_UNITS (QA-019). */
+const MAX_ENTRY_UNITS = 10000;
+
 export function validateEntry({ product_id, quantity_sold, calendar_date, transaction_type, entry_price_php }) {
   const errors = {};
   if (entry_price_php != null && entry_price_php !== '') {
@@ -482,10 +488,11 @@ export function validateEntry({ product_id, quantity_sold, calendar_date, transa
     if (!Number.isFinite(n)) errors.quantity_sold = 'Quantity must be a number.';
     else if (!Number.isInteger(n)) errors.quantity_sold = 'Quantity must be a whole number.';
     else if (n <= 0) errors.quantity_sold = 'Quantity must be greater than zero.';
+    else if (n > MAX_ENTRY_UNITS) errors.quantity_sold = `Quantity cannot be more than ${MAX_ENTRY_UNITS.toLocaleString()} - check for an extra zero.`;
   }
   if (!calendar_date) errors.calendar_date = 'Pick a date.';
   else if (!/^\d{4}-\d{2}-\d{2}$/.test(calendar_date)) errors.calendar_date = 'Date must be YYYY-MM-DD.';
-  else if (calendar_date > new Date().toISOString().slice(0, 10)) errors.calendar_date = 'Date cannot be in the future.';
+  else if (calendar_date > localIsoDate()) errors.calendar_date = 'Date cannot be in the future.';
   if (!transaction_type) errors.transaction_type = 'Select a transaction type.';
   else if (!TRANSACTION_TYPES.includes(transaction_type)) errors.transaction_type = 'Unknown transaction type.';
   return errors;
@@ -510,7 +517,10 @@ export async function addEntry(entry) {
 
 /** Correct a tally entry's date, quantity or type (backend edit_entry). The
  *  item stays; entries loaded from the tally workbook are changed there. */
-export async function editEntry(saleId, entry) {
+/** `original` ({calendar_date, quantity_sold}) is the entry as the editor
+ *  opened it: the server refuses the save (409) if someone changed the entry in
+ *  between, instead of overwriting their change (QA-017). */
+export async function editEntry(saleId, entry, original) {
   // The item is not part of an edit, so it is never the field at fault.
   const errors = validateEntry({ ...entry, product_id: saleId });
   if (Object.keys(errors).length) return { ok: false, errors };
@@ -519,6 +529,7 @@ export async function editEntry(saleId, entry) {
     calendar_date: entry.calendar_date,
     transaction_type: entry.transaction_type,
     order_type: entry.order_type,
+    ...(original ? { expected: { calendar_date: original.calendar_date, quantity_sold: original.quantity_sold } } : {}),
   });
 }
 

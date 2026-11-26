@@ -1,5 +1,12 @@
 /** Shared formatters and chart palette (kept out of charts.jsx so that file
  *  only exports components — see react-refresh/only-export-components). */
+/** Today as YYYY-MM-DD in this computer's own time zone. Not
+ *  toISOString(), which is UTC: in the Philippines (UTC+8) that is still
+ *  yesterday until 8 a.m., so a sale typed early in the morning read as
+ *  "in the future" (QA-027). The backend uses its local date the same way. */
+export const localIsoDate = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 export const peso = n => '₱' + Math.round(n).toLocaleString();
 // Under ₱1,000 in plain pesos: a chart's zero reads "₱0", not "₱0K", and a
 // small figure is not rounded away to "₱0K".

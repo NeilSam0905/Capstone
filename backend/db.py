@@ -212,7 +212,20 @@ _COLUMNS = (
     # the price one sale went at, typed in Sales Tally (see pesos() below);
     # NULL = the item's listed price
     ("Fact_Sales", "entry_price_php", "REAL"),
+    # the newest Fact_Sales.sale_id when a stock count was saved: that day's
+    # app-entered sales at or below it were already off the shelf at the count
+    # (catalog.units_out_since, QA-040)
+    ("Inventory_Count", "seen_through_sale_id", "INTEGER"),
 )
+
+
+def newest_sale_id(con):
+    """The newest Fact_Sales.sale_id (0 when there are none, or no table) -
+    stored with a stock count as seen_through_sale_id (catalog.units_out_since)."""
+    try:
+        return con.execute("SELECT COALESCE(MAX(sale_id), 0) FROM Fact_Sales").fetchone()[0]
+    except sqlite3.OperationalError:
+        return 0
 
 
 def _add_missing_columns(con):

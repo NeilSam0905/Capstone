@@ -278,6 +278,7 @@ CREATE TABLE IF NOT EXISTS Inventory_Count (
     note          TEXT,
     counted_by    TEXT,
     date_logged   TEXT,
+    seen_through_sale_id INTEGER,     -- newest Fact_Sales.sale_id when saved (catalog.units_out_since)
     UNIQUE (product_id, count_month),
     FOREIGN KEY (product_id) REFERENCES Dim_Product (product_id)
 );

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { getBatchReport, getMonths, getMeta, batchReportPdfUrl, batchReportCsvUrl, batchReportXlsxUrl } from '../services/dataService';
 import useData from '../hooks/useData';
 import { Loading } from '../components/Pending';
+import ErrorBanner from '../components/ErrorBanner';
 import Icon from '../components/Icon';
 import ActiveThumb from '../components/ActiveThumb';
 import InfoTip from '../components/InfoTip';
@@ -56,7 +57,10 @@ function BatchSales({ filters, period, setPeriod }) {
     ? filters.supplier
     : undefined;
 
-  const { data: report, loading } = useData(
+  // `error`: a failed load keeps the previous period's rows in `report`, and
+  // showing them under the new period's heading read as that period's sales
+  // (QA-039) - so a failure shows the error instead.
+  const { data: report, loading, error } = useData(
     () => (selected ? getBatchReport(selected, supplier) : Promise.resolve([])),
     [selected?.year, selected?.month, selected?.start, selected?.end, supplier],
     []
@@ -200,7 +204,7 @@ function BatchSales({ filters, period, setPeriod }) {
         </div>
       </div>
 
-      {loading ? <Loading label="Building report…" /> : report.length === 0 ? (
+      {loading ? <Loading label="Building report…" /> : error ? <ErrorBanner error={error} /> : report.length === 0 ? (
         <div className="empty">
           {supplier
             ? `${supplier} recorded no sales for ${selected ? label : 'this period'}.`

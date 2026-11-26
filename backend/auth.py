@@ -178,9 +178,20 @@ def locked_for(addr):
 
 
 def _record_failure(addr):
+    """Count one wrong attempt. Failures older than LOCKOUT_SECONDS that never
+    reached the limit are forgotten, and the lockout runs LOCKOUT_SECONDS from
+    the failure that reached it. Measuring the window from the FIRST failure
+    let one stray old mistake expire the counter instead of locking: six quick
+    guesses after it all went through (QA-036)."""
+    now = time.monotonic()
     with _failures_lock:
-        count, since = _failures.get(addr, (0, time.monotonic()))
-        _failures[addr] = (count + 1, since if count else time.monotonic())
+        count, since = _failures.get(addr, (0, now))
+        if count < MAX_FAILURES and now - since > LOCKOUT_SECONDS:
+            count, since = 0, now
+        count += 1
+        if count == 1 or count == MAX_FAILURES:
+            since = now
+        _failures[addr] = (count, since)
 
 
 def check_login(c, username, password, addr):

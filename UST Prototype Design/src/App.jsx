@@ -1,14 +1,30 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { startPrefetch, stopPrefetch } from './services/prefetch';
 import FilterBar from './components/FilterBar';
 import Login from './pages/Login';
-import Overview from './pages/Overview';
-import Forecast from './pages/Forecast';
-import Classification from './pages/Classification';
-import Reorder from './pages/Reorder';
-import BatchReport from './pages/BatchReport';
 import TallyInterface from './pages/TallyInterface';
-import PowerBIDashboard from './pages/PowerBIDashboard';
+import { Loading } from './components/Pending';
+// The dashboard pages load on first use, each in its own file: one bundle of
+// every page came to 513 kB, over Vite's 500 kB warning (QA-006). The Tally
+// Interface, the screen staff open first, stays in the main bundle. Starting
+// each import here, at module load, means they download in the background
+// right after sign-in, so opening a page does not wait on the network.
+const pageImports = {
+  overview:       () => import('./pages/Overview'),
+  classification: () => import('./pages/Classification'),
+  forecast:       () => import('./pages/Forecast'),
+  reorder:        () => import('./pages/Reorder'),
+  report:         () => import('./pages/BatchReport'),
+  powerbi:        () => import('./pages/PowerBIDashboard'),
+};
+const Overview = lazy(pageImports.overview);
+const Classification = lazy(pageImports.classification);
+const Forecast = lazy(pageImports.forecast);
+const Reorder = lazy(pageImports.reorder);
+const BatchReport = lazy(pageImports.report);
+const PowerBIDashboard = lazy(pageImports.powerbi);
+/** Fetch every page's code once the user is signed in (see Shell). */
+const preloadPages = () => Object.values(pageImports).forEach(load => { load().catch(() => {}); });
 import Icon from './components/Icon';
 import ActiveThumb from './components/ActiveThumb';
 import ErrorBanner from './components/ErrorBanner';
@@ -146,7 +162,7 @@ function Shell({ user, signOut }) {
   // Warm every dashboard page's data in the background from the start, so
   // the first visit to each paints at once (services/prefetch.js). Only once
   // signed in: before that every request would be refused.
-  useEffect(() => { startPrefetch(); }, []);
+  useEffect(() => { startPrefetch(); preloadPages(); }, []);
 
   // AdminConfirm sits beside whichever view is showing: an edit to a saved
   // record by anyone but the admin waits on it, from either side of the app.
@@ -318,6 +334,7 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
               Alerts, the FSN card into Classification. */}
           {/* Keyed on the page, so each page fades up as it arrives. */}
           <div key={page} className="page-enter">
+            <Suspense fallback={<Loading label="Opening…" />}>
             <PageComponent
               filters={pageFilters}
               setPage={setPage}
@@ -328,6 +345,7 @@ function Dashboard({ page, setPage, filters, setFilters, setView, user, signOut 
               } : {})}
               {...(page === 'overview' ? { saleMonths } : {})}
             />
+            </Suspense>
           </div>
         </div>
       </div>

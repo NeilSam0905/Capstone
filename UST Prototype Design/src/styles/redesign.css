@@ -7,7 +7,7 @@
   /* Brand */
   --gold:        #F4B400;   /* ustore primary gold */
   --gold-bright: #FFC629;   /* highlight */
-  --gold-deep:   #A77B06;   /* gold text on white (legible) */
+  --gold-deep:   #8C6705;   /* gold text on white: 5.2:1, 4.7:1 on gold-wash (was #A77B06, 3.8:1 - QA-033) */
   --gold-wash:   #FDF4DC;   /* gold tint surface */
   --gold-line:   #F0DCA0;
   --gold-hover:  #DCA200;   /* scrollbar thumb on hover */
@@ -30,8 +30,9 @@
   --muted:  #716B5D;
 
   /* Status (muted, institutional) */
-  --ok:    #2E7D55;  --ok-bg:    #E7F2EC;  --ok-line:    #BFE0CD;
-  --warn:  #B5791A;  --warn-bg:  #FBF1DC;  --warn-line:  #EAD3A0;
+  --ok:    #2C7952;  --ok-bg:    #E7F2EC;  --ok-line:    #BFE0CD;
+  --warn:  #946315;  --warn-bg:  #FBF1DC;  --warn-line:  #EAD3A0;
+  /* --ok / --warn darkened to reach 4.5:1 on their -bg tints (were 4.4 and 3.3:1 - QA-033) */
   --crit:  #C1452F;  --crit-bg:  #FBE9E5;  --crit-line:  #EFC4BB;
   --info:  #2C5E8A;  --info-bg:  #E8F0F7;  --info-line:  #C3D8EC;
   --hvl:   #6B4FB0;  --hvl-bg:   #EFEAF8;  --hvl-line:   #D3C6EE;

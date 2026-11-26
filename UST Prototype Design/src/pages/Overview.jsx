@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   getProducts, getStockPosition, getReorderAlerts, getAdvisories, getMeta, getOverviewPerformance,
   getSuppliers, getCategories, getMonths,
@@ -1178,14 +1178,16 @@ function ProductsModal({ open, onClose, products, stock }) {
 
   // Reset on open: this answers a fresh question each time, and reopening onto
   // a stale search reads as missing data.
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (open) {
       setQ('');
       setFsn('All');
       setCategory(ALL_CATEGORIES);
       setSupplier(ALL_SUPPLIERS);
     }
-  }, [open]);
+  }
 
   const stockById = useMemo(
     () => new Map((stock?.items ?? []).map(p => [p.product_id, p.current_stock])),

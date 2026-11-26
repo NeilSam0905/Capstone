@@ -9,6 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import { num, DONUT_COLORS } from '../lib/format';
 import { reducedMotion } from '../lib/motion';
+import { MARK_KINDS } from '../lib/markKinds';
 
 /** Map a pointer event into an SVG's own viewBox coordinates, and back again.
  *
@@ -54,14 +55,6 @@ function ChartTip({ label, value, sub, notes }) {
   );
 }
 
-/** A calendar entry's colour on the forecast chart; exported for its legend. */
-export const MARK_KINDS = {
-  event:      { label: 'Event',          color: 'var(--info)' },
-  closed:     { label: 'Store closed',   color: 'var(--crit)' },
-  enrollment: { label: 'Enrollment',     color: 'var(--ok)' },
-  exams:      { label: 'Exams',          color: 'var(--hvl)' },
-  break:      { label: 'Event/Holiday', color: 'var(--muted)' },
-};
 
 /** [callback ref, width in px] for an element, kept current as it resizes.
  *  0 until the element is laid out. A callback ref rather than an effect, so

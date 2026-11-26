@@ -22,7 +22,7 @@ import ComboBox from '../components/ComboBox';
 import InfoTip from '../components/InfoTip';
 import SearchSelect from '../components/SearchSelect';
 import Modal from '../components/Modal';
-import { num, usDate, usDateTime, longMonth, displayUser, stockNote } from '../lib/format';
+import { num, usDate, usDateTime, longMonth, displayUser, stockNote, localIsoDate } from '../lib/format';
 import brandMark from '../assets/ustore-mark.png';
 import { TALLY_TAB_KEY } from '../config';
 
@@ -46,7 +46,7 @@ const ENTRY_KINDS = [
 const KIND_HINT = Object.fromEntries(ENTRY_KINDS.map(k => [k.value, k.hint]));
 const ORDER_LABEL = { bulk: 'BULK', pre_order: 'PRE-ORDER' };
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localIsoDate();   // local, not UTC (QA-027)
 
 /* ------------------------------------------------- shared form helpers */
 
@@ -708,7 +708,7 @@ function SalesTally({ products, onSaved, recent, recentLoading }) {
       return;
     }
     setErrors({});
-    setSaved(result.entry);
+    setSaved({ ...result.entry, warning: result.warning });
     setForm(f => ({ ...f, product_id: '', quantity_sold: '', entry_price_php: '' }));
     onSaved();
   }
@@ -784,6 +784,11 @@ function SalesTally({ products, onSaved, recent, recentLoading }) {
             Recorded {saved.quantity_sold} × {saved.item_name}
             {saved.entry_price_php != null ? ` at ${pesoExact(saved.entry_price_php)}` : ''} ({saved.transaction_type}
             {ORDER_LABEL[saved.order_type] ? ` · ${ORDER_LABEL[saved.order_type]}` : ''})
+            {saved.warning && (
+              <span className="warn-text" role="status" style={{ display: 'block', color: 'var(--warn)', marginTop: 4 }}>
+                {saved.warning}
+              </span>
+            )}
           </span>
         ) : (
           <span className="hint"></span>
@@ -1242,9 +1247,11 @@ function AddItemModal({ open, products, onClose, onAdded }) {
   const [busy, setBusy] = useState(false);
 
   // Clear on open so a cancelled attempt does not reappear half-filled.
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (open) { setItem({ item_name: '', category: '', supplier_name: '' }); setErrors({}); }
-  }, [open]);
+  }
 
   const categories = categoriesOf(products);
   const suppliers = [...new Set(products.map(p => p.supplier_name).filter(Boolean))].sort();
@@ -1385,12 +1392,14 @@ function CurrentStockModal({ open, onClose, onChanged }) {
   // Reset the filters each time it opens: the question this answers is asked
   // fresh ("what do we have right now"), and reopening onto someone's stale
   // search looks like missing data.
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (open) {
       setQ(''); setCategory(ALL_CATEGORIES); setSupplier(ALL_SUPPLIERS); setStockOnly(false);
       setEditing(null); setMessage(null);
     }
-  }, [open]);
+  }
 
   // stable, so the Saved dialog's Modal does not re-run its focus effect on
   // every render and take focus off Confirm
@@ -2414,7 +2423,7 @@ function TallyItem({ entry, onSaved, showDate }) {
     setBusy(true);
     const r = await editEntry(entry.sale_id, {
       calendar_date: form.calendar_date, quantity_sold: form.quantity_sold, transaction_type, order_type,
-    });
+    }, { calendar_date: entry.calendar_date, quantity_sold: entry.quantity_sold });
     setBusy(false);
     if (!r.ok) {
       const e = r.errors || {};

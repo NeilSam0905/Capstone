@@ -18,6 +18,10 @@ rewriting every such import.
 import os
 import sys
 
+# Importing backend/app.py runs the vault auto-unlock against the real repo;
+# the tests must never write to the real working copy (QA-023).
+os.environ.setdefault("USTORE_SKIP_VAULT_UNLOCK", "1")
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))

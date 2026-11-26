@@ -37,7 +37,11 @@ export default function ReorderSettings({ open, items = [], initialId = null, on
   // The item is picked in the dialog itself (it opens from the Reorder
   // Settings card, not from a row); `initialId` opens it on one item.
   const [pid, setPid] = useState(initialId);
-  useEffect(() => { if (open) setPid(initialId); }, [open, initialId]);
+  const [opened, setOpened] = useState({ open, initialId });
+  if (opened.open !== open || opened.initialId !== initialId) {
+    setOpened({ open, initialId });
+    if (open) setPid(initialId);
+  }
   const item = items.find(i => i.product_id === pid) ?? null;
   const [form, setForm] = useState(EMPTY);
   const [start, setStart] = useState(EMPTY);   // the form as opened, to tell an edit apart
@@ -47,9 +51,15 @@ export default function ReorderSettings({ open, items = [], initialId = null, on
   const [saving, setSaving] = useState(false);
   const seq = useRef(0);
 
+  // A different item (or reopening) starts blank until its figures arrive.
+  const [loadedFor, setLoadedFor] = useState({ pid: null, open: false });
+  if (loadedFor.pid !== pid || loadedFor.open !== open) {
+    setLoadedFor({ pid, open });
+    setData(null); setErrors({}); setError(null); setForm(EMPTY); setStart(EMPTY);
+  }
+
   // Open on what is saved, if anything.
   useEffect(() => {
-    setData(null); setErrors({}); setError(null); setForm(EMPTY); setStart(EMPTY);
     // Anything still on its way was for the item before.
     const mine = ++seq.current;
     if (pid == null || !open) return;

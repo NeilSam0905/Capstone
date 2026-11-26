@@ -93,6 +93,17 @@ hardcodes it. Paste **only the URL**, not the whole `<iframe>` tag Power BI
 gives you; the screen detects that mistake and says so rather than rendering a
 dead frame.
 
+### Refreshing the report on a PC (before publishing)
+
+The report reads `ustore.db` through the **SQLite3 ODBC Driver**, so each PC
+that refreshes it needs:
+
+1. The 64-bit SQLite ODBC driver installed (http://www.ch-werner.de/sqliteodbc/,
+   `sqliteodbc_w64.exe`). Check in PowerShell: `Get-OdbcDriver -Name "SQLite3*"`.
+2. In Power BI Desktop: **Transform data ▸ Edit parameters ▸ UstoreDbPath** set to
+   this PC's full path to `ustore.db`, then **Refresh**. The committed value is a
+   placeholder (`C:\path\to\Capstone\ustore.db`).
+
 ### 2. How to get the URL (a manual step, done once, by a human)
 
 The URL exists only **after** the `.pbix` is published to the Power BI Service.

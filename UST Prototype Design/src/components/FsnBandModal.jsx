@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ALL_CATEGORIES, ALL_SUPPLIERS } from '../services/dataService';
 import Modal from './Modal';
 import DataTable from './DataTable';
@@ -34,9 +34,13 @@ export default function FsnBandModal({ band, onClose, products, onOpenFullList }
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [supplier, setSupplier] = useState(ALL_SUPPLIERS);
 
-  useEffect(() => {
+  // Opening another band starts from unfiltered (adjusted during render, React's
+  // pattern for state that follows a prop).
+  const [shownBand, setShownBand] = useState(band);
+  if (band !== shownBand) {
+    setShownBand(band);
     if (band) { setQ(''); setCategory(ALL_CATEGORIES); setSupplier(ALL_SUPPLIERS); }
-  }, [band]);
+  }
 
   const inBand = useMemo(
     () => products.filter(p => p.fsn_class === band), [products, band]);
